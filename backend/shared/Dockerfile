@@ -5,13 +5,13 @@ WORKDIR /app
 # Install dependencies
 RUN apk add --no-cache git
 
-# Copy go workspace and modules
-COPY go.work go.work
+# Copy go modules (not using go.work to avoid missing module errors)
 COPY common/go.mod common/go.sum* ./common/
 COPY pkg/go.mod pkg/go.sum* ./pkg/
 COPY shared/go.mod shared/go.sum* ./shared/
 
-# Download dependencies
+# Download dependencies (disable workspace)
+ENV GOWORK=off
 RUN cd common && go mod download
 RUN cd pkg && go mod download
 RUN cd shared && go mod download
