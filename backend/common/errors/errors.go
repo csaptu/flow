@@ -241,6 +241,21 @@ func IsUnauthorized(err error) bool {
 		errors.Is(err, ErrInvalidToken)
 }
 
+// IsAppError checks if err is an AppError and extracts it
+func IsAppError(err error, target **AppError) bool {
+	return errors.As(err, target)
+}
+
+// As wraps the standard library errors.As function
+func As(err error, target interface{}) bool {
+	return errors.As(err, target)
+}
+
+// Is wraps the standard library errors.Is function
+func Is(err, target error) bool {
+	return errors.Is(err, target)
+}
+
 // HTTPStatusCode returns the appropriate HTTP status code for an error
 func HTTPStatusCode(err error) int {
 	var appErr *AppError

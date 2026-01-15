@@ -430,7 +430,7 @@ func (h *WBSHandler) Move(c *fiber.Ctx) error {
 		return httputil.BadRequest(c, "invalid project ID")
 	}
 
-	nodeID, err := uuid.Parse(c.Params("node_id"))
+	_, err = uuid.Parse(c.Params("node_id"))
 	if err != nil {
 		return httputil.BadRequest(c, "invalid node ID")
 	}
