@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/tupham/flow/common/models"
+	"github.com/csaptu/flow/common/models"
 )
 
 // UserRepository defines the interface for user data operations

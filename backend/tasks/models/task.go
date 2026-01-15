@@ -4,7 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/tupham/flow/common/models"
+	"github.com/csaptu/flow/common/models"
 )
 
 // Task represents a personal task in the tasks domain

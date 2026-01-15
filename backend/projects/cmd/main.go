@@ -10,8 +10,8 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-	"github.com/tupham/flow/pkg/config"
-	"github.com/tupham/flow/projects"
+	"github.com/csaptu/flow/pkg/config"
+	"github.com/csaptu/flow/projects"
 )
 
 func main() {

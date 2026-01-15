@@ -4,7 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/tupham/flow/common/models"
+	"github.com/csaptu/flow/common/models"
 )
 
 // WBSNode represents a Work Breakdown Structure node

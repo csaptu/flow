@@ -2,8 +2,8 @@ package httputil
 
 import (
 	"github.com/gofiber/fiber/v2"
-	"github.com/tupham/flow/common/dto"
-	"github.com/tupham/flow/common/errors"
+	"github.com/csaptu/flow/common/dto"
+	"github.com/csaptu/flow/common/errors"
 )
 
 // JSON sends a JSON response with the given status code

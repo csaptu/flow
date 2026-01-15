@@ -7,8 +7,8 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-	"github.com/tupham/flow/common/errors"
-	"github.com/tupham/flow/pkg/httputil"
+	"github.com/csaptu/flow/common/errors"
+	"github.com/csaptu/flow/pkg/httputil"
 )
 
 // TokenClaims represents the JWT claims structure

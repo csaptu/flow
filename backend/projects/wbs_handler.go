@@ -8,10 +8,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	commonModels "github.com/tupham/flow/common/models"
-	"github.com/tupham/flow/pkg/httputil"
-	"github.com/tupham/flow/pkg/middleware"
-	"github.com/tupham/flow/projects/models"
+	commonModels "github.com/csaptu/flow/common/models"
+	"github.com/csaptu/flow/pkg/httputil"
+	"github.com/csaptu/flow/pkg/middleware"
+	"github.com/csaptu/flow/projects/models"
 )
 
 // WBSHandler handles WBS endpoints

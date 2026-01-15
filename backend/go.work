@@ -2,9 +2,8 @@ go 1.22
 
 use (
 	./common
+	./pkg
 	./shared
 	./tasks
 	./projects
-	./gateway
-	./pkg
 )

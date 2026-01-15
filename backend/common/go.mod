@@ -1,4 +1,4 @@
-module github.com/tupham/flow/common
+module github.com/csaptu/flow/common
 
 go 1.22
 
