@@ -190,8 +190,17 @@ func initDatabase(cfg config.DatabaseConfig) (*pgxpool.Pool, error) {
 		return nil, err
 	}
 
-	poolConfig.MaxConns = int32(cfg.MaxOpenConns)
-	poolConfig.MinConns = int32(cfg.MaxIdleConns)
+	// Ensure minimum pool size
+	maxConns := cfg.MaxOpenConns
+	if maxConns <= 0 {
+		maxConns = 25
+	}
+	minConns := cfg.MaxIdleConns
+	if minConns <= 0 {
+		minConns = 5
+	}
+	poolConfig.MaxConns = int32(maxConns)
+	poolConfig.MinConns = int32(minConns)
 	poolConfig.MaxConnLifetime = cfg.MaxLifetime
 
 	pool, err := pgxpool.NewWithConfig(context.Background(), poolConfig)
