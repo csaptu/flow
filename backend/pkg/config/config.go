@@ -120,6 +120,14 @@ func Load() (*Config, error) {
 	v.AutomaticEnv()
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 
+	// Bind common environment variable names used by Railway/PaaS platforms
+	v.BindEnv("Databases.Shared.URL", "SHARED_DB_URL", "DATABASE_URL")
+	v.BindEnv("Databases.Tasks.URL", "TASKS_DB_URL", "DATABASE_URL")
+	v.BindEnv("Databases.Projects.URL", "PROJECTS_DB_URL", "DATABASE_URL")
+	v.BindEnv("Redis.URL", "REDIS_URL")
+	v.BindEnv("Auth.JWTSecret", "JWT_SECRET")
+	v.BindEnv("Server.Port", "PORT")
+
 	// Try to read from config file
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")
