@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -120,14 +122,6 @@ func Load() (*Config, error) {
 	v.AutomaticEnv()
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 
-	// Bind common environment variable names used by Railway/PaaS platforms
-	v.BindEnv("Databases.Shared.URL", "SHARED_DB_URL", "DATABASE_URL")
-	v.BindEnv("Databases.Tasks.URL", "TASKS_DB_URL", "DATABASE_URL")
-	v.BindEnv("Databases.Projects.URL", "PROJECTS_DB_URL", "DATABASE_URL")
-	v.BindEnv("Redis.URL", "REDIS_URL")
-	v.BindEnv("Auth.JWTSecret", "JWT_SECRET")
-	v.BindEnv("Server.Port", "PORT")
-
 	// Try to read from config file
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")
@@ -143,12 +137,57 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
+	// Override with environment variables (for Railway/PaaS compatibility)
+	overrideFromEnv(&config)
+
 	// Validate required fields
 	if err := validate(&config); err != nil {
 		return nil, err
 	}
 
 	return &config, nil
+}
+
+// overrideFromEnv reads common environment variables and overrides config values
+func overrideFromEnv(config *Config) {
+	// Database URLs - check service-specific first, then generic DATABASE_URL
+	if url := os.Getenv("SHARED_DB_URL"); url != "" {
+		config.Databases.Shared.URL = url
+	} else if url := os.Getenv("DATABASE_URL"); url != "" {
+		config.Databases.Shared.URL = url
+	}
+
+	if url := os.Getenv("TASKS_DB_URL"); url != "" {
+		config.Databases.Tasks.URL = url
+	} else if url := os.Getenv("DATABASE_URL"); url != "" {
+		config.Databases.Tasks.URL = url
+	}
+
+	if url := os.Getenv("PROJECTS_DB_URL"); url != "" {
+		config.Databases.Projects.URL = url
+	} else if url := os.Getenv("DATABASE_URL"); url != "" {
+		config.Databases.Projects.URL = url
+	}
+
+	// Redis
+	if url := os.Getenv("REDIS_URL"); url != "" {
+		config.Redis.URL = url
+	}
+
+	// Auth
+	if secret := os.Getenv("JWT_SECRET"); secret != "" {
+		config.Auth.JWTSecret = secret
+	}
+
+	// Server
+	if port := os.Getenv("PORT"); port != "" {
+		if p, err := strconv.Atoi(port); err == nil {
+			config.Server.Port = p
+		}
+	}
+	if env := os.Getenv("ENVIRONMENT"); env != "" {
+		config.Server.Environment = env
+	}
 }
 
 // LoadForService loads configuration for a specific service
