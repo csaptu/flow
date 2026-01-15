@@ -1,0 +1,9 @@
+DROP TABLE IF EXISTS wbs_dependencies;
+DROP TABLE IF EXISTS wbs_nodes;
+DROP TABLE IF EXISTS project_members;
+DROP TABLE IF EXISTS projects;
+DROP TYPE IF EXISTS dependency_type;
+DROP TYPE IF EXISTS wbs_status;
+DROP TYPE IF EXISTS member_role;
+DROP TYPE IF EXISTS methodology;
+DROP TYPE IF EXISTS project_status;

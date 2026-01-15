@@ -1,0 +1,202 @@
+version: '3.8'
+
+services:
+  # ============================================
+  # DATABASES
+  # ============================================
+
+  # Shared database (users, auth, subscriptions)
+  shared-db:
+    image: postgres:16-alpine
+    container_name: flow-shared-db
+    environment:
+      POSTGRES_USER: flow
+      POSTGRES_PASSWORD: flow_dev_password
+      POSTGRES_DB: shared_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - shared-db-data:/var/lib/postgresql/data
+      - ./backend/shared/database/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flow -d shared_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Tasks database (personal tasks)
+  tasks-db:
+    image: postgres:16-alpine
+    container_name: flow-tasks-db
+    environment:
+      POSTGRES_USER: flow
+      POSTGRES_PASSWORD: flow_dev_password
+      POSTGRES_DB: tasks_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - tasks-db-data:/var/lib/postgresql/data
+      - ./backend/tasks/database/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flow -d tasks_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Projects database (projects, WBS, dependencies)
+  projects-db:
+    image: postgres:16-alpine
+    container_name: flow-projects-db
+    environment:
+      POSTGRES_USER: flow
+      POSTGRES_PASSWORD: flow_dev_password
+      POSTGRES_DB: projects_db
+    ports:
+      - "5434:5432"
+    volumes:
+      - projects-db-data:/var/lib/postgresql/data
+      - ./backend/projects/database/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flow -d projects_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ============================================
+  # REDIS (Caching & Sessions)
+  # ============================================
+
+  redis:
+    image: redis:7-alpine
+    container_name: flow-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ============================================
+  # BACKEND SERVICES
+  # ============================================
+
+  shared-service:
+    build:
+      context: ./backend
+      dockerfile: shared/Dockerfile
+    container_name: flow-shared-service
+    environment:
+      - ENVIRONMENT=development
+      - PORT=8080
+      - SHARED_DB_URL=postgres://flow:flow_dev_password@shared-db:5432/shared_db?sslmode=disable
+      - REDIS_URL=redis://redis:6379/0
+      - JWT_SECRET=dev_jwt_secret_change_in_production
+      - JWT_EXPIRY_MINUTES=15
+      - REFRESH_EXPIRY_DAYS=7
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - GOOGLE_AI_API_KEY=${GOOGLE_AI_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - LLM_DEFAULT_PROVIDER=anthropic
+    ports:
+      - "8080:8080"
+    depends_on:
+      shared-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  tasks-service:
+    build:
+      context: ./backend
+      dockerfile: tasks/Dockerfile
+    container_name: flow-tasks-service
+    environment:
+      - ENVIRONMENT=development
+      - PORT=8081
+      - TASKS_DB_URL=postgres://flow:flow_dev_password@tasks-db:5432/tasks_db?sslmode=disable
+      - REDIS_URL=redis://redis:6379/1
+      - JWT_SECRET=dev_jwt_secret_change_in_production
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - GOOGLE_AI_API_KEY=${GOOGLE_AI_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - LLM_DEFAULT_PROVIDER=anthropic
+    ports:
+      - "8081:8081"
+    depends_on:
+      tasks-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  projects-service:
+    build:
+      context: ./backend
+      dockerfile: projects/Dockerfile
+    container_name: flow-projects-service
+    environment:
+      - ENVIRONMENT=development
+      - PORT=8082
+      - PROJECTS_DB_URL=postgres://flow:flow_dev_password@projects-db:5432/projects_db?sslmode=disable
+      - REDIS_URL=redis://redis:6379/2
+      - JWT_SECRET=dev_jwt_secret_change_in_production
+    ports:
+      - "8082:8082"
+    depends_on:
+      projects-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ============================================
+  # API GATEWAY (Optional - for production)
+  # ============================================
+
+  # gateway:
+  #   build:
+  #     context: ./backend
+  #     dockerfile: gateway/Dockerfile
+  #   container_name: flow-gateway
+  #   environment:
+  #     - ENVIRONMENT=development
+  #     - PORT=80
+  #     - SHARED_SERVICE_URL=http://shared-service:8080
+  #     - TASKS_SERVICE_URL=http://tasks-service:8081
+  #     - PROJECTS_SERVICE_URL=http://projects-service:8082
+  #   ports:
+  #     - "80:80"
+  #   depends_on:
+  #     - shared-service
+  #     - tasks-service
+  #     - projects-service
+  #   restart: unless-stopped
+
+  # ============================================
+  # LOCAL AI (Optional - Ollama)
+  # ============================================
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: flow-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    profiles:
+      - ai-local
+
+volumes:
+  shared-db-data:
+  tasks-db-data:
+  projects-db-data:
+  redis-data:
+  ollama-data:
+
+networks:
+  default:
+    name: flow-network

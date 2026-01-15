@@ -1,0 +1,16 @@
+name: flow_api
+description: API client for Flow apps
+version: 1.0.0
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  dio: ^5.4.0
+  flow_models:
+    path: ../flow_models
+  flutter_secure_storage: ^9.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
