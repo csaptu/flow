@@ -1,8 +1,17 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flow_api/flow_api.dart';
 import 'package:flow_models/flow_models.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flow_tasks/core/auth/google_sign_in_stub.dart'
+    if (dart.library.html) 'package:flow_tasks/core/auth/google_sign_in_web_helper.dart';
+import 'package:flow_tasks/core/sync/sync_types.dart';
+import 'package:flow_tasks/core/sync/local_task_store.dart';
+import 'package:flow_tasks/core/sync/sync_engine.dart';
+
+const _googleClientId = '868169256843-ke0firpbckajqd06adpdc2a1rgo14ejt.apps.googleusercontent.com';
 
 // API Client
 final apiClientProvider = Provider<FlowApiClient>((ref) {
@@ -17,6 +26,30 @@ final authServiceProvider = Provider<AuthService>((ref) {
 
 final tasksServiceProvider = Provider<TasksService>((ref) {
   return TasksService(ref.watch(apiClientProvider));
+});
+
+// Local task store for optimistic updates
+final localTaskStoreProvider =
+    StateNotifierProvider<LocalTaskStore, LocalTaskState>((ref) {
+  return LocalTaskStore();
+});
+
+// Sync state
+final syncStateProvider = StateProvider<SyncState>((ref) {
+  return const SyncState();
+});
+
+// Sync engine
+final syncEngineProvider = Provider<SyncEngine>((ref) {
+  final tasksService = ref.watch(tasksServiceProvider);
+  final localStore = ref.watch(localTaskStoreProvider.notifier);
+  final syncStateNotifier = ref.watch(syncStateProvider.notifier);
+
+  return SyncEngine(
+    tasksService: tasksService,
+    localStore: localStore,
+    onStateChange: (state) => syncStateNotifier.state = state,
+  );
 });
 
 // Initialization
@@ -109,6 +142,8 @@ class AuthStateNotifier extends StateNotifier<AuthState> {
       final user = await authService.getCurrentUser();
       state = state.copyWith(status: AuthStatus.authenticated, user: user);
     } catch (e) {
+      // Clear invalid tokens from storage
+      await client.logout();
       state = state.copyWith(status: AuthStatus.unauthenticated);
     }
   }
@@ -128,6 +163,7 @@ class AuthStateNotifier extends StateNotifier<AuthState> {
         status: AuthStatus.unauthenticated,
         error: e.toString(),
       );
+      rethrow;
     }
   }
 
@@ -150,6 +186,52 @@ class AuthStateNotifier extends StateNotifier<AuthState> {
         status: AuthStatus.unauthenticated,
         error: e.toString(),
       );
+      rethrow;
+    }
+  }
+
+  Future<void> loginWithGoogle() async {
+    state = state.copyWith(status: AuthStatus.loading);
+
+    try {
+      String? idToken;
+
+      if (kIsWeb) {
+        // Use Google Identity Services on web
+        idToken = await GoogleSignInWebHelper.signIn();
+      } else {
+        // Use google_sign_in package on mobile
+        final googleSignIn = GoogleSignIn(
+          scopes: ['email', 'profile'],
+        );
+
+        final googleUser = await googleSignIn.signIn();
+        if (googleUser == null) {
+          state = state.copyWith(status: AuthStatus.unauthenticated);
+          return;
+        }
+
+        final googleAuth = await googleUser.authentication;
+        idToken = googleAuth.idToken;
+      }
+
+      if (idToken == null) {
+        state = state.copyWith(status: AuthStatus.unauthenticated);
+        throw Exception('Failed to get Google ID token. Please try again.');
+      }
+
+      final authService = _ref.read(authServiceProvider);
+      final response = await authService.loginWithGoogle(idToken);
+      state = state.copyWith(
+        status: AuthStatus.authenticated,
+        user: response.user,
+      );
+    } catch (e) {
+      state = state.copyWith(
+        status: AuthStatus.unauthenticated,
+        error: e.toString(),
+      );
+      rethrow;
     }
   }
 
@@ -160,27 +242,806 @@ class AuthStateNotifier extends StateNotifier<AuthState> {
   }
 }
 
-// Tasks providers
-final tasksProvider = FutureProvider.autoDispose<List<Task>>((ref) async {
+// Tasks providers - use optimistic local store with server fetch
+
+/// Fetches tasks from server and updates local store
+final _tasksFetchProvider = FutureProvider.autoDispose<void>((ref) async {
+  final authState = ref.watch(authStateProvider);
+  if (authState.status != AuthStatus.authenticated) return;
+
+  final client = ref.watch(apiClientProvider);
+  if (!client.isAuthenticated) return;
+
   final service = ref.watch(tasksServiceProvider);
+  final localStore = ref.watch(localTaskStoreProvider.notifier);
+
+  // Fetch and store
   final response = await service.list();
-  return response.items;
+  localStore.setServerTasks(response.items);
 });
 
-final todayTasksProvider = FutureProvider.autoDispose<List<Task>>((ref) async {
+/// All tasks (merged optimistic + server)
+final tasksProvider = Provider<List<Task>>((ref) {
+  // Trigger server fetch
+  ref.watch(_tasksFetchProvider);
+
+  // Watch state to rebuild when it changes
+  ref.watch(localTaskStoreProvider);
+  final localStore = ref.read(localTaskStoreProvider.notifier);
+
+  // Get merged tasks (server + optimistic - deleted)
+  return localStore.getMergedTasks();
+});
+
+/// All tasks (non-completed, sorted by createdAt descending)
+final allTasksProvider = Provider<List<Task>>((ref) {
+  final tasks = ref.watch(tasksProvider);
+  final filtered = tasks
+      .where((t) => t.status != TaskStatus.completed && t.status != TaskStatus.cancelled)
+      .toList();
+  // Sort by createdAt descending (latest first)
+  filtered.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+  return filtered;
+});
+
+/// Legacy inbox provider for backward compatibility
+final inboxTasksProvider = Provider<List<Task>>((ref) {
+  return ref.watch(allTasksProvider);
+});
+
+/// Today's tasks
+final todayTasksProvider = Provider<List<Task>>((ref) {
+  final tasks = ref.watch(tasksProvider);
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final tomorrow = today.add(const Duration(days: 1));
+
+  return tasks.where((t) {
+    if (t.dueDate == null || t.status == TaskStatus.completed) return false;
+    return t.dueDate!.isAfter(today.subtract(const Duration(seconds: 1))) &&
+        t.dueDate!.isBefore(tomorrow);
+  }).toList();
+});
+
+/// Next 7 days tasks (due within the next 7 days, including today)
+final next7DaysTasksProvider = Provider<List<Task>>((ref) {
+  final tasks = ref.watch(tasksProvider);
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final in7Days = today.add(const Duration(days: 7));
+
+  final filtered = tasks.where((t) {
+    if (t.dueDate == null || t.status == TaskStatus.completed || t.status == TaskStatus.cancelled) return false;
+    final dueDate = DateTime(t.dueDate!.year, t.dueDate!.month, t.dueDate!.day);
+    return dueDate.isAfter(today.subtract(const Duration(days: 1))) &&
+        dueDate.isBefore(in7Days);
+  }).toList();
+  // Sort by due date ascending
+  filtered.sort((a, b) => a.dueDate!.compareTo(b.dueDate!));
+  return filtered;
+});
+
+/// Legacy upcoming provider for backward compatibility
+final upcomingTasksProvider = Provider<List<Task>>((ref) {
+  return ref.watch(next7DaysTasksProvider);
+});
+
+/// Completed tasks
+final completedTasksProvider = Provider<List<Task>>((ref) {
+  final tasks = ref.watch(tasksProvider);
+  return tasks.where((t) => t.status == TaskStatus.completed).toList();
+});
+
+/// Trash tasks (cancelled)
+final trashTasksProvider = Provider<List<Task>>((ref) {
+  final tasks = ref.watch(tasksProvider);
+  final filtered = tasks.where((t) => t.status == TaskStatus.cancelled).toList();
+  // Sort by updatedAt descending (most recently deleted first)
+  filtered.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+  return filtered;
+});
+
+// Task actions - optimistic updates
+class TaskActions {
+  final Ref _ref;
+
+  TaskActions(this._ref);
+
+  LocalTaskStore get _store => _ref.read(localTaskStoreProvider.notifier);
+  SyncEngine get _syncEngine => _ref.read(syncEngineProvider);
+
+  /// Create a task (instant, syncs in background)
+  Future<Task> create({
+    required String title,
+    String? description,
+    DateTime? dueDate,
+    int? priority,
+    List<String>? tags,
+  }) async {
+    final task = await _store.createTask(
+      title: title,
+      description: description,
+      dueDate: dueDate,
+      priority: priority,
+      tags: tags,
+    );
+
+    // Trigger background sync
+    _syncEngine.syncNow();
+
+    // If task contains hashtags, refresh lists after sync completes
+    // The backend auto-creates lists from hashtags
+    if (title.contains('#')) {
+      // Delay to allow sync to complete, then refresh lists
+      Future.delayed(const Duration(milliseconds: 1500), () {
+        _ref.invalidate(_listsFetchProvider);
+        _ref.invalidate(_listTreeFetchProvider);
+      });
+    }
+
+    return task;
+  }
+
+  /// Update a task (instant, syncs in background)
+  Future<Task> update(
+    String taskId, {
+    String? title,
+    String? description,
+    DateTime? dueDate,
+    int? priority,
+    String? status,
+    List<String>? tags,
+  }) async {
+    final task = await _store.updateTask(
+      taskId,
+      title: title,
+      description: description,
+      dueDate: dueDate,
+      priority: priority,
+      status: status,
+      tags: tags,
+    );
+
+    _syncEngine.syncNow();
+
+    // If title or description contains hashtags, refresh lists after sync
+    final hasHashtags = (title?.contains('#') ?? false) ||
+        (description?.contains('#') ?? false);
+    if (hasHashtags) {
+      Future.delayed(const Duration(milliseconds: 1500), () {
+        _ref.invalidate(_listsFetchProvider);
+        _ref.invalidate(_listTreeFetchProvider);
+      });
+    }
+
+    return task;
+  }
+
+  /// Complete a task (instant)
+  Future<Task> complete(String taskId) async {
+    final task = await _store.completeTask(taskId);
+    _syncEngine.syncNow();
+    return task;
+  }
+
+  /// Uncomplete a task (instant)
+  Future<Task> uncomplete(String taskId) async {
+    final task = await _store.uncompleteTask(taskId);
+    _syncEngine.syncNow();
+    return task;
+  }
+
+  /// Delete a task (instant)
+  Future<void> delete(String taskId) async {
+    await _store.deleteTask(taskId);
+    _syncEngine.syncNow();
+  }
+}
+
+final taskActionsProvider = Provider<TaskActions>((ref) {
+  return TaskActions(ref);
+});
+
+// Sidebar navigation (default to 1 = Next 7 days)
+final selectedSidebarIndexProvider = StateProvider<int>((ref) => 1);
+
+// Selected task for detail panel
+final selectedTaskIdProvider = StateProvider<String?>((ref) => null);
+
+/// Get the selected task from the local store
+final selectedTaskProvider = Provider<Task?>((ref) {
+  final taskId = ref.watch(selectedTaskIdProvider);
+  if (taskId == null) return null;
+
+  final tasks = ref.watch(tasksProvider);
+  return tasks.where((t) => t.id == taskId).firstOrNull;
+});
+
+// =====================================================
+// List Providers (Bear-style #List/Sublist)
+// =====================================================
+
+/// Fetches lists from server
+final _listsFetchProvider = FutureProvider.autoDispose<List<TaskList>>((ref) async {
+  final authState = ref.watch(authStateProvider);
+  if (authState.status != AuthStatus.authenticated) return [];
+
+  final client = ref.watch(apiClientProvider);
+  if (!client.isAuthenticated) return [];
+
   final service = ref.watch(tasksServiceProvider);
-  return service.getToday();
+  return await service.getLists();
 });
 
-final inboxTasksProvider = FutureProvider.autoDispose<List<Task>>((ref) async {
+/// All lists (flat)
+final listsProvider = Provider<List<TaskList>>((ref) {
+  final asyncValue = ref.watch(_listsFetchProvider);
+  return asyncValue.when(
+    data: (lists) => lists,
+    loading: () => [],
+    error: (_, __) => [],
+  );
+});
+
+/// Fetches list tree from server (active lists)
+final _listTreeFetchProvider = FutureProvider.autoDispose<List<TaskList>>((ref) async {
+  final authState = ref.watch(authStateProvider);
+  if (authState.status != AuthStatus.authenticated) return [];
+
+  final client = ref.watch(apiClientProvider);
+  if (!client.isAuthenticated) return [];
+
   final service = ref.watch(tasksServiceProvider);
-  return service.getInbox();
+  return await service.getListTree(archived: false);
 });
 
-final upcomingTasksProvider = FutureProvider.autoDispose<List<Task>>((ref) async {
+/// Lists as hierarchical tree (active only)
+final listTreeProvider = Provider<List<TaskList>>((ref) {
+  final asyncValue = ref.watch(_listTreeFetchProvider);
+  return asyncValue.when(
+    data: (lists) => lists,
+    loading: () => [],
+    error: (_, __) => [],
+  );
+});
+
+/// Fetches archived list tree from server
+final _archivedListTreeFetchProvider = FutureProvider.autoDispose<List<TaskList>>((ref) async {
+  final authState = ref.watch(authStateProvider);
+  if (authState.status != AuthStatus.authenticated) return [];
+
+  final client = ref.watch(apiClientProvider);
+  if (!client.isAuthenticated) return [];
+
   final service = ref.watch(tasksServiceProvider);
-  return service.getUpcoming();
+  return await service.getListTree(archived: true);
 });
 
-// Sidebar navigation
-final selectedSidebarIndexProvider = StateProvider<int>((ref) => 0);
+/// Archived lists as hierarchical tree
+final archivedListTreeProvider = Provider<List<TaskList>>((ref) {
+  final asyncValue = ref.watch(_archivedListTreeFetchProvider);
+  return asyncValue.when(
+    data: (lists) => lists,
+    loading: () => [],
+    error: (_, __) => [],
+  );
+});
+
+/// Search lists by query
+final listSearchProvider = FutureProvider.autoDispose.family<List<TaskList>, String>((ref, query) async {
+  if (query.isEmpty) {
+    return ref.watch(listsProvider);
+  }
+
+  final authState = ref.watch(authStateProvider);
+  if (authState.status != AuthStatus.authenticated) return [];
+
+  final service = ref.watch(tasksServiceProvider);
+  return await service.searchLists(query);
+});
+
+/// Currently selected list for viewing
+final selectedListIdProvider = StateProvider<String?>((ref) => null);
+
+/// Get tasks in selected list
+final selectedListTasksProvider = FutureProvider.autoDispose<List<Task>>((ref) async {
+  final listId = ref.watch(selectedListIdProvider);
+  if (listId == null) return [];
+
+  final service = ref.watch(tasksServiceProvider);
+  return await service.getListTasks(listId, includeSublists: true);
+});
+
+// =====================================================
+// List Actions (CRUD + Cleanup)
+// =====================================================
+
+/// List actions for creating, deleting, archiving, and cleaning up lists
+class ListActions {
+  final Ref _ref;
+
+  ListActions(this._ref);
+
+  TasksService get _service => _ref.read(tasksServiceProvider);
+
+  /// Create a new list
+  Future<TaskList> create({
+    required String name,
+    String? icon,
+    String? color,
+    String? parentId,
+  }) async {
+    final list = await _service.createList(
+      name: name,
+      icon: icon,
+      color: color,
+      parentId: parentId,
+    );
+
+    // Trigger cleanup after creating a list
+    cleanupEmptyLists();
+
+    // Refresh list providers
+    _refreshListProviders();
+
+    return list;
+  }
+
+  /// Delete a list
+  Future<void> delete(String listId) async {
+    await _service.deleteList(listId);
+    _refreshListProviders();
+  }
+
+  /// Archive a list (move to archived lists)
+  Future<void> archive(String listId) async {
+    await _service.archiveList(listId);
+    _refreshListProviders();
+  }
+
+  /// Unarchive a list (restore from archived lists)
+  Future<void> unarchive(String listId) async {
+    await _service.unarchiveList(listId);
+    _refreshListProviders();
+  }
+
+  /// Cleanup empty lists (runs automatically)
+  Future<int> cleanupEmptyLists() async {
+    try {
+      final result = await _service.cleanupEmptyLists();
+      final totalDeleted = result['total_deleted'] as int? ?? 0;
+
+      if (totalDeleted > 0) {
+        _refreshListProviders();
+      }
+
+      return totalDeleted;
+    } catch (e) {
+      // Silently fail - cleanup is a background operation
+      return 0;
+    }
+  }
+
+  void _refreshListProviders() {
+    _ref.invalidate(_listsFetchProvider);
+    _ref.invalidate(_listTreeFetchProvider);
+    _ref.invalidate(_archivedListTreeFetchProvider);
+  }
+}
+
+final listActionsProvider = Provider<ListActions>((ref) {
+  return ListActions(ref);
+});
+
+/// Cleanup service state
+class ListCleanupState {
+  final bool isRunning;
+  final DateTime? lastRun;
+  final int? lastDeletedCount;
+
+  const ListCleanupState({
+    this.isRunning = false,
+    this.lastRun,
+    this.lastDeletedCount,
+  });
+
+  ListCleanupState copyWith({
+    bool? isRunning,
+    DateTime? lastRun,
+    int? lastDeletedCount,
+  }) {
+    return ListCleanupState(
+      isRunning: isRunning ?? this.isRunning,
+      lastRun: lastRun ?? this.lastRun,
+      lastDeletedCount: lastDeletedCount ?? this.lastDeletedCount,
+    );
+  }
+}
+
+/// Cleanup service notifier for periodic cleanup
+class ListCleanupNotifier extends StateNotifier<ListCleanupState> {
+  final Ref _ref;
+
+  ListCleanupNotifier(this._ref) : super(const ListCleanupState());
+
+  /// Run cleanup now
+  Future<int> runCleanup() async {
+    if (state.isRunning) return 0;
+
+    state = state.copyWith(isRunning: true);
+
+    try {
+      final listActions = _ref.read(listActionsProvider);
+      final deleted = await listActions.cleanupEmptyLists();
+
+      state = state.copyWith(
+        isRunning: false,
+        lastRun: DateTime.now(),
+        lastDeletedCount: deleted,
+      );
+
+      return deleted;
+    } catch (e) {
+      state = state.copyWith(isRunning: false);
+      return 0;
+    }
+  }
+}
+
+final listCleanupProvider = StateNotifierProvider<ListCleanupNotifier, ListCleanupState>((ref) {
+  return ListCleanupNotifier(ref);
+});
+
+// =====================================================
+// Expanded Task Provider (for inline editing)
+// =====================================================
+
+/// Currently expanded task ID for inline editing
+final expandedTaskIdProvider = StateProvider<String?>((ref) => null);
+
+// =====================================================
+// Hashtag Autocomplete Provider
+// =====================================================
+
+/// Current hashtag search query (triggered when user types #)
+final hashtagQueryProvider = StateProvider<String>((ref) => '');
+
+/// Hashtag suggestions based on current query
+final hashtagSuggestionsProvider = Provider<List<TaskList>>((ref) {
+  final query = ref.watch(hashtagQueryProvider);
+  final lists = ref.watch(listsProvider);
+
+  if (query.isEmpty) {
+    // Return all lists when just # is typed
+    return lists;
+  }
+
+  // Handle nested list search (e.g., "Work/")
+  if (query.contains('/')) {
+    final parts = query.split('/');
+    final parentName = parts.first;
+    final subQuery = parts.length > 1 ? parts[1].toLowerCase() : '';
+
+    // Find parent list and its sublists
+    final parent = lists.where(
+      (l) => l.name.toLowerCase() == parentName.toLowerCase() && l.isRoot
+    ).firstOrNull;
+
+    if (parent != null) {
+      // Filter sublists of this parent
+      return lists
+          .where((l) =>
+              l.parentId == parent.id &&
+              (subQuery.isEmpty || l.name.toLowerCase().startsWith(subQuery)))
+          .toList();
+    }
+    return [];
+  }
+
+  // Simple prefix search
+  return lists
+      .where((l) => l.name.toLowerCase().startsWith(query.toLowerCase()))
+      .toList();
+});
+
+// =====================================================
+// Attachment Providers
+// =====================================================
+
+/// Fetches attachments for a specific task
+final taskAttachmentsProvider = FutureProvider.autoDispose.family<List<Attachment>, String>((ref, taskId) async {
+  final authState = ref.watch(authStateProvider);
+  if (authState.status != AuthStatus.authenticated) return [];
+
+  final service = ref.watch(tasksServiceProvider);
+  return await service.getAttachments(taskId);
+});
+
+/// Attachment actions for a task
+class AttachmentActions {
+  final Ref _ref;
+  final String taskId;
+
+  AttachmentActions(this._ref, this.taskId);
+
+  TasksService get _service => _ref.read(tasksServiceProvider);
+
+  /// Add a link attachment
+  Future<Attachment> addLink(String url, {String? name}) async {
+    final attachment = await _service.createLinkAttachment(
+      taskId,
+      url: url,
+      name: name,
+    );
+    // Invalidate to refetch attachments
+    _ref.invalidate(taskAttachmentsProvider(taskId));
+    return attachment;
+  }
+
+  /// Upload a file attachment
+  Future<Attachment> uploadFile({
+    required List<int> fileBytes,
+    required String filename,
+    required String mimeType,
+  }) async {
+    final attachment = await _service.uploadFileAttachment(
+      taskId,
+      fileBytes: fileBytes,
+      filename: filename,
+      mimeType: mimeType,
+    );
+    // Invalidate to refetch attachments
+    _ref.invalidate(taskAttachmentsProvider(taskId));
+    return attachment;
+  }
+
+  /// Delete an attachment
+  Future<void> delete(String attachmentId) async {
+    await _service.deleteAttachment(taskId, attachmentId);
+    // Invalidate to refetch attachments
+    _ref.invalidate(taskAttachmentsProvider(taskId));
+  }
+}
+
+/// Get attachment actions for a specific task
+final attachmentActionsProvider = Provider.family<AttachmentActions, String>((ref, taskId) {
+  return AttachmentActions(ref, taskId);
+});
+
+// =====================================================
+// AI Actions Provider
+// =====================================================
+
+/// AI actions for tasks
+class AIActions {
+  final Ref _ref;
+
+  AIActions(this._ref);
+
+  TasksService get _service => _ref.read(tasksServiceProvider);
+  LocalTaskStore get _store => _ref.read(localTaskStoreProvider.notifier);
+
+  /// AI: Decompose a task into steps
+  Future<Task> decompose(String taskId) async {
+    final task = await _service.aiDecompose(taskId);
+    // Update the local store with the new task data
+    _store.updateTaskFromServer(task);
+    return task;
+  }
+
+  /// AI: Clean up a task title and description
+  Future<Task> clean(String taskId) async {
+    final task = await _service.aiClean(taskId);
+    // Update the local store with the new task data
+    _store.updateTaskFromServer(task);
+    return task;
+  }
+}
+
+final aiActionsProvider = Provider<AIActions>((ref) {
+  return AIActions(ref);
+});
+
+// =====================================================
+// AI Usage & Tier Providers
+// =====================================================
+
+/// Fetches AI usage stats from server
+final aiUsageProvider = FutureProvider.autoDispose<AIUsageStats?>((ref) async {
+  final authState = ref.watch(authStateProvider);
+  if (authState.status != AuthStatus.authenticated) return null;
+
+  final client = ref.watch(apiClientProvider);
+  if (!client.isAuthenticated) return null;
+
+  try {
+    final service = ref.watch(tasksServiceProvider);
+    return await service.getAIUsage();
+  } catch (e) {
+    // AI service might not be available
+    return null;
+  }
+});
+
+/// Get user's subscription tier
+final userTierProvider = Provider<UserTier>((ref) {
+  final asyncValue = ref.watch(aiUsageProvider);
+  return asyncValue.when(
+    data: (stats) => stats?.tier ?? UserTier.free,
+    loading: () => UserTier.free,
+    error: (_, __) => UserTier.free,
+  );
+});
+
+/// Check if user can use a specific AI feature
+final canUseAIFeatureProvider = Provider.family<bool, AIFeature>((ref, feature) {
+  final asyncValue = ref.watch(aiUsageProvider);
+  return asyncValue.when(
+    data: (stats) => stats?.canUse(feature) ?? false,
+    loading: () => false,
+    error: (_, __) => false,
+  );
+});
+
+/// Fetches AI drafts from server
+final aiDraftsProvider = FutureProvider.autoDispose<List<AIDraft>>((ref) async {
+  final authState = ref.watch(authStateProvider);
+  if (authState.status != AuthStatus.authenticated) return [];
+
+  final client = ref.watch(apiClientProvider);
+  if (!client.isAuthenticated) return [];
+
+  try {
+    final service = ref.watch(tasksServiceProvider);
+    return await service.getAIDrafts();
+  } catch (e) {
+    return [];
+  }
+});
+
+/// AI Draft actions
+class AIDraftActions {
+  final Ref _ref;
+
+  AIDraftActions(this._ref);
+
+  TasksService get _service => _ref.read(tasksServiceProvider);
+
+  /// Approve a draft
+  Future<void> approve(String draftId, {bool send = false}) async {
+    await _service.approveDraft(draftId, send: send);
+    _ref.invalidate(aiDraftsProvider);
+  }
+
+  /// Delete/cancel a draft
+  Future<void> delete(String draftId) async {
+    await _service.deleteDraft(draftId);
+    _ref.invalidate(aiDraftsProvider);
+  }
+}
+
+final aiDraftActionsProvider = Provider<AIDraftActions>((ref) {
+  return AIDraftActions(ref);
+});
+
+// =====================================================
+// Subscription Providers
+// =====================================================
+
+/// Fetches user's subscription from server
+final userSubscriptionProvider = FutureProvider.autoDispose<UserSubscription>((ref) async {
+  final authState = ref.watch(authStateProvider);
+  if (authState.status != AuthStatus.authenticated) {
+    return const UserSubscription(tier: 'free');
+  }
+
+  final client = ref.watch(apiClientProvider);
+  if (!client.isAuthenticated) {
+    return const UserSubscription(tier: 'free');
+  }
+
+  try {
+    final service = ref.watch(tasksServiceProvider);
+    return await service.getMySubscription();
+  } catch (e) {
+    return const UserSubscription(tier: 'free');
+  }
+});
+
+/// Fetches available subscription plans
+final subscriptionPlansProvider = FutureProvider.autoDispose<List<SubscriptionPlan>>((ref) async {
+  final service = ref.watch(tasksServiceProvider);
+  return await service.getPlans();
+});
+
+/// Subscription actions
+class SubscriptionActions {
+  final Ref _ref;
+
+  SubscriptionActions(this._ref);
+
+  TasksService get _service => _ref.read(tasksServiceProvider);
+
+  /// Create checkout session
+  Future<CheckoutResponse> createCheckout(String planId, {String? returnUrl}) async {
+    return await _service.createCheckout(planId, returnUrl: returnUrl);
+  }
+
+  /// Cancel subscription
+  Future<void> cancel({String? reason}) async {
+    await _service.cancelSubscription(reason: reason);
+    _ref.invalidate(userSubscriptionProvider);
+  }
+}
+
+final subscriptionActionsProvider = Provider<SubscriptionActions>((ref) {
+  return SubscriptionActions(ref);
+});
+
+// =====================================================
+// Admin Providers
+// =====================================================
+
+/// Check if current user is admin
+final isAdminProvider = FutureProvider.autoDispose<bool>((ref) async {
+  final authState = ref.watch(authStateProvider);
+  if (authState.status != AuthStatus.authenticated) return false;
+
+  final client = ref.watch(apiClientProvider);
+  if (!client.isAuthenticated) return false;
+
+  try {
+    final service = ref.watch(tasksServiceProvider);
+    return await service.checkAdmin();
+  } catch (e) {
+    return false;
+  }
+});
+
+/// Admin user list with filter
+final adminUsersProvider = FutureProvider.autoDispose
+    .family<PaginatedResponse<AdminUser>, ({String? tier, int page})>((ref, params) async {
+  final service = ref.watch(tasksServiceProvider);
+  return await service.getAdminUsers(
+    tier: params.tier,
+    page: params.page,
+  );
+});
+
+/// Admin order list with filters
+final adminOrdersProvider = FutureProvider.autoDispose
+    .family<PaginatedResponse<Order>, ({String? status, String? provider, String? tier, int page})>((ref, params) async {
+  final service = ref.watch(tasksServiceProvider);
+  return await service.getAdminOrders(
+    status: params.status,
+    provider: params.provider,
+    tier: params.tier,
+    page: params.page,
+  );
+});
+
+/// Admin actions
+class AdminActions {
+  final Ref _ref;
+
+  AdminActions(this._ref);
+
+  TasksService get _service => _ref.read(tasksServiceProvider);
+
+  /// Update user subscription
+  Future<void> updateUserSubscription(String userId, {
+    required String tier,
+    String? planId,
+    DateTime? expiresAt,
+  }) async {
+    await _service.updateUserSubscription(userId,
+      tier: tier,
+      planId: planId,
+      expiresAt: expiresAt,
+    );
+  }
+}
+
+final adminActionsProvider = Provider<AdminActions>((ref) {
+  return AdminActions(ref);
+});

@@ -11,7 +11,7 @@ import (
 
 const (
 	googleAPIURL       = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s"
-	defaultGoogleModel = "gemini-1.5-flash"
+	defaultGoogleModel = "gemini-2.0-flash"
 )
 
 // GoogleClient is a client for the Google Generative AI API

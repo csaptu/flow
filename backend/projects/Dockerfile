@@ -21,9 +21,10 @@ COPY common/ ./common/
 COPY pkg/ ./pkg/
 COPY projects/ ./projects/
 
-# Build
+# Build main service and migrate tool
 WORKDIR /app/projects
 RUN CGO_ENABLED=0 GOOS=linux go build -o /app/bin/projects-service ./cmd
+RUN CGO_ENABLED=0 GOOS=linux go build -o /app/bin/migrate ./cmd/migrate
 
 # Final stage
 FROM alpine:3.19
@@ -33,7 +34,10 @@ RUN apk add --no-cache ca-certificates tzdata
 WORKDIR /app
 
 COPY --from=builder /app/bin/projects-service .
+COPY --from=builder /app/bin/migrate .
+COPY --from=builder /app/projects/database/migrations ./database/migrations
 
 EXPOSE 8082
 
-CMD ["./projects-service"]
+# Run migrations then start server
+CMD ["sh", "-c", "./migrate up && ./projects-service"]

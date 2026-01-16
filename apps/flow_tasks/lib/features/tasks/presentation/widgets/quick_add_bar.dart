@@ -4,6 +4,7 @@ import 'package:flow_tasks/core/constants/app_colors.dart';
 import 'package:flow_tasks/core/constants/app_spacing.dart';
 import 'package:flow_tasks/core/providers/providers.dart';
 import 'package:flow_tasks/core/theme/flow_theme.dart';
+import 'package:flow_tasks/features/tasks/presentation/widgets/hashtag_text_field.dart';
 
 class QuickAddBar extends ConsumerStatefulWidget {
   const QuickAddBar({super.key});
@@ -39,16 +40,15 @@ class _QuickAddBarState extends ConsumerState<QuickAddBar> {
     setState(() => _isSubmitting = true);
 
     try {
-      final service = ref.read(tasksServiceProvider);
-      await service.create(title: text.trim());
+      // Use optimistic task actions - instant UI update
+      // Auto-add to "today" by setting due date to now
+      final actions = ref.read(taskActionsProvider);
+      await actions.create(title: text.trim(), dueDate: DateTime.now());
 
       _controller.clear();
       _focusNode.unfocus();
 
-      // Refresh tasks
-      ref.invalidate(inboxTasksProvider);
-      ref.invalidate(todayTasksProvider);
-      ref.invalidate(tasksProvider);
+      // No need to invalidate - local store auto-updates UI
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -71,19 +71,17 @@ class _QuickAddBarState extends ConsumerState<QuickAddBar> {
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 200),
-      margin: EdgeInsets.symmetric(
-        horizontal: _hasFocus ? 0 : 16,
+      margin: const EdgeInsets.symmetric(
+        horizontal: 16,
         vertical: 8,
       ),
       decoration: BoxDecoration(
         color: colors.surface,
-        borderRadius: BorderRadius.circular(
-          _hasFocus ? 0 : FlowSpacing.radiusMd,
-        ),
+        borderRadius: BorderRadius.circular(FlowSpacing.radiusMd),
         boxShadow: _hasFocus ? null : FlowColors.cardShadowLight,
         border: Border.all(
           color: _hasFocus ? colors.primary : colors.border.withOpacity(0.5),
-          width: _hasFocus ? 2 : 1,
+          width: 1,
         ),
       ),
       child: Row(
@@ -96,17 +94,16 @@ class _QuickAddBarState extends ConsumerState<QuickAddBar> {
           ),
           const SizedBox(width: 12),
           Expanded(
-            child: TextField(
+            child: HashtagTextField(
               controller: _controller,
               focusNode: _focusNode,
-              style: TextStyle(
-                fontSize: 15,
-                color: colors.textPrimary,
-              ),
+              hintText: 'Add a task... (use # for lists)',
               decoration: InputDecoration(
-                hintText: 'Add a task...',
+                hintText: 'Add a task... (use # for lists)',
                 hintStyle: TextStyle(color: colors.textPlaceholder),
                 border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
                 contentPadding: const EdgeInsets.symmetric(vertical: 14),
                 filled: false,
               ),

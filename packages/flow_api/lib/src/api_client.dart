@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
@@ -39,6 +41,7 @@ class FlowApiClient {
 
   String? _accessToken;
   String? _refreshToken;
+  Completer<bool>? _refreshCompleter;
 
   FlowApiClient({
     required this.config,
@@ -62,28 +65,42 @@ class FlowApiClient {
 
     dio.interceptors.add(InterceptorsWrapper(
       onRequest: (options, handler) async {
+        final tokenPreview = _accessToken != null ? _accessToken!.substring(0, 20) : 'null';
+        print('[API] ${options.method} ${options.path} hasToken=${_accessToken != null} tokenPreview=$tokenPreview clientId=${identityHashCode(this)}');
         if (_accessToken != null) {
           options.headers['Authorization'] = 'Bearer $_accessToken';
         }
         handler.next(options);
       },
       onError: (error, handler) async {
-        if (error.response?.statusCode == 401) {
+        // Don't retry refresh requests to avoid infinite loop
+        final path = error.requestOptions.path;
+
+        // Check retry count to prevent infinite loops
+        final retryCount = error.requestOptions.extra['retryCount'] ?? 0;
+        if (retryCount >= 2) {
+          print('[API] Max retries reached for ${error.requestOptions.path}');
+          return handler.next(error);
+        }
+
+        if (error.response?.statusCode == 401 && !path.contains('/auth/refresh')) {
           // Try to refresh token
           final refreshed = await _refreshAccessToken();
           if (refreshed) {
-            // Retry request
+            // Retry request with incremented retry count
             final options = error.requestOptions;
             options.headers['Authorization'] = 'Bearer $_accessToken';
+            options.extra['retryCount'] = retryCount + 1;
             try {
               final response = await dio.fetch(options);
               handler.resolve(response);
               return;
             } catch (e) {
-              // Refresh failed, logout
-              await logout();
+              // Retry failed
+              print('[API] Retry failed for ${options.path}: $e');
             }
           }
+          // Don't auto-logout here - let the UI layer handle auth state
         }
         handler.next(error);
       },
@@ -96,19 +113,37 @@ class FlowApiClient {
   Future<void> init() async {
     _accessToken = await _storage.read(key: 'access_token');
     _refreshToken = await _storage.read(key: 'refresh_token');
+    if (_accessToken != null) {
+      print('[ApiClient] init() loaded token from storage, preview: ${_accessToken!.substring(0, 50)}...');
+    } else {
+      print('[ApiClient] init() no stored token found');
+    }
   }
 
   /// Set tokens after login
   Future<void> setTokens(String accessToken, String refreshToken) async {
+    print('[ApiClient] setTokens called on clientId=${identityHashCode(this)}');
+    print('[ApiClient] NEW token preview: ${accessToken.substring(0, 50)}...');
     _accessToken = accessToken;
     _refreshToken = refreshToken;
+    print('[ApiClient] In-memory token set, preview: ${_accessToken!.substring(0, 50)}...');
     await _storage.write(key: 'access_token', value: accessToken);
     await _storage.write(key: 'refresh_token', value: refreshToken);
+    print('[ApiClient] Tokens persisted to storage');
   }
 
-  /// Refresh access token
+  /// Refresh access token (with lock to prevent concurrent calls)
   Future<bool> _refreshAccessToken() async {
+    // If already refreshing, wait for the result
+    if (_refreshCompleter != null) {
+      print('[API] Waiting for existing refresh to complete');
+      return _refreshCompleter!.future;
+    }
+
     if (_refreshToken == null) return false;
+
+    _refreshCompleter = Completer<bool>();
+    print('[API] Starting token refresh');
 
     try {
       final response = await sharedClient.post(
@@ -121,12 +156,20 @@ class FlowApiClient {
           response.data['data']['access_token'],
           response.data['data']['refresh_token'],
         );
+        print('[API] Token refresh successful');
+        _refreshCompleter!.complete(true);
         return true;
       }
+      print('[API] Token refresh failed: response not successful');
+      _refreshCompleter!.complete(false);
+      return false;
     } catch (e) {
-      // Refresh failed
+      print('[API] Token refresh failed: $e');
+      _refreshCompleter!.complete(false);
+      return false;
+    } finally {
+      _refreshCompleter = null;
     }
-    return false;
   }
 
   /// Check if user is authenticated

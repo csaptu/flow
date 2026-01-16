@@ -17,17 +17,24 @@ const (
 // OpenAIClient is a client for the OpenAI API
 type OpenAIClient struct {
 	apiKey     string
+	projectID  string
 	baseURL    string
 	httpClient *http.Client
 }
 
 // NewOpenAIClient creates a new OpenAI client
 func NewOpenAIClient(apiKey string) (*OpenAIClient, error) {
+	return NewOpenAIClientWithProject(apiKey, "")
+}
+
+// NewOpenAIClientWithProject creates a new OpenAI client with project ID
+func NewOpenAIClientWithProject(apiKey, projectID string) (*OpenAIClient, error) {
 	if apiKey == "" {
 		return nil, fmt.Errorf("OpenAI API key is required")
 	}
 	return &OpenAIClient{
 		apiKey:     apiKey,
+		projectID:  projectID,
 		baseURL:    openAIAPIURL,
 		httpClient: &http.Client{},
 	}, nil
@@ -151,6 +158,9 @@ func (c *OpenAIClient) Complete(ctx context.Context, req CompletionRequest) (*Co
 
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	if c.projectID != "" {
+		httpReq.Header.Set("OpenAI-Project", c.projectID)
+	}
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {

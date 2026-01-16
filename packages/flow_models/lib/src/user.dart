@@ -22,14 +22,20 @@ class User extends Equatable {
   });
 
   factory User.fromJson(Map<String, dynamic> json) {
+    final createdAtStr = json['created_at'] as String?;
+    final updatedAtStr = json['updated_at'] as String?;
     return User(
       id: json['id'] as String,
       email: json['email'] as String,
       emailVerified: json['email_verified'] as bool? ?? false,
       name: json['name'] as String,
       avatarUrl: json['avatar_url'] as String?,
-      createdAt: DateTime.parse(json['created_at'] as String),
-      updatedAt: DateTime.parse(json['updated_at'] as String),
+      createdAt: createdAtStr != null && createdAtStr.isNotEmpty
+          ? DateTime.parse(createdAtStr)
+          : DateTime.now(),
+      updatedAt: updatedAtStr != null && updatedAtStr.isNotEmpty
+          ? DateTime.parse(updatedAtStr)
+          : DateTime.now(),
     );
   }
 

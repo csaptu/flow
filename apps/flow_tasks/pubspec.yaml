@@ -35,6 +35,17 @@ dependencies:
   # Utils
   intl: ^0.18.1
   uuid: ^4.3.3
+  connectivity_plus: ^5.0.2
+  equatable: ^2.0.5
+
+  # File handling
+  file_picker: ^6.1.1
+  image_picker: ^1.0.7
+  url_launcher: ^6.2.4
+
+  # Auth
+  google_sign_in: ^6.2.1
+  js: ^0.6.7  # For web JS interop
 
 dev_dependencies:
   flutter_test:

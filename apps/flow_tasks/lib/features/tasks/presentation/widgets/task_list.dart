@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flow_models/flow_models.dart';
 import 'package:flow_tasks/core/providers/providers.dart';
-import 'package:flow_tasks/features/tasks/presentation/widgets/task_tile.dart';
+import 'package:flow_tasks/features/tasks/presentation/widgets/expandable_task_tile.dart';
 
-enum TaskListType { inbox, today, upcoming, completed }
+enum TaskListType { today, next7days, all, trash, list, inbox, upcoming, completed }
 
 class TaskList extends ConsumerWidget {
   final TaskListType type;
@@ -13,70 +13,47 @@ class TaskList extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final tasksAsync = _getTasksProvider(ref);
+    // Get tasks from local store (instant, includes optimistic updates)
+    final tasks = _getTasksList(ref);
 
-    return tasksAsync.when(
-      data: (tasks) {
-        if (tasks.isEmpty) {
-          return _buildEmptyState();
-        }
+    if (tasks.isEmpty) {
+      return _buildEmptyState();
+    }
 
-        return ListView.builder(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          itemCount: tasks.length,
-          itemBuilder: (context, index) {
-            final task = tasks[index];
-            return TaskTile(
-              task: task,
-              onComplete: () => _completeTask(ref, task),
-              onUncomplete: () => _uncompleteTask(ref, task),
-              onTap: () => _openTaskDetail(context, task),
-            );
-          },
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      itemCount: tasks.length,
+      itemBuilder: (context, index) {
+        final task = tasks[index];
+        return ExpandableTaskTile(
+          task: task,
+          onComplete: () => _completeTask(ref, task),
+          onUncomplete: () => _uncompleteTask(ref, task),
+          onDelete: () => _moveToTrash(ref, task),
         );
       },
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (error, stack) => Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.error_outline, size: 48, color: Colors.red),
-            const SizedBox(height: 16),
-            Text('Error: $error'),
-            const SizedBox(height: 16),
-            FilledButton(
-              onPressed: () => ref.invalidate(_getProviderType()),
-              child: const Text('Retry'),
-            ),
-          ],
-        ),
-      ),
     );
   }
 
-  AsyncValue<List<Task>> _getTasksProvider(WidgetRef ref) {
+  List<Task> _getTasksList(WidgetRef ref) {
     switch (type) {
-      case TaskListType.inbox:
-        return ref.watch(inboxTasksProvider);
       case TaskListType.today:
         return ref.watch(todayTasksProvider);
+      case TaskListType.next7days:
+        return ref.watch(next7DaysTasksProvider);
+      case TaskListType.all:
+        return ref.watch(allTasksProvider);
+      case TaskListType.trash:
+        return ref.watch(trashTasksProvider);
+      case TaskListType.list:
+        // List tasks are handled separately
+        return [];
+      case TaskListType.inbox:
+        return ref.watch(inboxTasksProvider);
       case TaskListType.upcoming:
         return ref.watch(upcomingTasksProvider);
       case TaskListType.completed:
-        return ref.watch(tasksProvider); // TODO: Use completedTasksProvider
-    }
-  }
-
-  ProviderOrFamily _getProviderType() {
-    switch (type) {
-      case TaskListType.inbox:
-        return inboxTasksProvider;
-      case TaskListType.today:
-        return todayTasksProvider;
-      case TaskListType.upcoming:
-        return upcomingTasksProvider;
-      case TaskListType.completed:
-        return tasksProvider;
+        return ref.watch(completedTasksProvider);
     }
   }
 
@@ -85,13 +62,29 @@ class TaskList extends ConsumerWidget {
     IconData icon;
 
     switch (type) {
-      case TaskListType.inbox:
-        icon = Icons.inbox_outlined;
-        message = 'Your inbox is empty.\nAdd a task to get started.';
-        break;
       case TaskListType.today:
         icon = Icons.wb_sunny_outlined;
         message = 'No tasks for today.\nEnjoy your free time!';
+        break;
+      case TaskListType.next7days:
+        icon = Icons.date_range_outlined;
+        message = 'No tasks in the next 7 days.\nPlan ahead by adding due dates.';
+        break;
+      case TaskListType.all:
+        icon = Icons.inbox_outlined;
+        message = 'No tasks yet.\nAdd a task to get started.';
+        break;
+      case TaskListType.trash:
+        icon = Icons.delete_outline;
+        message = 'Trash is empty.';
+        break;
+      case TaskListType.list:
+        icon = Icons.tag;
+        message = 'No tasks in this list.';
+        break;
+      case TaskListType.inbox:
+        icon = Icons.inbox_outlined;
+        message = 'Your inbox is empty.\nAdd a task to get started.';
         break;
       case TaskListType.upcoming:
         icon = Icons.calendar_today_outlined;
@@ -119,19 +112,25 @@ class TaskList extends ConsumerWidget {
     );
   }
 
+  /// Complete task - instant UI update
   Future<void> _completeTask(WidgetRef ref, Task task) async {
-    final service = ref.read(tasksServiceProvider);
-    await service.complete(task.id);
-    ref.invalidate(_getProviderType());
+    final actions = ref.read(taskActionsProvider);
+    await actions.complete(task.id);
   }
 
+  /// Uncomplete task - instant UI update
   Future<void> _uncompleteTask(WidgetRef ref, Task task) async {
-    final service = ref.read(tasksServiceProvider);
-    await service.uncomplete(task.id);
-    ref.invalidate(_getProviderType());
+    final actions = ref.read(taskActionsProvider);
+    await actions.uncomplete(task.id);
   }
 
-  void _openTaskDetail(BuildContext context, Task task) {
-    // TODO: Navigate to task detail
+  /// Move task to trash - instant UI update
+  Future<void> _moveToTrash(WidgetRef ref, Task task) async {
+    final actions = ref.read(taskActionsProvider);
+    await actions.update(task.id, status: 'cancelled');
+  }
+
+  void _openTaskDetail(WidgetRef ref, Task task) {
+    ref.read(selectedTaskIdProvider.notifier).state = task.id;
   }
 }

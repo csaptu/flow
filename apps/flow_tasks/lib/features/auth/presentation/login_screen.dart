@@ -22,6 +22,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   bool _isRegister = false;
   bool _isLoading = false;
+  bool _isGoogleLoading = false;
   String? _error;
 
   @override
@@ -68,6 +69,32 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  Future<void> _signInWithGoogle() async {
+    if (!mounted) return;
+    setState(() {
+      _isGoogleLoading = true;
+      _error = null;
+    });
+
+    try {
+      final authNotifier = ref.read(authStateProvider.notifier);
+      await authNotifier.loginWithGoogle();
+      // Only navigate if login actually succeeded
+      final authState = ref.read(authStateProvider);
+      if (mounted && authState.status == AuthStatus.authenticated) {
+        context.go('/');
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _error = e.toString());
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isGoogleLoading = false);
       }
     }
   }
@@ -135,6 +162,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           prefixIcon: Icon(Icons.person_outline),
                         ),
                         textCapitalization: TextCapitalization.words,
+                        textInputAction: TextInputAction.next,
                         validator: (value) {
                           if (value == null || value.isEmpty) {
                             return 'Please enter your name';
@@ -154,6 +182,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       ),
                       keyboardType: TextInputType.emailAddress,
                       autocorrect: false,
+                      textInputAction: TextInputAction.next,
                       validator: (value) {
                         if (value == null || value.isEmpty) {
                           return 'Please enter your email';
@@ -174,6 +203,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         prefixIcon: Icon(Icons.lock_outline),
                       ),
                       obscureText: true,
+                      textInputAction: TextInputAction.done,
+                      onFieldSubmitted: (_) => _submit(),
                       validator: (value) {
                         if (value == null || value.isEmpty) {
                           return 'Please enter your password';
@@ -206,6 +237,53 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               ),
                             )
                           : Text(_isRegister ? 'Create Account' : 'Sign In'),
+                    ),
+                    const SizedBox(height: FlowSpacing.lg),
+
+                    // Divider
+                    Row(
+                      children: [
+                        const Expanded(child: Divider()),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: FlowSpacing.md),
+                          child: Text(
+                            'or',
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  color: FlowColors.lightTextSecondary,
+                                ),
+                          ),
+                        ),
+                        const Expanded(child: Divider()),
+                      ],
+                    ),
+                    const SizedBox(height: FlowSpacing.lg),
+
+                    // Google sign-in button
+                    OutlinedButton.icon(
+                      onPressed: _isGoogleLoading ? null : _signInWithGoogle,
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius:
+                              BorderRadius.circular(FlowSpacing.radiusSm),
+                        ),
+                      ),
+                      icon: _isGoogleLoading
+                          ? const SizedBox(
+                              height: 20,
+                              width: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text(
+                              'G',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF757575),
+                              ),
+                            ),
+                      label: const Text('Continue with Google'),
                     ),
                     const SizedBox(height: FlowSpacing.md),
 

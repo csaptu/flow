@@ -10,6 +10,7 @@ class TaskTile extends StatelessWidget {
   final VoidCallback onTap;
   final VoidCallback onComplete;
   final VoidCallback onUncomplete;
+  final VoidCallback? onDelete;
 
   const TaskTile({
     super.key,
@@ -17,6 +18,7 @@ class TaskTile extends StatelessWidget {
     required this.onTap,
     required this.onComplete,
     required this.onUncomplete,
+    this.onDelete,
   });
 
   @override
@@ -24,7 +26,7 @@ class TaskTile extends StatelessWidget {
     final colors = context.flowColors;
     final isCompleted = task.isCompleted;
 
-    return Container(
+    Widget tile = Container(
       margin: const EdgeInsets.only(bottom: 2),
       child: Material(
         color: Colors.transparent,
@@ -89,16 +91,37 @@ class TaskTile extends StatelessWidget {
         ),
       ),
     );
+
+    // Wrap with Dismissible for swipe-to-delete
+    if (onDelete != null) {
+      tile = Dismissible(
+        key: Key('task_${task.id}'),
+        direction: DismissDirection.endToStart,
+        onDismissed: (_) => onDelete!(),
+        background: Container(
+          alignment: Alignment.centerRight,
+          padding: const EdgeInsets.only(right: 20),
+          color: colors.error,
+          child: const Icon(
+            Icons.delete_outline,
+            color: Colors.white,
+          ),
+        ),
+        child: tile,
+      );
+    }
+
+    return tile;
   }
 
-  bool get _hasMetadata =>
-      task.dueDate != null || task.aiSteps.isNotEmpty || task.groupName != null;
+  // Always show metadata row since we show createdAt when no dueDate
+  bool get _hasMetadata => true;
 
   Widget _buildMetadataRow(BuildContext context) {
     final colors = context.flowColors;
     final parts = <Widget>[];
 
-    // Due date
+    // Due date or created date
     if (task.dueDate != null) {
       final isOverdue = task.isOverdue;
       parts.add(Row(
@@ -115,6 +138,26 @@ class TaskTile extends StatelessWidget {
             style: TextStyle(
               fontSize: 12,
               color: isOverdue ? colors.error : colors.textTertiary,
+            ),
+          ),
+        ],
+      ));
+    } else {
+      // Show created date when no due date
+      parts.add(Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.add_rounded,
+            size: 12,
+            color: colors.textTertiary,
+          ),
+          const SizedBox(width: 4),
+          Text(
+            _formatDate(task.createdAt),
+            style: TextStyle(
+              fontSize: 12,
+              color: colors.textTertiary,
             ),
           ),
         ],

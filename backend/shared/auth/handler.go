@@ -17,6 +17,7 @@ import (
 	"github.com/csaptu/flow/pkg/config"
 	"github.com/csaptu/flow/pkg/httputil"
 	"github.com/csaptu/flow/pkg/middleware"
+	"github.com/csaptu/flow/pkg/oauth"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -281,9 +282,96 @@ func (h *Handler) GoogleOAuth(c *fiber.Ctx) error {
 		return httputil.BadRequest(c, "invalid request body")
 	}
 
-	// TODO: Verify Google ID token
-	// For now, return not implemented
-	return httputil.ServiceUnavailable(c, "Google OAuth not yet implemented")
+	if req.IDToken == "" {
+		return httputil.BadRequest(c, "id_token is required")
+	}
+
+	// Check if Google OAuth is configured
+	if h.config.Auth.GoogleClientID == "" {
+		return httputil.ServiceUnavailable(c, "Google OAuth not configured")
+	}
+
+	// Try to verify as ID token first, then as access token
+	var googleUser *oauth.GoogleUser
+	var err error
+
+	// First try ID token verification
+	googleUser, err = oauth.VerifyGoogleIDToken(c.Context(), req.IDToken, h.config.Auth.GoogleClientID)
+	if err != nil {
+		// If ID token verification fails, try as access token
+		googleUser, err = oauth.VerifyGoogleAccessToken(c.Context(), req.IDToken)
+		if err != nil {
+			return httputil.Unauthorized(c, "invalid Google token: "+err.Error())
+		}
+	}
+
+	// Check if user already exists by Google ID
+	var user models.User
+	err = h.db.QueryRow(c.Context(),
+		`SELECT id, email, email_verified, name, avatar_url, google_id, created_at, updated_at
+		 FROM users WHERE google_id = $1 AND deleted_at IS NULL`,
+		googleUser.GoogleID,
+	).Scan(&user.ID, &user.Email, &user.EmailVerified, &user.Name, &user.AvatarURL,
+		&user.GoogleID, &user.CreatedAt, &user.UpdatedAt)
+
+	if err == pgx.ErrNoRows {
+		// Check if email already exists (link account)
+		err = h.db.QueryRow(c.Context(),
+			`SELECT id, email, email_verified, name, avatar_url, google_id, created_at, updated_at
+			 FROM users WHERE email = $1 AND deleted_at IS NULL`,
+			googleUser.Email,
+		).Scan(&user.ID, &user.Email, &user.EmailVerified, &user.Name, &user.AvatarURL,
+			&user.GoogleID, &user.CreatedAt, &user.UpdatedAt)
+
+		if err == pgx.ErrNoRows {
+			// Create new user
+			user = models.User{
+				ID:            uuid.New(),
+				Email:         googleUser.Email,
+				EmailVerified: googleUser.EmailVerified,
+				Name:          googleUser.Name,
+				GoogleID:      &googleUser.GoogleID,
+				CreatedAt:     time.Now(),
+				UpdatedAt:     time.Now(),
+			}
+			if googleUser.Picture != "" {
+				user.AvatarURL = &googleUser.Picture
+			}
+
+			_, err = h.db.Exec(c.Context(),
+				`INSERT INTO users (id, email, email_verified, name, avatar_url, google_id, created_at, updated_at)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+				user.ID, user.Email, user.EmailVerified, user.Name, user.AvatarURL, user.GoogleID, user.CreatedAt, user.UpdatedAt,
+			)
+			if err != nil {
+				return httputil.InternalError(c, "failed to create user")
+			}
+		} else if err != nil {
+			return httputil.InternalError(c, "database error")
+		} else {
+			// Link Google account to existing user
+			_, err = h.db.Exec(c.Context(),
+				`UPDATE users SET google_id = $1, email_verified = $2, updated_at = $3 WHERE id = $4`,
+				googleUser.GoogleID, true, time.Now(), user.ID,
+			)
+			if err != nil {
+				return httputil.InternalError(c, "failed to link Google account")
+			}
+			user.GoogleID = &googleUser.GoogleID
+			user.EmailVerified = true
+		}
+	} else if err != nil {
+		return httputil.InternalError(c, "database error")
+	}
+
+	// Update last login
+	_, _ = h.db.Exec(c.Context(),
+		"UPDATE users SET last_login_at = $1 WHERE id = $2",
+		time.Now(), user.ID,
+	)
+
+	// Generate tokens
+	return h.issueTokensAndRespond(c, user.ID, user.Email, user.Name)
 }
 
 // AppleOAuth handles Apple OAuth login/registration
@@ -293,8 +381,92 @@ func (h *Handler) AppleOAuth(c *fiber.Ctx) error {
 		return httputil.BadRequest(c, "invalid request body")
 	}
 
-	// TODO: Verify Apple ID token
-	return httputil.ServiceUnavailable(c, "Apple OAuth not yet implemented")
+	if req.IDToken == "" {
+		return httputil.BadRequest(c, "id_token is required")
+	}
+
+	// Check if Apple OAuth is configured
+	if h.config.Auth.AppleClientID == "" {
+		return httputil.ServiceUnavailable(c, "Apple Sign-In not configured")
+	}
+
+	// Verify the Apple ID token
+	appleUser, err := oauth.VerifyAppleIDToken(c.Context(), req.IDToken, h.config.Auth.AppleClientID)
+	if err != nil {
+		return httputil.Unauthorized(c, "invalid Apple token: "+err.Error())
+	}
+
+	// Check if user already exists by Apple ID
+	var user models.User
+	err = h.db.QueryRow(c.Context(),
+		`SELECT id, email, email_verified, name, avatar_url, apple_id, created_at, updated_at
+		 FROM users WHERE apple_id = $1 AND deleted_at IS NULL`,
+		appleUser.AppleID,
+	).Scan(&user.ID, &user.Email, &user.EmailVerified, &user.Name, &user.AvatarURL,
+		&user.AppleID, &user.CreatedAt, &user.UpdatedAt)
+
+	if err == pgx.ErrNoRows {
+		// Check if email already exists (link account)
+		// Note: Apple may provide a private relay email
+		err = h.db.QueryRow(c.Context(),
+			`SELECT id, email, email_verified, name, avatar_url, apple_id, created_at, updated_at
+			 FROM users WHERE email = $1 AND deleted_at IS NULL`,
+			appleUser.Email,
+		).Scan(&user.ID, &user.Email, &user.EmailVerified, &user.Name, &user.AvatarURL,
+			&user.AppleID, &user.CreatedAt, &user.UpdatedAt)
+
+		if err == pgx.ErrNoRows {
+			// Create new user
+			// Note: Apple only provides name on first sign-in, so we extract from request
+			name := "Apple User"
+			if req.Nonce != "" {
+				// Client may pass name in nonce field (common pattern)
+				name = req.Nonce
+			}
+
+			user = models.User{
+				ID:            uuid.New(),
+				Email:         appleUser.Email,
+				EmailVerified: appleUser.EmailVerified,
+				Name:          name,
+				AppleID:       &appleUser.AppleID,
+				CreatedAt:     time.Now(),
+				UpdatedAt:     time.Now(),
+			}
+
+			_, err = h.db.Exec(c.Context(),
+				`INSERT INTO users (id, email, email_verified, name, apple_id, created_at, updated_at)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+				user.ID, user.Email, user.EmailVerified, user.Name, user.AppleID, user.CreatedAt, user.UpdatedAt,
+			)
+			if err != nil {
+				return httputil.InternalError(c, "failed to create user")
+			}
+		} else if err != nil {
+			return httputil.InternalError(c, "database error")
+		} else {
+			// Link Apple account to existing user
+			_, err = h.db.Exec(c.Context(),
+				`UPDATE users SET apple_id = $1, updated_at = $2 WHERE id = $3`,
+				appleUser.AppleID, time.Now(), user.ID,
+			)
+			if err != nil {
+				return httputil.InternalError(c, "failed to link Apple account")
+			}
+			user.AppleID = &appleUser.AppleID
+		}
+	} else if err != nil {
+		return httputil.InternalError(c, "database error")
+	}
+
+	// Update last login
+	_, _ = h.db.Exec(c.Context(),
+		"UPDATE users SET last_login_at = $1 WHERE id = $2",
+		time.Now(), user.ID,
+	)
+
+	// Generate tokens
+	return h.issueTokensAndRespond(c, user.ID, user.Email, user.Name)
 }
 
 // MicrosoftOAuth handles Microsoft OAuth login/registration
@@ -338,11 +510,15 @@ func (h *Handler) issueTokensAndRespond(c *fiber.Ctx, userID uuid.UUID, email, n
 		return httputil.InternalError(c, "failed to store refresh token")
 	}
 
+	now := time.Now().Format(time.RFC3339)
 	return httputil.Success(c, AuthResponse{
 		User: dto.UserResponse{
-			ID:    userID.String(),
-			Email: email,
-			Name:  name,
+			ID:            userID.String(),
+			Email:         email,
+			EmailVerified: false,
+			Name:          name,
+			CreatedAt:     now,
+			UpdatedAt:     now,
 		},
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,

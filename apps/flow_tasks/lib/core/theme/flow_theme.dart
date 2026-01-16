@@ -26,7 +26,7 @@ class FlowTheme {
           color: FlowColors.lightTextPrimary,
         ),
       ),
-      cardTheme: CardTheme(
+      cardTheme: CardThemeData(
         color: FlowColors.lightSurface,
         elevation: 0,
         shape: RoundedRectangleBorder(
@@ -120,7 +120,7 @@ class FlowTheme {
           color: FlowColors.darkTextPrimary,
         ),
       ),
-      cardTheme: CardTheme(
+      cardTheme: CardThemeData(
         color: FlowColors.darkSurface,
         elevation: 0,
         shape: RoundedRectangleBorder(
@@ -164,6 +164,7 @@ class FlowTheme {
 /// Theme extension for custom colors
 class FlowColorScheme extends ThemeExtension<FlowColorScheme> {
   final Color primary;
+  final Color background;
   final Color surface;
   final Color surfaceVariant;
   final Color sidebar;
@@ -175,9 +176,12 @@ class FlowColorScheme extends ThemeExtension<FlowColorScheme> {
   final Color divider;
   final Color border;
   final Color error;
+  final Color warning;
+  final Color success;
 
   FlowColorScheme({
     required this.primary,
+    required this.background,
     required this.surface,
     required this.surfaceVariant,
     required this.sidebar,
@@ -189,10 +193,13 @@ class FlowColorScheme extends ThemeExtension<FlowColorScheme> {
     required this.divider,
     required this.border,
     required this.error,
+    required this.warning,
+    required this.success,
   });
 
   factory FlowColorScheme.light() => FlowColorScheme(
         primary: FlowColors.primary,
+        background: FlowColors.lightBackground,
         surface: FlowColors.lightSurface,
         surfaceVariant: FlowColors.lightSurfaceVariant,
         sidebar: FlowColors.lightSidebar,
@@ -204,10 +211,13 @@ class FlowColorScheme extends ThemeExtension<FlowColorScheme> {
         divider: FlowColors.lightDivider,
         border: FlowColors.lightBorder,
         error: FlowColors.error,
+        warning: FlowColors.warning,
+        success: FlowColors.success,
       );
 
   factory FlowColorScheme.dark() => FlowColorScheme(
         primary: FlowColors.primary,
+        background: FlowColors.darkBackground,
         surface: FlowColors.darkSurface,
         surfaceVariant: FlowColors.darkSurfaceVariant,
         sidebar: FlowColors.darkSidebar,
@@ -219,11 +229,14 @@ class FlowColorScheme extends ThemeExtension<FlowColorScheme> {
         divider: FlowColors.darkDivider,
         border: FlowColors.darkBorder,
         error: FlowColors.error,
+        warning: FlowColors.warning,
+        success: FlowColors.success,
       );
 
   @override
   ThemeExtension<FlowColorScheme> copyWith({
     Color? primary,
+    Color? background,
     Color? surface,
     Color? surfaceVariant,
     Color? sidebar,
@@ -235,9 +248,12 @@ class FlowColorScheme extends ThemeExtension<FlowColorScheme> {
     Color? divider,
     Color? border,
     Color? error,
+    Color? warning,
+    Color? success,
   }) {
     return FlowColorScheme(
       primary: primary ?? this.primary,
+      background: background ?? this.background,
       surface: surface ?? this.surface,
       surfaceVariant: surfaceVariant ?? this.surfaceVariant,
       sidebar: sidebar ?? this.sidebar,
@@ -249,6 +265,8 @@ class FlowColorScheme extends ThemeExtension<FlowColorScheme> {
       divider: divider ?? this.divider,
       border: border ?? this.border,
       error: error ?? this.error,
+      warning: warning ?? this.warning,
+      success: success ?? this.success,
     );
   }
 
@@ -260,6 +278,7 @@ class FlowColorScheme extends ThemeExtension<FlowColorScheme> {
     if (other is! FlowColorScheme) return this;
     return FlowColorScheme(
       primary: Color.lerp(primary, other.primary, t)!,
+      background: Color.lerp(background, other.background, t)!,
       surface: Color.lerp(surface, other.surface, t)!,
       surfaceVariant: Color.lerp(surfaceVariant, other.surfaceVariant, t)!,
       sidebar: Color.lerp(sidebar, other.sidebar, t)!,
@@ -271,6 +290,8 @@ class FlowColorScheme extends ThemeExtension<FlowColorScheme> {
       divider: Color.lerp(divider, other.divider, t)!,
       border: Color.lerp(border, other.border, t)!,
       error: Color.lerp(error, other.error, t)!,
+      warning: Color.lerp(warning, other.warning, t)!,
+      success: Color.lerp(success, other.success, t)!,
     );
   }
 }

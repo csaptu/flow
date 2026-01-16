@@ -112,7 +112,7 @@ func NewMultiClient(config Config) (*MultiClient, error) {
 
 	// Initialize OpenAI client if configured
 	if config.OpenAIAPIKey != "" {
-		client, err := NewOpenAIClient(config.OpenAIAPIKey)
+		client, err := NewOpenAIClientWithProject(config.OpenAIAPIKey, config.OpenAIProjectID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create OpenAI client: %w", err)
 		}
@@ -202,7 +202,9 @@ type Config struct {
 	DefaultProvider Provider
 	AnthropicAPIKey string
 	GoogleAPIKey    string
+	GoogleProjectID string
 	OpenAIAPIKey    string
+	OpenAIProjectID string
 	OllamaHost      string
 	OllamaModel     string
 }
@@ -212,7 +214,9 @@ func NewConfigFromEnv(cfg struct {
 	DefaultProvider string
 	AnthropicAPIKey string
 	GoogleAPIKey    string
+	GoogleProjectID string
 	OpenAIAPIKey    string
+	OpenAIProjectID string
 	OllamaHost      string
 	OllamaModel     string
 }) Config {
@@ -220,7 +224,9 @@ func NewConfigFromEnv(cfg struct {
 		DefaultProvider: Provider(cfg.DefaultProvider),
 		AnthropicAPIKey: cfg.AnthropicAPIKey,
 		GoogleAPIKey:    cfg.GoogleAPIKey,
+		GoogleProjectID: cfg.GoogleProjectID,
 		OpenAIAPIKey:    cfg.OpenAIAPIKey,
+		OpenAIProjectID: cfg.OpenAIProjectID,
 		OllamaHost:      cfg.OllamaHost,
 		OllamaModel:     cfg.OllamaModel,
 	}

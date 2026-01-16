@@ -3,10 +3,12 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/joho/godotenv"
 	"github.com/spf13/viper"
 )
 
@@ -25,6 +27,7 @@ type ServerConfig struct {
 	Port            int           `mapstructure:"PORT"`
 	ShutdownTimeout time.Duration `mapstructure:"SHUTDOWN_TIMEOUT"`
 	Environment     string        `mapstructure:"ENVIRONMENT"` // development, staging, production
+	AllowedOrigins  string        `mapstructure:"ALLOWED_ORIGINS"`
 }
 
 // DatabasesConfig holds database configurations for all domains
@@ -103,16 +106,21 @@ func (c *AuthConfig) RefreshExpiry() time.Duration {
 
 // LLMConfig holds LLM provider configuration
 type LLMConfig struct {
-	DefaultProvider string `mapstructure:"LLM_DEFAULT_PROVIDER"`
-	AnthropicAPIKey string `mapstructure:"ANTHROPIC_API_KEY"`
-	GoogleAPIKey    string `mapstructure:"GOOGLE_AI_API_KEY"`
-	OpenAIAPIKey    string `mapstructure:"OPENAI_API_KEY"`
-	OllamaHost      string `mapstructure:"OLLAMA_HOST"`
-	OllamaModel     string `mapstructure:"OLLAMA_MODEL"`
+	DefaultProvider  string `mapstructure:"LLM_DEFAULT_PROVIDER"`
+	AnthropicAPIKey  string `mapstructure:"ANTHROPIC_API_KEY"`
+	GoogleAPIKey     string `mapstructure:"GOOGLE_AI_API_KEY"`
+	GoogleProjectID  string `mapstructure:"GOOGLE_PROJECT_ID"`
+	OpenAIAPIKey     string `mapstructure:"OPENAI_API_KEY"`
+	OpenAIProjectID  string `mapstructure:"OPENAI_PROJECT_ID"`
+	OllamaHost       string `mapstructure:"OLLAMA_HOST"`
+	OllamaModel      string `mapstructure:"OLLAMA_MODEL"`
 }
 
 // Load loads configuration from environment variables and config files
 func Load() (*Config, error) {
+	// Load .env file from current dir or parent dirs (for running from cmd/)
+	loadEnvFile()
+
 	v := viper.New()
 
 	// Set defaults
@@ -178,6 +186,44 @@ func overrideFromEnv(config *Config) {
 	if secret := os.Getenv("JWT_SECRET"); secret != "" {
 		config.Auth.JWTSecret = secret
 	}
+	if val := os.Getenv("JWT_EXPIRY_MINUTES"); val != "" {
+		if minutes, err := strconv.Atoi(val); err == nil {
+			config.Auth.JWTExpiryMinutes = minutes
+		}
+	}
+	if val := os.Getenv("REFRESH_EXPIRY_DAYS"); val != "" {
+		if days, err := strconv.Atoi(val); err == nil {
+			config.Auth.RefreshExpiryDays = days
+		}
+	}
+
+	// Apply defaults if values are 0 (safety net for viper key mismatch)
+	if config.Auth.JWTExpiryMinutes == 0 {
+		config.Auth.JWTExpiryMinutes = 15
+	}
+	if config.Auth.RefreshExpiryDays == 0 {
+		config.Auth.RefreshExpiryDays = 7
+	}
+
+	// OAuth providers
+	if val := os.Getenv("GOOGLE_CLIENT_ID"); val != "" {
+		config.Auth.GoogleClientID = val
+	}
+	if val := os.Getenv("GOOGLE_CLIENT_SECRET"); val != "" {
+		config.Auth.GoogleClientSecret = val
+	}
+	if val := os.Getenv("APPLE_CLIENT_ID"); val != "" {
+		config.Auth.AppleClientID = val
+	}
+	if val := os.Getenv("APPLE_TEAM_ID"); val != "" {
+		config.Auth.AppleTeamID = val
+	}
+	if val := os.Getenv("APPLE_KEY_ID"); val != "" {
+		config.Auth.AppleKeyID = val
+	}
+	if val := os.Getenv("APPLE_PRIVATE_KEY"); val != "" {
+		config.Auth.ApplePrivateKey = val
+	}
 
 	// Server
 	if port := os.Getenv("PORT"); port != "" {
@@ -187,6 +233,26 @@ func overrideFromEnv(config *Config) {
 	}
 	if env := os.Getenv("ENVIRONMENT"); env != "" {
 		config.Server.Environment = env
+	}
+	if origins := os.Getenv("ALLOWED_ORIGINS"); origins != "" {
+		config.Server.AllowedOrigins = origins
+	}
+
+	// LLM settings
+	if val := os.Getenv("LLM_DEFAULT_PROVIDER"); val != "" {
+		config.LLM.DefaultProvider = val
+	}
+	if val := os.Getenv("OPENAI_API_KEY"); val != "" {
+		config.LLM.OpenAIAPIKey = val
+	}
+	if val := os.Getenv("OPENAI_PROJECT_ID"); val != "" {
+		config.LLM.OpenAIProjectID = val
+	}
+	if val := os.Getenv("ANTHROPIC_API_KEY"); val != "" {
+		config.LLM.AnthropicAPIKey = val
+	}
+	if val := os.Getenv("GOOGLE_AI_API_KEY"); val != "" {
+		config.LLM.GoogleAPIKey = val
 	}
 }
 
@@ -207,6 +273,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("Server.Port", 8080)
 	v.SetDefault("Server.ShutdownTimeout", 10*time.Second)
 	v.SetDefault("Server.Environment", "development")
+	v.SetDefault("Server.AllowedOrigins", "https://flow-tasks-web-production.up.railway.app,https://flow-projects-web-production.up.railway.app,https://flowapp.io,https://app.flowapp.io")
 
 	// Database defaults
 	v.SetDefault("Databases.Shared.Host", "localhost")
@@ -233,12 +300,12 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("Redis.Port", 6379)
 	v.SetDefault("Redis.DB", 0)
 
-	// Auth defaults
-	v.SetDefault("Auth.JWTExpiryMinutes", 15)
-	v.SetDefault("Auth.RefreshExpiryDays", 7)
+	// Auth defaults (keys match mapstructure tags)
+	v.SetDefault("Auth.JWT_EXPIRY_MINUTES", 15)
+	v.SetDefault("Auth.REFRESH_EXPIRY_DAYS", 7)
 
 	// LLM defaults
-	v.SetDefault("LLM.DefaultProvider", "anthropic")
+	v.SetDefault("LLM.DefaultProvider", "openai")
 	v.SetDefault("LLM.OllamaHost", "http://localhost:11434")
 	v.SetDefault("LLM.OllamaModel", "llama3.1:8b")
 }
@@ -251,6 +318,33 @@ func validate(config *Config) error {
 		}
 	}
 	return nil
+}
+
+// loadEnvFile attempts to load .env file from current directory or parent directories
+func loadEnvFile() {
+	// Try current directory first
+	if err := godotenv.Load(); err == nil {
+		return
+	}
+
+	// Walk up to find .env (useful when running from backend/*/cmd/)
+	dir, err := os.Getwd()
+	if err != nil {
+		return
+	}
+
+	for i := 0; i < 5; i++ {
+		envPath := filepath.Join(dir, ".env")
+		if _, err := os.Stat(envPath); err == nil {
+			_ = godotenv.Load(envPath)
+			return
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
 }
 
 // IsDevelopment returns true if running in development mode

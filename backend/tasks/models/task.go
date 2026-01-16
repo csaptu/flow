@@ -1,6 +1,7 @@
 package models
 
 import (
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -54,7 +55,7 @@ type TaskEntity struct {
 	ID    string `json:"id,omitempty"` // Optional reference ID
 }
 
-// TaskGroup represents a group of related tasks
+// TaskGroup represents a group of related tasks (also used as Lists)
 type TaskGroup struct {
 	ID        uuid.UUID  `json:"id" db:"id"`
 	UserID    uuid.UUID  `json:"user_id" db:"user_id"`
@@ -65,6 +66,48 @@ type TaskGroup struct {
 	CreatedAt time.Time  `json:"created_at" db:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at" db:"updated_at"`
 	DeletedAt *time.Time `json:"deleted_at,omitempty" db:"deleted_at"`
+
+	// List hierarchy (Bear-style #List/Sublist)
+	ParentID  *uuid.UUID `json:"parent_id,omitempty" db:"parent_id"`
+	Depth     int        `json:"depth" db:"depth"`       // 0 = root list, 1 = sublist (max)
+	TaskCount int        `json:"task_count" db:"task_count"`
+}
+
+// TaskList is an alias for TaskGroup with additional tree fields
+type TaskList struct {
+	TaskGroup
+	Children  []TaskList `json:"children,omitempty"`
+	FullPath  string     `json:"full_path"` // e.g., "Work/Projects"
+}
+
+// NewTaskGroup creates a new task group/list with default values
+func NewTaskGroup(userID uuid.UUID, name string) *TaskGroup {
+	now := time.Now()
+	return &TaskGroup{
+		ID:        uuid.New(),
+		UserID:    userID,
+		Name:      name,
+		Depth:     0,
+		TaskCount: 0,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+}
+
+// SetParentGroup sets the parent group and updates depth
+func (g *TaskGroup) SetParentGroup(parentID uuid.UUID, parentDepth int) error {
+	if parentDepth >= 1 {
+		return ErrMaxListDepthExceeded
+	}
+	g.ParentID = &parentID
+	g.Depth = parentDepth + 1
+	return nil
+}
+
+// ErrMaxListDepthExceeded is returned when trying to create a list too deep
+var ErrMaxListDepthExceeded = &TaskError{
+	Code:    "MAX_LIST_DEPTH_EXCEEDED",
+	Message: "List depth cannot exceed 1 (maximum 2 levels: List/Sublist).",
 }
 
 // NewTask creates a new task with default values
@@ -146,4 +189,89 @@ type TaskError struct {
 
 func (e *TaskError) Error() string {
 	return e.Message
+}
+
+// =====================================================
+// Attachment Models
+// =====================================================
+
+// AttachmentType represents the type of attachment
+type AttachmentType string
+
+const (
+	AttachmentTypeLink     AttachmentType = "link"
+	AttachmentTypeDocument AttachmentType = "document"
+	AttachmentTypeImage    AttachmentType = "image"
+)
+
+// Attachment represents a file or link attached to a task
+type Attachment struct {
+	ID           uuid.UUID      `json:"id" db:"id"`
+	TaskID       uuid.UUID      `json:"task_id" db:"task_id"`
+	UserID       uuid.UUID      `json:"user_id" db:"user_id"`
+	Type         AttachmentType `json:"type" db:"type"`
+	Name         string         `json:"name" db:"name"`
+	URL          string         `json:"url" db:"url"`
+	MimeType     *string        `json:"mime_type,omitempty" db:"mime_type"`
+	SizeBytes    *int64         `json:"size_bytes,omitempty" db:"size_bytes"`
+	ThumbnailURL *string        `json:"thumbnail_url,omitempty" db:"thumbnail_url"`
+	Metadata     map[string]any `json:"metadata,omitempty" db:"metadata"`
+	Data         []byte         `json:"-" db:"data"` // File content stored as BLOB (not serialized in JSON)
+	CreatedAt    time.Time      `json:"created_at" db:"created_at"`
+	DeletedAt    *time.Time     `json:"deleted_at,omitempty" db:"deleted_at"`
+}
+
+// NewAttachment creates a new attachment
+func NewAttachment(taskID, userID uuid.UUID, attachType AttachmentType, name, url string) *Attachment {
+	return &Attachment{
+		ID:        uuid.New(),
+		TaskID:    taskID,
+		UserID:    userID,
+		Type:      attachType,
+		Name:      name,
+		URL:       url,
+		Metadata:  make(map[string]any),
+		CreatedAt: time.Now(),
+	}
+}
+
+// NewLinkAttachment creates a link attachment
+func NewLinkAttachment(taskID, userID uuid.UUID, name, url string) *Attachment {
+	return NewAttachment(taskID, userID, AttachmentTypeLink, name, url)
+}
+
+// NewFileAttachment creates a file attachment (document or image)
+func NewFileAttachment(taskID, userID uuid.UUID, name, url, mimeType string, sizeBytes int64, isImage bool) *Attachment {
+	attachType := AttachmentTypeDocument
+	if isImage {
+		attachType = AttachmentTypeImage
+	}
+	a := NewAttachment(taskID, userID, attachType, name, url)
+	a.MimeType = &mimeType
+	a.SizeBytes = &sizeBytes
+	return a
+}
+
+// NewFileAttachmentWithData creates a file attachment with inline data storage
+func NewFileAttachmentWithData(taskID, userID uuid.UUID, name, mimeType string, data []byte) *Attachment {
+	isImage := strings.HasPrefix(mimeType, "image/")
+	attachType := AttachmentTypeDocument
+	if isImage {
+		attachType = AttachmentTypeImage
+	}
+
+	sizeBytes := int64(len(data))
+	return &Attachment{
+		ID:        uuid.New(),
+		TaskID:    taskID,
+		UserID:    userID,
+		Type:      attachType,
+		Name:      name,
+		URL:       "", // Will be set to download URL after creation
+		MimeType:  &mimeType,
+		SizeBytes: &sizeBytes,
+		Data:      data,
+		Metadata:  make(map[string]any),
+		CreatedAt: time.Now(),
+	}
 }

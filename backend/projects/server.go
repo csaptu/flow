@@ -3,10 +3,12 @@ package projects
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/compress"
 	"github.com/gofiber/fiber/v2/middleware/helmet"
+	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -66,11 +68,29 @@ func (s *Server) createApp() *fiber.App {
 	app.Use(compress.New())
 	app.Use(helmet.New())
 
+	// Rate limiting - 100 requests per minute per IP
+	app.Use(limiter.New(limiter.Config{
+		Max:        100,
+		Expiration: 1 * time.Minute,
+		KeyGenerator: func(c *fiber.Ctx) string {
+			return c.IP()
+		},
+		LimitReached: func(c *fiber.Ctx) error {
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+				"success": false,
+				"error": fiber.Map{
+					"code":    "RATE_LIMIT_EXCEEDED",
+					"message": "too many requests, please try again later",
+				},
+			})
+		},
+	}))
+
 	// CORS
 	if s.config.IsDevelopment() {
 		app.Use(middleware.DevelopmentCORS())
 	} else {
-		app.Use(middleware.ProductionCORS("https://flowapp.io,https://app.flowapp.io"))
+		app.Use(middleware.ProductionCORS(s.config.Server.AllowedOrigins))
 	}
 
 	return app

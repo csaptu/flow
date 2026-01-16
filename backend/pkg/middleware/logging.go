@@ -31,7 +31,10 @@ func RequestLogger() fiber.Handler {
 		// Get status code
 		status := c.Response().StatusCode()
 
-		// Build log event
+		// Format latency as milliseconds
+		latencyMs := latency.Milliseconds()
+
+		// Build log event with appropriate level based on status
 		var event *zerolog.Event
 		if status >= 500 {
 			event = log.Error()
@@ -40,16 +43,9 @@ func RequestLogger() fiber.Handler {
 		} else {
 			event = log.Info()
 		}
-
-		// Add request details
-		event.
-			Str("request_id", requestID).
-			Str("method", c.Method()).
+		event = event.
 			Str("path", c.Path()).
-			Int("status", status).
-			Dur("latency", latency).
-			Str("ip", c.IP()).
-			Str("user_agent", c.Get("User-Agent"))
+			Int("status", status)
 
 		// Add user ID if authenticated
 		if userID, ok := c.Locals("userID").(uuid.UUID); ok && userID != uuid.Nil {
@@ -61,8 +57,8 @@ func RequestLogger() fiber.Handler {
 			event.Err(err)
 		}
 
-		// Log the request
-		event.Msg("request")
+		// Log with method and latency as the message
+		event.Msgf("%s %dms", c.Method(), latencyMs)
 
 		return err
 	}

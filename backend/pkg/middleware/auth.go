@@ -1,12 +1,14 @@
 package middleware
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/rs/zerolog/log"
 	"github.com/csaptu/flow/common/errors"
 	"github.com/csaptu/flow/pkg/httputil"
 )
@@ -28,6 +30,9 @@ type AuthConfig struct {
 
 // Auth creates a JWT authentication middleware
 func Auth(config AuthConfig) fiber.Handler {
+	// Debug: log secret length on first request
+	log.Debug().Int("jwt_secret_len", len(config.JWTSecret)).Msg("Auth middleware initialized")
+
 	return func(c *fiber.Ctx) error {
 		path := c.Path()
 
@@ -98,6 +103,12 @@ func validateToken(tokenString, secret string) (*TokenClaims, error) {
 	})
 
 	if err != nil {
+		// Log the actual error (Warn level to always show)
+		log.Warn().
+			Err(err).
+			Str("secret_len", fmt.Sprintf("%d", len(secret))).
+			Str("token_preview", tokenString[:min(20, len(tokenString))]).
+			Msg("JWT validation failed")
 		if err == jwt.ErrTokenExpired {
 			return nil, errors.ErrTokenExpired
 		}

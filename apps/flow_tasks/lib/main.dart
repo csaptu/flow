@@ -11,6 +11,15 @@ void main() async {
   final container = ProviderContainer();
   await container.read(initializationProvider.future);
 
+  // Initialize local task store (loads offline queue)
+  await container.read(localTaskStoreProvider.notifier).init();
+
+  // Check auth state before rendering to avoid unauthorized API calls
+  await container.read(authStateProvider.notifier).checkAuth();
+
+  // Start sync engine
+  container.read(syncEngineProvider).start();
+
   runApp(
     UncontrolledProviderScope(
       container: container,

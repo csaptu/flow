@@ -44,12 +44,16 @@ class AuthService {
       'password': password,
     });
 
+    print('[AuthService] Login response: ${response.data}');
+
     if (response.data['success'] == true) {
       final authResponse = AuthResponse.fromJson(response.data['data']);
+      print('[AuthService] Parsed tokens - access: ${authResponse.accessToken.substring(0, 20)}...');
       await _client.setTokens(
         authResponse.accessToken,
         authResponse.refreshToken,
       );
+      print('[AuthService] Tokens stored');
       return authResponse;
     }
 

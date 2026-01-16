@@ -27,9 +27,15 @@ func main() {
 		log.Fatal().Err(err).Msg("Failed to load configuration")
 	}
 
+	if cfg.Auth.JWTSecret == "" {
+		log.Fatal().Msg("JWT_SECRET is empty! Check .env file loading")
+	}
+
 	log.Info().
 		Str("environment", cfg.Server.Environment).
 		Int("port", cfg.Server.Port).
+		Int("jwt_secret_len", len(cfg.Auth.JWTSecret)).
+		Str("jwt_secret_preview", cfg.Auth.JWTSecret[:8]+"...").
 		Msg("Starting shared-service")
 
 	// Create and start server
