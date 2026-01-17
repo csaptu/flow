@@ -121,6 +121,14 @@ func ServiceUnavailable(c *fiber.Ctx, message string) error {
 	return c.Status(fiber.StatusServiceUnavailable).JSON(dto.Error("SERVICE_UNAVAILABLE", message))
 }
 
+// PaymentRequired sends a 402 Payment Required response
+func PaymentRequired(c *fiber.Ctx, message string) error {
+	if message == "" {
+		message = "payment required"
+	}
+	return c.Status(fiber.StatusPaymentRequired).JSON(dto.Error("PAYMENT_REQUIRED", message))
+}
+
 // errorCode maps HTTP status codes to error codes
 func errorCode(status int) string {
 	switch status {

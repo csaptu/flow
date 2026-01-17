@@ -153,6 +153,7 @@ func (s *Server) registerRoutes() {
 	// User routes
 	userHandler := user.NewHandler(s.db)
 	protected.Get("/auth/me", authHandler.Me)
+	protected.Put("/auth/me", authHandler.UpdateProfile)
 	protected.Get("/users/:id", userHandler.GetByID)
 	protected.Put("/users/:id", userHandler.Update)
 	protected.Delete("/users/:id", userHandler.Delete)

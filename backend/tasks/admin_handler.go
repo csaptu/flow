@@ -31,33 +31,20 @@ func (h *AdminHandler) AdminOnly() fiber.Handler {
 			return httputil.Unauthorized(c, "")
 		}
 
-		// Get user email from shared service or JWT claims
-		email := c.Locals("user_email")
-		if email == nil {
-			// Try to get from database (would need cross-service call in production)
-			// For now, check if user_id is in admin_users via email lookup
-			var isAdmin bool
-			err := h.db.QueryRow(c.Context(),
-				`SELECT EXISTS(
-					SELECT 1 FROM admin_users
-					WHERE email = (SELECT email FROM user_subscriptions WHERE user_id = $1)
-				)`,
-				userID,
-			).Scan(&isAdmin)
+		// Get user email from JWT claims (stored by auth middleware)
+		email := middleware.GetEmail(c)
+		if email != "" {
+			// Check if email is in admin_users table
+			isAdmin, _ := h.IsAdmin(c.Context(), email)
+			if isAdmin {
+				return c.Next()
+			}
+		}
 
-			if err != nil || !isAdmin {
-				// Fallback: check by hardcoded admin user ID or email pattern
-				isAdmin = h.isAdminByUserID(c.Context(), userID)
-			}
-
-			if !isAdmin {
-				return httputil.Forbidden(c, "admin access required")
-			}
-		} else if emailStr, ok := email.(string); ok {
-			isAdmin, _ := h.IsAdmin(c.Context(), emailStr)
-			if !isAdmin {
-				return httputil.Forbidden(c, "admin access required")
-			}
+		// Fallback: check by user_id lookup in admin_users
+		isAdmin := h.isAdminByUserID(c.Context(), userID)
+		if !isAdmin {
+			return httputil.Forbidden(c, "admin access required")
 		}
 
 		return c.Next()
@@ -75,22 +62,13 @@ func (h *AdminHandler) IsAdmin(ctx context.Context, email string) (bool, error) 
 }
 
 // isAdminByUserID checks admin status by user ID
+// This is a fallback when email is not available from JWT
 func (h *AdminHandler) isAdminByUserID(ctx context.Context, userID uuid.UUID) bool {
-	var exists bool
-	// This requires the email to be stored somewhere accessible
-	// For now, we'll check if user has a subscription record with admin email
-	h.db.QueryRow(ctx,
-		`SELECT EXISTS(
-			SELECT 1 FROM admin_users au
-			WHERE au.email IN (
-				SELECT email FROM users WHERE id = $1
-				UNION
-				SELECT 'quangtu.pham@gmail.com' WHERE $1::text LIKE '%'
-			)
-		)`,
-		userID,
-	).Scan(&exists)
-	return exists
+	// Since the tasks service doesn't have direct access to user emails,
+	// we rely on the email being included in the JWT token.
+	// If we reach this point, we cannot determine admin status by user_id alone.
+	// The user should have their email in the JWT token which will be checked first.
+	return false
 }
 
 // CheckAdmin endpoint to verify admin status

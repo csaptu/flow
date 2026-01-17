@@ -6,7 +6,10 @@ import 'package:flow_tasks/core/providers/providers.dart';
 import 'package:flow_tasks/core/theme/flow_theme.dart';
 import 'package:intl/intl.dart';
 
-/// Admin dashboard screen
+/// Admin section type
+enum AdminSection { users, orders }
+
+/// Admin dashboard screen - Bear-style with collapsible sections
 class AdminScreen extends ConsumerStatefulWidget {
   const AdminScreen({super.key});
 
@@ -14,160 +17,93 @@ class AdminScreen extends ConsumerStatefulWidget {
   ConsumerState<AdminScreen> createState() => _AdminScreenState();
 }
 
-class _AdminScreenState extends ConsumerState<AdminScreen>
-    with SingleTickerProviderStateMixin {
-  late TabController _tabController;
-  String _userTierFilter = 'all';
-  String _orderStatusFilter = 'all';
+class _AdminScreenState extends ConsumerState<AdminScreen> {
+  String _tierFilter = 'all';
+  bool _usersExpanded = true;
+  bool _ordersExpanded = true;
   int _usersPage = 1;
   int _ordersPage = 1;
 
   @override
-  void initState() {
-    super.initState();
-    _tabController = TabController(length: 2, vsync: this);
-  }
-
-  @override
-  void dispose() {
-    _tabController.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     final colors = context.flowColors;
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isNarrow = screenWidth < 600;
 
     return Scaffold(
       backgroundColor: colors.background,
       appBar: AppBar(
         backgroundColor: colors.surface,
         title: Text(
-          'Admin Dashboard',
-          style: TextStyle(color: colors.textPrimary),
+          'Admin',
+          style: TextStyle(color: colors.textPrimary, fontWeight: FontWeight.w600),
         ),
         leading: IconButton(
           icon: Icon(Icons.arrow_back, color: colors.textPrimary),
           onPressed: () => Navigator.of(context).pop(),
         ),
         elevation: 0,
-        bottom: TabBar(
-          controller: _tabController,
-          labelColor: colors.primary,
-          unselectedLabelColor: colors.textSecondary,
-          indicatorColor: colors.primary,
-          tabs: const [
-            Tab(text: 'Users', icon: Icon(Icons.people)),
-            Tab(text: 'Orders', icon: Icon(Icons.receipt_long)),
-          ],
-        ),
       ),
-      body: TabBarView(
-        controller: _tabController,
+      body: Column(
         children: [
-          _UsersTab(
-            tierFilter: _userTierFilter,
-            page: _usersPage,
-            onTierFilterChanged: (tier) => setState(() {
-              _userTierFilter = tier;
+          // Tier filter bar (shared for both users and orders)
+          _TierFilterBar(
+            selectedTier: _tierFilter,
+            onTierChanged: (tier) => setState(() {
+              _tierFilter = tier;
               _usersPage = 1;
-            }),
-            onPageChanged: (page) => setState(() => _usersPage = page),
-          ),
-          _OrdersTab(
-            statusFilter: _orderStatusFilter,
-            page: _ordersPage,
-            onStatusFilterChanged: (status) => setState(() {
-              _orderStatusFilter = status;
               _ordersPage = 1;
             }),
-            onPageChanged: (page) => setState(() => _ordersPage = page),
+          ),
+
+          // Content
+          Expanded(
+            child: isNarrow
+                ? _buildNarrowLayout(colors)
+                : _buildWideLayout(colors),
           ),
         ],
       ),
     );
   }
-}
 
-class _UsersTab extends ConsumerWidget {
-  final String tierFilter;
-  final int page;
-  final ValueChanged<String> onTierFilterChanged;
-  final ValueChanged<int> onPageChanged;
-
-  const _UsersTab({
-    required this.tierFilter,
-    required this.page,
-    required this.onTierFilterChanged,
-    required this.onPageChanged,
-  });
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final colors = context.flowColors;
-    final usersAsync = ref.watch(adminUsersProvider((
-      tier: tierFilter == 'all' ? null : tierFilter,
-      page: page,
-    )));
-
-    return Column(
+  Widget _buildWideLayout(FlowColorScheme colors) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Filter bar
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: colors.surface,
-            border: Border(bottom: BorderSide(color: colors.border)),
-          ),
-          child: Row(
-            children: [
-              Text('Filter by tier:', style: TextStyle(color: colors.textSecondary)),
-              const SizedBox(width: 12),
-              _FilterChip(
-                label: 'All',
-                isSelected: tierFilter == 'all',
-                onTap: () => onTierFilterChanged('all'),
-              ),
-              const SizedBox(width: 8),
-              _FilterChip(
-                label: 'Free',
-                isSelected: tierFilter == 'free',
-                onTap: () => onTierFilterChanged('free'),
-              ),
-              const SizedBox(width: 8),
-              _FilterChip(
-                label: 'Light',
-                isSelected: tierFilter == 'light',
-                onTap: () => onTierFilterChanged('light'),
-                color: Colors.blue,
-              ),
-              const SizedBox(width: 8),
-              _FilterChip(
-                label: 'Premium',
-                isSelected: tierFilter == 'premium',
-                onTap: () => onTierFilterChanged('premium'),
-                color: Colors.purple,
-              ),
-            ],
+        // Users section
+        Expanded(
+          child: _buildSection(
+            colors: colors,
+            title: 'Users',
+            icon: Icons.people_outline,
+            isExpanded: _usersExpanded,
+            onToggle: () => setState(() => _usersExpanded = !_usersExpanded),
+            content: _UsersContent(
+              tierFilter: _tierFilter,
+              page: _usersPage,
+              onPageChanged: (page) => setState(() => _usersPage = page),
+              onEditUser: (user) => _showEditUserDialog(context, ref, user),
+            ),
           ),
         ),
-
-        // Users list
+        // Divider
+        Container(
+          width: 1,
+          color: colors.divider,
+        ),
+        // Orders section
         Expanded(
-          child: usersAsync.when(
-            data: (response) => _buildUsersList(context, ref, response, colors),
-            loading: () => const Center(child: CircularProgressIndicator()),
-            error: (err, _) => Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.error_outline, size: 48, color: colors.error),
-                  const SizedBox(height: 16),
-                  Text('Failed to load users', style: TextStyle(color: colors.textPrimary)),
-                  const SizedBox(height: 8),
-                  Text(err.toString(), style: TextStyle(color: colors.textSecondary, fontSize: 12)),
-                ],
-              ),
+          child: _buildSection(
+            colors: colors,
+            title: 'Orders',
+            icon: Icons.receipt_long_outlined,
+            isExpanded: _ordersExpanded,
+            onToggle: () => setState(() => _ordersExpanded = !_ordersExpanded),
+            content: _OrdersContent(
+              tierFilter: _tierFilter,
+              page: _ordersPage,
+              onPageChanged: (page) => setState(() => _ordersPage = page),
             ),
           ),
         ),
@@ -175,70 +111,90 @@ class _UsersTab extends ConsumerWidget {
     );
   }
 
-  Widget _buildUsersList(
-    BuildContext context,
-    WidgetRef ref,
-    PaginatedResponse<AdminUser> response,
-    FlowColorScheme colors,
-  ) {
-    final totalPages = response.meta?.totalPages ?? 1;
-
-    if (response.items.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.people_outline, size: 64, color: colors.textTertiary),
-            const SizedBox(height: 16),
-            Text('No users found', style: TextStyle(color: colors.textSecondary)),
-          ],
-        ),
-      );
-    }
-
-    return Column(
-      children: [
-        Expanded(
-          child: ListView.separated(
-            padding: const EdgeInsets.all(16),
-            itemCount: response.items.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 8),
-            itemBuilder: (context, index) {
-              final user = response.items[index];
-              return _UserCard(
-                user: user,
-                onEdit: () => _showEditUserDialog(context, ref, user),
-              );
-            },
+  Widget _buildNarrowLayout(FlowColorScheme colors) {
+    return SingleChildScrollView(
+      child: Column(
+        children: [
+          // Users section
+          _buildSection(
+            colors: colors,
+            title: 'Users',
+            icon: Icons.people_outline,
+            isExpanded: _usersExpanded,
+            onToggle: () => setState(() => _usersExpanded = !_usersExpanded),
+            content: _UsersContent(
+              tierFilter: _tierFilter,
+              page: _usersPage,
+              onPageChanged: (page) => setState(() => _usersPage = page),
+              onEditUser: (user) => _showEditUserDialog(context, ref, user),
+            ),
           ),
-        ),
+          // Orders section
+          _buildSection(
+            colors: colors,
+            title: 'Orders',
+            icon: Icons.receipt_long_outlined,
+            isExpanded: _ordersExpanded,
+            onToggle: () => setState(() => _ordersExpanded = !_ordersExpanded),
+            content: _OrdersContent(
+              tierFilter: _tierFilter,
+              page: _ordersPage,
+              onPageChanged: (page) => setState(() => _ordersPage = page),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
-        // Pagination
-        if (totalPages > 1)
-          Container(
-            padding: const EdgeInsets.all(16),
+  Widget _buildSection({
+    required FlowColorScheme colors,
+    required String title,
+    required IconData icon,
+    required bool isExpanded,
+    required VoidCallback onToggle,
+    required Widget content,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Section header (like Bear list headers)
+        InkWell(
+          onTap: onToggle,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             decoration: BoxDecoration(
               color: colors.surface,
-              border: Border(top: BorderSide(color: colors.border)),
+              border: Border(
+                bottom: BorderSide(color: colors.divider, width: 0.5),
+              ),
             ),
             child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                IconButton(
-                  onPressed: page > 1 ? () => onPageChanged(page - 1) : null,
-                  icon: Icon(Icons.chevron_left, color: colors.textSecondary),
+                Icon(
+                  isExpanded ? Icons.expand_more : Icons.chevron_right,
+                  size: 20,
+                  color: colors.textSecondary,
                 ),
+                const SizedBox(width: 8),
+                Icon(icon, size: 18, color: colors.textSecondary),
+                const SizedBox(width: 8),
                 Text(
-                  'Page $page of $totalPages',
-                  style: TextStyle(color: colors.textSecondary),
-                ),
-                IconButton(
-                  onPressed: page < totalPages ? () => onPageChanged(page + 1) : null,
-                  icon: Icon(Icons.chevron_right, color: colors.textSecondary),
+                  title,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: colors.textSecondary,
+                    letterSpacing: 0.5,
+                  ),
                 ),
               ],
             ),
           ),
+        ),
+        // Section content
+        if (isExpanded)
+          content,
       ],
     );
   }
@@ -255,94 +211,248 @@ class _UsersTab extends ConsumerWidget {
   }
 }
 
-class _UserCard extends StatelessWidget {
-  final AdminUser user;
-  final VoidCallback onEdit;
+/// Tier filter bar (shared for both users and orders)
+class _TierFilterBar extends StatelessWidget {
+  final String selectedTier;
+  final ValueChanged<String> onTierChanged;
 
-  const _UserCard({required this.user, required this.onEdit});
+  const _TierFilterBar({
+    required this.selectedTier,
+    required this.onTierChanged,
+  });
 
   @override
   Widget build(BuildContext context) {
     final colors = context.flowColors;
-    final dateFormat = DateFormat('MMM d, yyyy');
 
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
         color: colors.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: colors.border),
+        border: Border(bottom: BorderSide(color: colors.divider, width: 0.5)),
       ),
       child: Row(
         children: [
-          // Avatar
-          CircleAvatar(
-            backgroundColor: _getTierColor(user.tier).withValues(alpha: 0.2),
-            child: Text(
-              (user.name ?? user.email).substring(0, 1).toUpperCase(),
-              style: TextStyle(
-                color: _getTierColor(user.tier),
-                fontWeight: FontWeight.bold,
-              ),
+          Text(
+            'Filter:',
+            style: TextStyle(
+              fontSize: 13,
+              color: colors.textSecondary,
             ),
           ),
           const SizedBox(width: 12),
-
-          // User info
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        user.name ?? 'No name',
-                        style: TextStyle(
-                          color: colors.textPrimary,
-                          fontWeight: FontWeight.w600,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    _TierBadge(tier: user.tier),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  user.email,
-                  style: TextStyle(color: colors.textSecondary, fontSize: 13),
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 4),
-                Row(
-                  children: [
-                    Icon(Icons.task_alt, size: 14, color: colors.textTertiary),
-                    const SizedBox(width: 4),
-                    Text(
-                      '${user.taskCount} tasks',
-                      style: TextStyle(color: colors.textTertiary, fontSize: 12),
-                    ),
-                    const SizedBox(width: 12),
-                    Icon(Icons.calendar_today, size: 14, color: colors.textTertiary),
-                    const SizedBox(width: 4),
-                    Text(
-                      'Joined ${dateFormat.format(user.createdAt)}',
-                      style: TextStyle(color: colors.textTertiary, fontSize: 12),
-                    ),
-                  ],
-                ),
-              ],
-            ),
+          _FilterChip(
+            label: 'All',
+            isSelected: selectedTier == 'all',
+            onTap: () => onTierChanged('all'),
           ),
-
-          // Edit button
-          IconButton(
-            onPressed: onEdit,
-            icon: Icon(Icons.edit, color: colors.textSecondary),
-            tooltip: 'Edit subscription',
+          const SizedBox(width: 8),
+          _FilterChip(
+            label: 'Free',
+            isSelected: selectedTier == 'free',
+            onTap: () => onTierChanged('free'),
+          ),
+          const SizedBox(width: 8),
+          _FilterChip(
+            label: 'Light',
+            isSelected: selectedTier == 'light',
+            onTap: () => onTierChanged('light'),
+            color: Colors.blue,
+          ),
+          const SizedBox(width: 8),
+          _FilterChip(
+            label: 'Premium',
+            isSelected: selectedTier == 'premium',
+            onTap: () => onTierChanged('premium'),
+            color: Colors.purple,
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Users content section
+class _UsersContent extends ConsumerWidget {
+  final String tierFilter;
+  final int page;
+  final ValueChanged<int> onPageChanged;
+  final Function(AdminUser) onEditUser;
+
+  const _UsersContent({
+    required this.tierFilter,
+    required this.page,
+    required this.onPageChanged,
+    required this.onEditUser,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final colors = context.flowColors;
+    final usersAsync = ref.watch(adminUsersProvider((
+      tier: tierFilter == 'all' ? null : tierFilter,
+      page: page,
+    )));
+
+    return usersAsync.when(
+      data: (response) => _buildUsersList(context, colors, response),
+      loading: () => Container(
+        height: 200,
+        alignment: Alignment.center,
+        child: const CircularProgressIndicator(),
+      ),
+      error: (err, _) => _buildErrorState(colors, 'users', err.toString()),
+    );
+  }
+
+  Widget _buildUsersList(
+    BuildContext context,
+    FlowColorScheme colors,
+    PaginatedResponse<AdminUser> response,
+  ) {
+    if (response.items.isEmpty) {
+      return _buildEmptyState(colors, 'No users found');
+    }
+
+    final totalPages = response.meta?.totalPages ?? 1;
+
+    return Column(
+      children: [
+        // User items (Bear-style list)
+        ...response.items.map((user) => _UserItem(
+          user: user,
+          onTap: () => onEditUser(user),
+        )),
+
+        // Pagination
+        if (totalPages > 1)
+          _Pagination(
+            page: page,
+            totalPages: totalPages,
+            onPageChanged: onPageChanged,
+          ),
+      ],
+    );
+  }
+
+  Widget _buildEmptyState(FlowColorScheme colors, String message) {
+    return Container(
+      padding: const EdgeInsets.all(32),
+      alignment: Alignment.center,
+      child: Column(
+        children: [
+          Icon(Icons.people_outline, size: 48, color: colors.textTertiary),
+          const SizedBox(height: 12),
+          Text(message, style: TextStyle(color: colors.textSecondary)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildErrorState(FlowColorScheme colors, String type, String error) {
+    // Show empty state for common "no data" errors
+    if (error.contains('null') || error.contains('empty') || error.contains('404')) {
+      return _buildEmptyState(colors, 'No $type yet');
+    }
+    return Container(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        children: [
+          Icon(Icons.error_outline, size: 40, color: colors.error),
+          const SizedBox(height: 12),
+          Text(
+            'Failed to load $type',
+            style: TextStyle(color: colors.textPrimary, fontWeight: FontWeight.w500),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            error,
+            style: TextStyle(color: colors.textTertiary, fontSize: 12),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// User item (Bear-style)
+class _UserItem extends StatelessWidget {
+  final AdminUser user;
+  final VoidCallback onTap;
+
+  const _UserItem({required this.user, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.flowColors;
+
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: BorderSide(color: colors.divider.withValues(alpha: 0.5), width: 0.5),
+          ),
+        ),
+        child: Row(
+          children: [
+            // Avatar
+            CircleAvatar(
+              radius: 16,
+              backgroundColor: _getTierColor(user.tier).withValues(alpha: 0.2),
+              child: Text(
+                (user.name ?? user.email).substring(0, 1).toUpperCase(),
+                style: TextStyle(
+                  fontSize: 12,
+                  color: _getTierColor(user.tier),
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+
+            // Info
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          user.name ?? 'No name',
+                          style: TextStyle(
+                            color: colors.textPrimary,
+                            fontWeight: FontWeight.w500,
+                            fontSize: 14,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      _TierBadge(tier: user.tier),
+                    ],
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    user.email,
+                    style: TextStyle(color: colors.textTertiary, fontSize: 12),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+
+            // Task count
+            Text(
+              '${user.taskCount}',
+              style: TextStyle(color: colors.textTertiary, fontSize: 12),
+            ),
+            const SizedBox(width: 4),
+            Icon(Icons.task_alt, size: 14, color: colors.textTertiary),
+          ],
+        ),
       ),
     );
   }
@@ -359,6 +469,349 @@ class _UserCard extends StatelessWidget {
   }
 }
 
+/// Orders content section
+class _OrdersContent extends ConsumerWidget {
+  final String tierFilter;
+  final int page;
+  final ValueChanged<int> onPageChanged;
+
+  const _OrdersContent({
+    required this.tierFilter,
+    required this.page,
+    required this.onPageChanged,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final colors = context.flowColors;
+    final ordersAsync = ref.watch(adminOrdersProvider((
+      status: null,
+      provider: null,
+      tier: tierFilter == 'all' ? null : tierFilter,
+      page: page,
+    )));
+
+    return ordersAsync.when(
+      data: (response) => _buildOrdersList(context, colors, response),
+      loading: () => Container(
+        height: 200,
+        alignment: Alignment.center,
+        child: const CircularProgressIndicator(),
+      ),
+      error: (err, _) => _buildErrorState(colors, 'orders', err.toString()),
+    );
+  }
+
+  Widget _buildOrdersList(
+    BuildContext context,
+    FlowColorScheme colors,
+    PaginatedResponse<Order> response,
+  ) {
+    if (response.items.isEmpty) {
+      return _buildEmptyState(colors, 'No orders found');
+    }
+
+    final totalPages = response.meta?.totalPages ?? 1;
+
+    return Column(
+      children: [
+        // Order items (Bear-style list)
+        ...response.items.map((order) => _OrderItem(order: order)),
+
+        // Pagination
+        if (totalPages > 1)
+          _Pagination(
+            page: page,
+            totalPages: totalPages,
+            onPageChanged: onPageChanged,
+          ),
+      ],
+    );
+  }
+
+  Widget _buildEmptyState(FlowColorScheme colors, String message) {
+    return Container(
+      padding: const EdgeInsets.all(32),
+      alignment: Alignment.center,
+      child: Column(
+        children: [
+          Icon(Icons.receipt_long_outlined, size: 48, color: colors.textTertiary),
+          const SizedBox(height: 12),
+          Text(message, style: TextStyle(color: colors.textSecondary)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildErrorState(FlowColorScheme colors, String type, String error) {
+    // Show empty state for common "no data" errors
+    if (error.contains('null') || error.contains('empty') || error.contains('404')) {
+      return _buildEmptyState(colors, 'No $type yet');
+    }
+    return Container(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        children: [
+          Icon(Icons.error_outline, size: 40, color: colors.error),
+          const SizedBox(height: 12),
+          Text(
+            'Failed to load $type',
+            style: TextStyle(color: colors.textPrimary, fontWeight: FontWeight.w500),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            error,
+            style: TextStyle(color: colors.textTertiary, fontSize: 12),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Order item (Bear-style)
+class _OrderItem extends StatelessWidget {
+  final Order order;
+
+  const _OrderItem({required this.order});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.flowColors;
+    final dateFormat = DateFormat('MMM d, HH:mm');
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(color: colors.divider.withValues(alpha: 0.5), width: 0.5),
+        ),
+      ),
+      child: Row(
+        children: [
+          // Status icon
+          _StatusIcon(status: order.status),
+          const SizedBox(width: 12),
+
+          // Info
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        order.userEmail ?? order.userId.substring(0, 8),
+                        style: TextStyle(
+                          color: colors.textPrimary,
+                          fontWeight: FontWeight.w500,
+                          fontSize: 14,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    Text(
+                      '\$${order.amount.toStringAsFixed(2)}',
+                      style: TextStyle(
+                        color: colors.textPrimary,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        order.planName ?? order.planId,
+                        style: TextStyle(color: colors.textTertiary, fontSize: 12),
+                      ),
+                    ),
+                    Text(
+                      dateFormat.format(order.createdAt),
+                      style: TextStyle(color: colors.textTertiary, fontSize: 11),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Status icon for orders
+class _StatusIcon extends StatelessWidget {
+  final String status;
+
+  const _StatusIcon({required this.status});
+
+  @override
+  Widget build(BuildContext context) {
+    Color color;
+    IconData icon;
+
+    switch (status) {
+      case 'completed':
+        color = Colors.green;
+        icon = Icons.check_circle_outline;
+        break;
+      case 'pending':
+        color = Colors.orange;
+        icon = Icons.schedule;
+        break;
+      case 'failed':
+        color = Colors.red;
+        icon = Icons.error_outline;
+        break;
+      case 'refunded':
+        color = Colors.blue;
+        icon = Icons.replay;
+        break;
+      default:
+        color = Colors.grey;
+        icon = Icons.help_outline;
+    }
+
+    return Icon(icon, size: 20, color: color);
+  }
+}
+
+/// Pagination controls
+class _Pagination extends StatelessWidget {
+  final int page;
+  final int totalPages;
+  final ValueChanged<int> onPageChanged;
+
+  const _Pagination({
+    required this.page,
+    required this.totalPages,
+    required this.onPageChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.flowColors;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          IconButton(
+            onPressed: page > 1 ? () => onPageChanged(page - 1) : null,
+            icon: Icon(Icons.chevron_left, color: colors.textSecondary),
+            iconSize: 20,
+          ),
+          Text(
+            '$page / $totalPages',
+            style: TextStyle(color: colors.textSecondary, fontSize: 12),
+          ),
+          IconButton(
+            onPressed: page < totalPages ? () => onPageChanged(page + 1) : null,
+            icon: Icon(Icons.chevron_right, color: colors.textSecondary),
+            iconSize: 20,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Filter chip
+class _FilterChip extends StatelessWidget {
+  final String label;
+  final bool isSelected;
+  final VoidCallback onTap;
+  final Color? color;
+
+  const _FilterChip({
+    required this.label,
+    required this.isSelected,
+    required this.onTap,
+    this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.flowColors;
+    final chipColor = color ?? colors.primary;
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(
+          color: isSelected ? chipColor.withValues(alpha: 0.15) : colors.background,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isSelected ? chipColor : colors.border,
+            width: 0.5,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: isSelected ? chipColor : colors.textSecondary,
+            fontSize: 12,
+            fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Tier badge
+class _TierBadge extends StatelessWidget {
+  final String tier;
+
+  const _TierBadge({required this.tier});
+
+  @override
+  Widget build(BuildContext context) {
+    Color color;
+    String label;
+
+    switch (tier) {
+      case 'premium':
+        color = Colors.purple;
+        label = 'Pro';
+        break;
+      case 'light':
+        color = Colors.blue;
+        label = 'Light';
+        break;
+      default:
+        color = Colors.grey;
+        label = 'Free';
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+}
+
+/// Edit user dialog
 class _EditUserDialog extends ConsumerStatefulWidget {
   final AdminUser user;
 
@@ -391,106 +844,114 @@ class _EditUserDialogState extends ConsumerState<_EditUserDialog> {
     return AlertDialog(
       backgroundColor: colors.surface,
       title: Text(
-        'Edit User Subscription',
-        style: TextStyle(color: colors.textPrimary),
+        'Edit Subscription',
+        style: TextStyle(color: colors.textPrimary, fontSize: 18),
       ),
       content: SizedBox(
-        width: 400,
+        width: 360,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // User info
-            Text(
-              widget.user.email,
-              style: TextStyle(color: colors.textSecondary),
-            ),
-            if (widget.user.name != null) ...[
-              const SizedBox(height: 4),
-              Text(
-                widget.user.name!,
-                style: TextStyle(
-                  color: colors.textPrimary,
-                  fontWeight: FontWeight.w600,
+            Row(
+              children: [
+                CircleAvatar(
+                  radius: 20,
+                  backgroundColor: Colors.grey.withValues(alpha: 0.2),
+                  child: Text(
+                    (widget.user.name ?? widget.user.email).substring(0, 1).toUpperCase(),
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
                 ),
-              ),
-            ],
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        widget.user.name ?? 'No name',
+                        style: TextStyle(color: colors.textPrimary, fontWeight: FontWeight.w500),
+                      ),
+                      Text(
+                        widget.user.email,
+                        style: TextStyle(color: colors.textTertiary, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
 
-            const SizedBox(height: 24),
+            const SizedBox(height: 20),
 
             // Error message
             if (_error != null) ...[
               Container(
-                padding: const EdgeInsets.all(12),
+                padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
                   color: colors.error.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: Text(_error!, style: TextStyle(color: colors.error)),
+                child: Text(_error!, style: TextStyle(color: colors.error, fontSize: 12)),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
             ],
 
-            // Tier selection
+            // Plan selection
             Text(
-              'Subscription Tier',
-              style: TextStyle(
-                color: colors.textPrimary,
-                fontWeight: FontWeight.w600,
-              ),
+              'Plan',
+              style: TextStyle(color: colors.textSecondary, fontSize: 12, fontWeight: FontWeight.w500),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             plans.when(
-              data: (planList) => DropdownButtonFormField<String>(
-                value: _selectedPlanId,
-                decoration: InputDecoration(
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              data: (planList) => Container(
+                decoration: BoxDecoration(
+                  border: Border.all(color: colors.border),
+                  borderRadius: BorderRadius.circular(8),
                 ),
-                hint: const Text('Select plan'),
-                items: [
-                  const DropdownMenuItem(
-                    value: null,
-                    child: Text('Free (no plan)'),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String?>(
+                    value: _selectedPlanId,
+                    isExpanded: true,
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    hint: const Text('Select plan'),
+                    items: [
+                      const DropdownMenuItem(
+                        value: null,
+                        child: Text('Free (no plan)'),
+                      ),
+                      ...planList.where((p) => !p.isFree).map((plan) => DropdownMenuItem(
+                        value: plan.id,
+                        child: Text('${plan.name} - ${plan.formattedPrice}'),
+                      )),
+                    ],
+                    onChanged: (value) {
+                      setState(() {
+                        _selectedPlanId = value;
+                        if (value == null) {
+                          _selectedTier = 'free';
+                        } else {
+                          final plan = planList.firstWhere((p) => p.id == value);
+                          _selectedTier = plan.tier;
+                        }
+                      });
+                    },
                   ),
-                  ...planList.where((p) => !p.isFree).map((plan) => DropdownMenuItem(
-                    value: plan.id,
-                    child: Text('${plan.name} - ${plan.formattedPrice}'),
-                  )),
-                ],
-                onChanged: (value) {
-                  setState(() {
-                    _selectedPlanId = value;
-                    if (value == null) {
-                      _selectedTier = 'free';
-                    } else {
-                      final plan = planList.firstWhere((p) => p.id == value);
-                      _selectedTier = plan.tier;
-                    }
-                  });
-                },
+                ),
               ),
-              loading: () => const CircularProgressIndicator(),
-              error: (_, __) => Text(
-                'Failed to load plans',
-                style: TextStyle(color: colors.error),
-              ),
+              loading: () => const SizedBox(height: 48, child: Center(child: CircularProgressIndicator())),
+              error: (_, __) => Text('Failed to load plans', style: TextStyle(color: colors.error)),
             ),
-
-            const SizedBox(height: 16),
 
             // Expiration date
             if (_selectedPlanId != null) ...[
+              const SizedBox(height: 16),
               Text(
-                'Expires At',
-                style: TextStyle(
-                  color: colors.textPrimary,
-                  fontWeight: FontWeight.w600,
-                ),
+                'Expires',
+                style: TextStyle(color: colors.textSecondary, fontSize: 12, fontWeight: FontWeight.w500),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 6),
               InkWell(
                 onTap: _selectExpirationDate,
                 child: Container(
@@ -501,21 +962,20 @@ class _EditUserDialogState extends ConsumerState<_EditUserDialog> {
                   ),
                   child: Row(
                     children: [
-                      Icon(Icons.calendar_today, size: 18, color: colors.textSecondary),
+                      Icon(Icons.calendar_today, size: 16, color: colors.textSecondary),
                       const SizedBox(width: 8),
-                      Text(
-                        _expiresAt != null
-                            ? DateFormat('MMM d, yyyy').format(_expiresAt!)
-                            : 'No expiration',
-                        style: TextStyle(color: colors.textPrimary),
+                      Expanded(
+                        child: Text(
+                          _expiresAt != null
+                              ? DateFormat('MMM d, yyyy').format(_expiresAt!)
+                              : 'No expiration',
+                          style: TextStyle(color: colors.textPrimary, fontSize: 14),
+                        ),
                       ),
-                      const Spacer(),
                       if (_expiresAt != null)
-                        IconButton(
-                          onPressed: () => setState(() => _expiresAt = null),
-                          icon: Icon(Icons.clear, size: 18, color: colors.textTertiary),
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
+                        GestureDetector(
+                          onTap: () => setState(() => _expiresAt = null),
+                          child: Icon(Icons.clear, size: 16, color: colors.textTertiary),
                         ),
                     ],
                   ),
@@ -530,15 +990,11 @@ class _EditUserDialogState extends ConsumerState<_EditUserDialog> {
           onPressed: () => Navigator.of(context).pop(false),
           child: Text('Cancel', style: TextStyle(color: colors.textSecondary)),
         ),
-        ElevatedButton(
+        FilledButton(
           onPressed: _isLoading ? null : _saveChanges,
-          style: ElevatedButton.styleFrom(backgroundColor: colors.primary),
+          style: FilledButton.styleFrom(backgroundColor: colors.primary),
           child: _isLoading
-              ? const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
+              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
               : const Text('Save'),
         ),
       ],
@@ -586,403 +1042,5 @@ class _EditUserDialogState extends ConsumerState<_EditUserDialog> {
         });
       }
     }
-  }
-}
-
-class _OrdersTab extends ConsumerWidget {
-  final String statusFilter;
-  final int page;
-  final ValueChanged<String> onStatusFilterChanged;
-  final ValueChanged<int> onPageChanged;
-
-  const _OrdersTab({
-    required this.statusFilter,
-    required this.page,
-    required this.onStatusFilterChanged,
-    required this.onPageChanged,
-  });
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final colors = context.flowColors;
-    final ordersAsync = ref.watch(adminOrdersProvider((
-      status: statusFilter == 'all' ? null : statusFilter,
-      provider: null,
-      tier: null,
-      page: page,
-    )));
-
-    return Column(
-      children: [
-        // Filter bar
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: colors.surface,
-            border: Border(bottom: BorderSide(color: colors.border)),
-          ),
-          child: Row(
-            children: [
-              Text('Filter by status:', style: TextStyle(color: colors.textSecondary)),
-              const SizedBox(width: 12),
-              _FilterChip(
-                label: 'All',
-                isSelected: statusFilter == 'all',
-                onTap: () => onStatusFilterChanged('all'),
-              ),
-              const SizedBox(width: 8),
-              _FilterChip(
-                label: 'Pending',
-                isSelected: statusFilter == 'pending',
-                onTap: () => onStatusFilterChanged('pending'),
-                color: Colors.orange,
-              ),
-              const SizedBox(width: 8),
-              _FilterChip(
-                label: 'Completed',
-                isSelected: statusFilter == 'completed',
-                onTap: () => onStatusFilterChanged('completed'),
-                color: Colors.green,
-              ),
-              const SizedBox(width: 8),
-              _FilterChip(
-                label: 'Failed',
-                isSelected: statusFilter == 'failed',
-                onTap: () => onStatusFilterChanged('failed'),
-                color: Colors.red,
-              ),
-            ],
-          ),
-        ),
-
-        // Orders list
-        Expanded(
-          child: ordersAsync.when(
-            data: (response) => _buildOrdersList(context, response, colors),
-            loading: () => const Center(child: CircularProgressIndicator()),
-            error: (err, _) => Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.error_outline, size: 48, color: colors.error),
-                  const SizedBox(height: 16),
-                  Text('Failed to load orders', style: TextStyle(color: colors.textPrimary)),
-                  const SizedBox(height: 8),
-                  Text(err.toString(), style: TextStyle(color: colors.textSecondary, fontSize: 12)),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildOrdersList(
-    BuildContext context,
-    PaginatedResponse<Order> response,
-    FlowColorScheme colors,
-  ) {
-    final totalPages = response.meta?.totalPages ?? 1;
-
-    if (response.items.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.receipt_long_outlined, size: 64, color: colors.textTertiary),
-            const SizedBox(height: 16),
-            Text('No orders found', style: TextStyle(color: colors.textSecondary)),
-          ],
-        ),
-      );
-    }
-
-    return Column(
-      children: [
-        Expanded(
-          child: ListView.separated(
-            padding: const EdgeInsets.all(16),
-            itemCount: response.items.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 8),
-            itemBuilder: (context, index) {
-              final order = response.items[index];
-              return _OrderCard(order: order);
-            },
-          ),
-        ),
-
-        // Pagination
-        if (totalPages > 1)
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: colors.surface,
-              border: Border(top: BorderSide(color: colors.border)),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                IconButton(
-                  onPressed: page > 1 ? () => onPageChanged(page - 1) : null,
-                  icon: Icon(Icons.chevron_left, color: colors.textSecondary),
-                ),
-                Text(
-                  'Page $page of $totalPages',
-                  style: TextStyle(color: colors.textSecondary),
-                ),
-                IconButton(
-                  onPressed: page < totalPages ? () => onPageChanged(page + 1) : null,
-                  icon: Icon(Icons.chevron_right, color: colors.textSecondary),
-                ),
-              ],
-            ),
-          ),
-      ],
-    );
-  }
-}
-
-class _OrderCard extends StatelessWidget {
-  final Order order;
-
-  const _OrderCard({required this.order});
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = context.flowColors;
-    final dateFormat = DateFormat('MMM d, yyyy HH:mm');
-
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: colors.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: colors.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Header
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  order.id.substring(0, 8),
-                  style: TextStyle(
-                    color: colors.textTertiary,
-                    fontSize: 12,
-                    fontFamily: 'monospace',
-                  ),
-                ),
-              ),
-              _StatusBadge(status: order.status),
-            ],
-          ),
-
-          const SizedBox(height: 12),
-
-          // User and plan
-          Row(
-            children: [
-              Icon(Icons.person, size: 16, color: colors.textSecondary),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  order.userEmail ?? order.userId,
-                  style: TextStyle(color: colors.textPrimary),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 8),
-
-          Row(
-            children: [
-              Icon(Icons.local_offer, size: 16, color: colors.textSecondary),
-              const SizedBox(width: 8),
-              Text(
-                order.planName ?? order.planId,
-                style: TextStyle(color: colors.textSecondary),
-              ),
-              const Spacer(),
-              Text(
-                '\$${order.amount.toStringAsFixed(2)} ${order.currency}',
-                style: TextStyle(
-                  color: colors.textPrimary,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 8),
-
-          // Dates
-          Row(
-            children: [
-              Icon(Icons.schedule, size: 14, color: colors.textTertiary),
-              const SizedBox(width: 4),
-              Text(
-                'Created: ${dateFormat.format(order.createdAt)}',
-                style: TextStyle(color: colors.textTertiary, fontSize: 12),
-              ),
-              if (order.completedAt != null) ...[
-                const SizedBox(width: 16),
-                Icon(Icons.check_circle, size: 14, color: Colors.green),
-                const SizedBox(width: 4),
-                Text(
-                  'Completed: ${dateFormat.format(order.completedAt!)}',
-                  style: TextStyle(color: colors.textTertiary, fontSize: 12),
-                ),
-              ],
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _FilterChip extends StatelessWidget {
-  final String label;
-  final bool isSelected;
-  final VoidCallback onTap;
-  final Color? color;
-
-  const _FilterChip({
-    required this.label,
-    required this.isSelected,
-    required this.onTap,
-    this.color,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = context.flowColors;
-    final chipColor = color ?? colors.primary;
-
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: isSelected ? chipColor.withValues(alpha: 0.15) : colors.background,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: isSelected ? chipColor : colors.border,
-          ),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: isSelected ? chipColor : colors.textSecondary,
-            fontSize: 13,
-            fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _TierBadge extends StatelessWidget {
-  final String tier;
-
-  const _TierBadge({required this.tier});
-
-  @override
-  Widget build(BuildContext context) {
-    Color color;
-    String label;
-
-    switch (tier) {
-      case 'premium':
-        color = Colors.purple;
-        label = 'Premium';
-        break;
-      case 'light':
-        color = Colors.blue;
-        label = 'Light';
-        break;
-      default:
-        color = Colors.grey;
-        label = 'Free';
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: color,
-          fontSize: 11,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-    );
-  }
-}
-
-class _StatusBadge extends StatelessWidget {
-  final String status;
-
-  const _StatusBadge({required this.status});
-
-  @override
-  Widget build(BuildContext context) {
-    Color color;
-    IconData icon;
-
-    switch (status) {
-      case 'completed':
-        color = Colors.green;
-        icon = Icons.check_circle;
-        break;
-      case 'pending':
-        color = Colors.orange;
-        icon = Icons.schedule;
-        break;
-      case 'failed':
-        color = Colors.red;
-        icon = Icons.error;
-        break;
-      case 'refunded':
-        color = Colors.blue;
-        icon = Icons.replay;
-        break;
-      default:
-        color = Colors.grey;
-        icon = Icons.help;
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 14, color: color),
-          const SizedBox(width: 4),
-          Text(
-            status.substring(0, 1).toUpperCase() + status.substring(1),
-            style: TextStyle(
-              color: color,
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
-    );
   }
 }

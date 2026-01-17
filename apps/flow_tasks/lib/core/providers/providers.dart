@@ -92,6 +92,83 @@ class ThemeModeNotifier extends StateNotifier<ThemeMode> {
   }
 }
 
+// =====================================================
+// Timezone Provider
+// =====================================================
+
+/// User's timezone setting
+/// null means use device timezone (default)
+final userTimezoneProvider = StateNotifierProvider<UserTimezoneNotifier, String?>((ref) {
+  return UserTimezoneNotifier();
+});
+
+class UserTimezoneNotifier extends StateNotifier<String?> {
+  UserTimezoneNotifier() : super(null) {
+    _loadTimezone();
+  }
+
+  Future<void> _loadTimezone() async {
+    final prefs = await SharedPreferences.getInstance();
+    final tz = prefs.getString('user_timezone');
+    state = tz; // null means device timezone
+  }
+
+  /// Get the effective timezone (user's choice or device default)
+  String get effectiveTimezone {
+    return state ?? DateTime.now().timeZoneName;
+  }
+
+  /// Get the timezone offset in hours
+  int get offsetHours {
+    return DateTime.now().timeZoneOffset.inHours;
+  }
+
+  /// Set timezone and optionally refresh due dates
+  /// Returns true if timezone was changed
+  Future<bool> setTimezone(String? timezone) async {
+    final previousTimezone = state;
+    if (previousTimezone == timezone) return false;
+
+    state = timezone;
+    final prefs = await SharedPreferences.getInstance();
+    if (timezone == null) {
+      await prefs.remove('user_timezone');
+    } else {
+      await prefs.setString('user_timezone', timezone);
+    }
+    return true;
+  }
+}
+
+/// Common timezone options for the picker
+class TimezoneOption {
+  final String id;
+  final String label;
+  final String offset;
+
+  const TimezoneOption(this.id, this.label, this.offset);
+}
+
+/// List of common timezones
+const commonTimezones = [
+  TimezoneOption('device', 'Device Default', 'Auto'),
+  TimezoneOption('UTC', 'UTC', '+00:00'),
+  TimezoneOption('America/New_York', 'Eastern Time (US)', '-05:00'),
+  TimezoneOption('America/Chicago', 'Central Time (US)', '-06:00'),
+  TimezoneOption('America/Denver', 'Mountain Time (US)', '-07:00'),
+  TimezoneOption('America/Los_Angeles', 'Pacific Time (US)', '-08:00'),
+  TimezoneOption('Europe/London', 'London', '+00:00'),
+  TimezoneOption('Europe/Paris', 'Paris', '+01:00'),
+  TimezoneOption('Europe/Berlin', 'Berlin', '+01:00'),
+  TimezoneOption('Asia/Tokyo', 'Tokyo', '+09:00'),
+  TimezoneOption('Asia/Shanghai', 'Shanghai', '+08:00'),
+  TimezoneOption('Asia/Singapore', 'Singapore', '+08:00'),
+  TimezoneOption('Asia/Ho_Chi_Minh', 'Ho Chi Minh City', '+07:00'),
+  TimezoneOption('Asia/Bangkok', 'Bangkok', '+07:00'),
+  TimezoneOption('Australia/Sydney', 'Sydney', '+11:00'),
+  TimezoneOption('Pacific/Auckland', 'Auckland', '+13:00'),
+];
+
 // Auth state
 final authStateProvider = StateNotifierProvider<AuthStateNotifier, AuthState>(
   (ref) => AuthStateNotifier(ref),
@@ -240,6 +317,15 @@ class AuthStateNotifier extends StateNotifier<AuthState> {
     await authService.logout();
     state = const AuthState(status: AuthStatus.unauthenticated);
   }
+
+  Future<void> updateProfile({String? name, String? avatarUrl}) async {
+    final authService = _ref.read(authServiceProvider);
+    final updatedUser = await authService.updateProfile(
+      name: name,
+      avatarUrl: avatarUrl,
+    );
+    state = state.copyWith(user: updatedUser);
+  }
 }
 
 // Tasks providers - use optimistic local store with server fetch
@@ -372,8 +458,10 @@ class TaskActions {
     // If task contains hashtags, refresh lists after sync completes
     // The backend auto-creates lists from hashtags
     if (title.contains('#')) {
-      // Delay to allow sync to complete, then refresh lists
-      Future.delayed(const Duration(milliseconds: 1500), () {
+      // Refresh lists immediately and after a short delay to catch backend processing
+      _ref.invalidate(_listsFetchProvider);
+      _ref.invalidate(_listTreeFetchProvider);
+      Future.delayed(const Duration(milliseconds: 800), () {
         _ref.invalidate(_listsFetchProvider);
         _ref.invalidate(_listTreeFetchProvider);
       });
@@ -391,6 +479,7 @@ class TaskActions {
     int? priority,
     String? status,
     List<String>? tags,
+    bool? skipAutoCleanup,
   }) async {
     final task = await _store.updateTask(
       taskId,
@@ -400,6 +489,7 @@ class TaskActions {
       priority: priority,
       status: status,
       tags: tags,
+      skipAutoCleanup: skipAutoCleanup,
     );
 
     _syncEngine.syncNow();
@@ -408,7 +498,10 @@ class TaskActions {
     final hasHashtags = (title?.contains('#') ?? false) ||
         (description?.contains('#') ?? false);
     if (hasHashtags) {
-      Future.delayed(const Duration(milliseconds: 1500), () {
+      // Refresh lists immediately and after a short delay to catch backend processing
+      _ref.invalidate(_listsFetchProvider);
+      _ref.invalidate(_listTreeFetchProvider);
+      Future.delayed(const Duration(milliseconds: 800), () {
         _ref.invalidate(_listsFetchProvider);
         _ref.invalidate(_listTreeFetchProvider);
       });
@@ -444,6 +537,20 @@ final taskActionsProvider = Provider<TaskActions>((ref) {
 
 // Sidebar navigation (default to 1 = Next 7 days)
 final selectedSidebarIndexProvider = StateProvider<int>((ref) => 1);
+
+// Group by date toggle (default to true for all views)
+final groupByDateProvider = StateProvider<bool>((ref) => true);
+
+/// Get overdue tasks
+final overdueTasksProvider = Provider<List<Task>>((ref) {
+  final tasks = ref.watch(tasksProvider);
+  final filtered = tasks
+      .where((t) => t.isOverdue && t.status != TaskStatus.completed && t.status != TaskStatus.cancelled)
+      .toList();
+  // Sort by due date ascending (oldest first)
+  filtered.sort((a, b) => (a.dueDate ?? DateTime.now()).compareTo(b.dueDate ?? DateTime.now()));
+  return filtered;
+});
 
 // Selected task for detail panel
 final selectedTaskIdProvider = StateProvider<String?>((ref) => null);
@@ -836,6 +943,59 @@ class AIActions {
     _store.updateTaskFromServer(task);
     return task;
   }
+
+  /// AI: Clean up just the task title
+  Future<Task> cleanTitle(String taskId) async {
+    // Currently uses same endpoint - backend stores original before cleaning
+    final task = await _service.aiClean(taskId);
+    _store.updateTaskFromServer(task);
+    return task;
+  }
+
+  /// AI: Clean up just the task description
+  Future<Task> cleanDescription(String taskId) async {
+    // Currently uses same endpoint - backend stores original before cleaning
+    final task = await _service.aiClean(taskId);
+    _store.updateTaskFromServer(task);
+    return task;
+  }
+
+  /// AI: Rate task complexity (1-10)
+  Future<AIRateResult> rate(String taskId) async {
+    final result = await _service.aiRate(taskId);
+    if (result.task is Task) {
+      _store.updateTaskFromServer(result.task as Task);
+    }
+    return result;
+  }
+
+  /// AI: Extract entities from task
+  Future<AIExtractResult> extract(String taskId) async {
+    final result = await _service.aiExtract(taskId);
+    if (result.task is Task) {
+      _store.updateTaskFromServer(result.task as Task);
+    }
+    return result;
+  }
+
+  /// AI: Suggest reminder time for task
+  Future<AIRemindResult> remind(String taskId) async {
+    final result = await _service.aiRemind(taskId);
+    if (result.task is Task) {
+      _store.updateTaskFromServer(result.task as Task);
+    }
+    return result;
+  }
+
+  /// AI: Draft email based on task
+  Future<AIDraftResult> email(String taskId) async {
+    return await _service.aiEmail(taskId);
+  }
+
+  /// AI: Draft calendar invite based on task
+  Future<AIDraftResult> invite(String taskId) async {
+    return await _service.aiInvite(taskId);
+  }
 }
 
 final aiActionsProvider = Provider<AIActions>((ref) {
@@ -922,6 +1082,85 @@ class AIDraftActions {
 
 final aiDraftActionsProvider = Provider<AIDraftActions>((ref) {
   return AIDraftActions(ref);
+});
+
+// =====================================================
+// AI Preferences Provider
+// =====================================================
+
+/// AI preferences notifier - persists settings locally
+class AIPreferencesNotifier extends StateNotifier<AIPreferences> {
+  AIPreferencesNotifier() : super(AIPreferences.defaults()) {
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final json = prefs.getString('ai_preferences');
+      if (json != null) {
+        final Map<String, dynamic> data =
+            Map<String, dynamic>.from(_decodeJson(json));
+        state = AIPreferences.fromJson(data);
+      }
+    } catch (e) {
+      // Use defaults on error
+    }
+  }
+
+  Map<String, dynamic> _decodeJson(String json) {
+    // Simple JSON parsing for our flat structure
+    final result = <String, dynamic>{};
+    // Remove braces and split by comma
+    final content = json.substring(1, json.length - 1);
+    if (content.isEmpty) return result;
+    final pairs = content.split(',');
+    for (final pair in pairs) {
+      final kv = pair.split(':');
+      if (kv.length == 2) {
+        final key = kv[0].trim().replaceAll('"', '');
+        final value = kv[1].trim().replaceAll('"', '');
+        result[key] = value;
+      }
+    }
+    return result;
+  }
+
+  String _encodeJson(Map<String, dynamic> data) {
+    final pairs = data.entries.map((e) => '"${e.key}":"${e.value}"').join(',');
+    return '{$pairs}';
+  }
+
+  Future<void> setSetting(AIFeature feature, AISetting setting) async {
+    state = state.copyWithFeature(feature: feature, setting: setting);
+    await _save();
+  }
+
+  Future<void> _save() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('ai_preferences', _encodeJson(state.toJson()));
+    } catch (e) {
+      // Ignore save errors
+    }
+  }
+}
+
+final aiPreferencesProvider =
+    StateNotifierProvider<AIPreferencesNotifier, AIPreferences>((ref) {
+  return AIPreferencesNotifier();
+});
+
+/// Check if a feature should run automatically
+final shouldAutoRunProvider = Provider.family<bool, AIFeature>((ref, feature) {
+  final prefs = ref.watch(aiPreferencesProvider);
+  return prefs.getSetting(feature) == AISetting.auto;
+});
+
+/// Check if a feature is enabled (not off)
+final isFeatureEnabledProvider = Provider.family<bool, AIFeature>((ref, feature) {
+  final prefs = ref.watch(aiPreferencesProvider);
+  return prefs.getSetting(feature) != AISetting.off;
 });
 
 // =====================================================

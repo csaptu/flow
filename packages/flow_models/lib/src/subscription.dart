@@ -151,17 +151,17 @@ class Order extends Equatable {
   factory Order.fromJson(Map<String, dynamic> json) {
     return Order(
       id: json['id'] as String,
-      userId: json['user_id'] as String,
+      userId: json['user_id'] as String? ?? '',
       userEmail: json['user_email'] as String?,
-      planId: json['plan_id'] as String,
+      planId: json['plan_id'] as String? ?? '',
       planName: json['plan_name'] as String?,
-      provider: json['provider'] as String,
-      amount: (json['amount'] as num).toDouble(),
+      provider: json['provider'] as String? ?? 'unknown',
+      amount: (json['amount'] as num?)?.toDouble() ?? 0.0,
       currency: json['currency'] as String? ?? 'USD',
-      status: json['status'] as String,
-      createdAt: DateTime.parse(json['created_at'] as String),
+      status: json['status'] as String? ?? 'unknown',
+      createdAt: DateTime.tryParse(json['created_at'] as String? ?? '') ?? DateTime.now(),
       completedAt: json['completed_at'] != null
-          ? DateTime.parse(json['completed_at'] as String)
+          ? DateTime.tryParse(json['completed_at'] as String)
           : null,
     );
   }
@@ -197,18 +197,18 @@ class AdminUser extends Equatable {
   factory AdminUser.fromJson(Map<String, dynamic> json) {
     return AdminUser(
       id: json['id'] as String,
-      email: json['email'] as String,
+      email: json['email'] as String? ?? '',
       name: json['name'] as String?,
       tier: json['tier'] as String? ?? 'free',
       planId: json['plan_id'] as String?,
       subscribedAt: json['subscribed_at'] != null
-          ? DateTime.parse(json['subscribed_at'] as String)
+          ? DateTime.tryParse(json['subscribed_at'] as String)
           : null,
       expiresAt: json['expires_at'] != null
-          ? DateTime.parse(json['expires_at'] as String)
+          ? DateTime.tryParse(json['expires_at'] as String)
           : null,
-      taskCount: json['task_count'] as int? ?? 0,
-      createdAt: DateTime.parse(json['created_at'] as String),
+      taskCount: (json['task_count'] as num?)?.toInt() ?? 0,
+      createdAt: DateTime.tryParse(json['created_at'] as String? ?? '') ?? DateTime.now(),
     );
   }
 

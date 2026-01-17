@@ -241,6 +241,81 @@ class TasksService {
     throw ApiException.fromResponse(response.data);
   }
 
+  /// AI: Rate task complexity (1-10)
+  Future<AIRateResult> aiRate(String id) async {
+    final response = await _dio.post('/tasks/$id/ai/rate');
+
+    if (response.data['success'] == true) {
+      return AIRateResult(
+        task: Task.fromJson(response.data['data']['task']),
+        complexity: response.data['data']['complexity'] as int,
+        reason: response.data['data']['reason'] as String,
+      );
+    }
+
+    throw ApiException.fromResponse(response.data);
+  }
+
+  /// AI: Extract entities from task
+  Future<AIExtractResult> aiExtract(String id) async {
+    final response = await _dio.post('/tasks/$id/ai/extract');
+
+    if (response.data['success'] == true) {
+      return AIExtractResult(
+        task: Task.fromJson(response.data['data']['task']),
+        entities: (response.data['data']['entities'] as List?)
+                ?.map((e) => AIEntity.fromJson(e as Map<String, dynamic>))
+                .toList() ??
+            [],
+      );
+    }
+
+    throw ApiException.fromResponse(response.data);
+  }
+
+  /// AI: Suggest reminder time for task
+  Future<AIRemindResult> aiRemind(String id) async {
+    final response = await _dio.post('/tasks/$id/ai/remind');
+
+    if (response.data['success'] == true) {
+      return AIRemindResult(
+        task: Task.fromJson(response.data['data']['task']),
+        reminderTime: DateTime.parse(response.data['data']['reminder_time']),
+        reason: response.data['data']['reason'] as String,
+      );
+    }
+
+    throw ApiException.fromResponse(response.data);
+  }
+
+  /// AI: Draft email based on task
+  Future<AIDraftResult> aiEmail(String id) async {
+    final response = await _dio.post('/tasks/$id/ai/email');
+
+    if (response.data['success'] == true) {
+      return AIDraftResult(
+        draftId: response.data['data']['draft_id'] as String?,
+        draft: AIDraftContent.fromJson(response.data['data']['draft']),
+      );
+    }
+
+    throw ApiException.fromResponse(response.data);
+  }
+
+  /// AI: Draft calendar invite based on task
+  Future<AIDraftResult> aiInvite(String id) async {
+    final response = await _dio.post('/tasks/$id/ai/invite');
+
+    if (response.data['success'] == true) {
+      return AIDraftResult(
+        draftId: response.data['data']['draft_id'] as String?,
+        draft: AIDraftContent.fromJson(response.data['data']['draft']),
+      );
+    }
+
+    throw ApiException.fromResponse(response.data);
+  }
+
   /// List task groups
   Future<List<TaskGroup>> listGroups() async {
     final response = await _dio.get('/groups');

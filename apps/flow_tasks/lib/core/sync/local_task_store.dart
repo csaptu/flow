@@ -163,6 +163,7 @@ class LocalTaskStore extends StateNotifier<LocalTaskState> {
     int? priority,
     String? status,
     List<String>? tags,
+    bool? skipAutoCleanup,
   }) async {
     // Find existing task
     final existing = state.optimisticTasks[taskId] ?? state.serverTasks[taskId];
@@ -178,6 +179,7 @@ class LocalTaskStore extends StateNotifier<LocalTaskState> {
       priority: priority != null ? Priority.fromInt(priority) : null,
       status: status != null ? TaskStatus.fromString(status) : null,
       tags: tags,
+      skipAutoCleanup: skipAutoCleanup,
       updatedAt: DateTime.now(),
     );
 

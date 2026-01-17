@@ -161,6 +161,11 @@ func (h *TaskHandler) Create(c *fiber.Ctx) error {
 		return httputil.InternalError(c, "failed to create task")
 	}
 
+	// Update task_count for the list (if task was assigned to one)
+	if task.GroupID != nil {
+		h.updateListTaskCount(c.Context(), *task.GroupID)
+	}
+
 	// Auto-process with AI (async, don't block response)
 	go h.autoProcessTaskWithAI(c.Context(), userID, task)
 
@@ -409,6 +414,9 @@ func (h *TaskHandler) Update(c *fiber.Ctx) error {
 		return err
 	}
 
+	// Track old group_id for task_count updates
+	oldGroupID := task.GroupID
+
 	// Apply updates
 	if req.Title != nil {
 		task.Title = *req.Title
@@ -464,6 +472,14 @@ func (h *TaskHandler) Update(c *fiber.Ctx) error {
 		return httputil.InternalError(c, "failed to update task")
 	}
 
+	// Update task_count for affected lists
+	if oldGroupID != nil && (task.GroupID == nil || *oldGroupID != *task.GroupID) {
+		h.updateListTaskCount(c.Context(), *oldGroupID)
+	}
+	if task.GroupID != nil && (oldGroupID == nil || *task.GroupID != *oldGroupID) {
+		h.updateListTaskCount(c.Context(), *task.GroupID)
+	}
+
 	// Auto-process with AI if title or description changed (async)
 	if req.Title != nil || req.Description != nil {
 		go h.autoProcessTaskWithAI(c.Context(), userID, task)
@@ -484,6 +500,13 @@ func (h *TaskHandler) Delete(c *fiber.Ctx) error {
 		return httputil.BadRequest(c, "invalid task ID")
 	}
 
+	// Get task group_id before deletion for task_count update
+	var groupID *uuid.UUID
+	_ = h.db.QueryRow(c.Context(),
+		`SELECT group_id FROM tasks WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`,
+		taskID, userID,
+	).Scan(&groupID)
+
 	// Soft delete task and children
 	now := time.Now()
 	_, err = h.db.Exec(c.Context(),
@@ -492,6 +515,11 @@ func (h *TaskHandler) Delete(c *fiber.Ctx) error {
 	)
 	if err != nil {
 		return httputil.InternalError(c, "failed to delete task")
+	}
+
+	// Update task_count for the list
+	if groupID != nil {
+		h.updateListTaskCount(c.Context(), *groupID)
 	}
 
 	return httputil.NoContent(c)
@@ -509,6 +537,13 @@ func (h *TaskHandler) Complete(c *fiber.Ctx) error {
 		return httputil.BadRequest(c, "invalid task ID")
 	}
 
+	// Get task group_id for task_count update
+	var groupID *uuid.UUID
+	_ = h.db.QueryRow(c.Context(),
+		`SELECT group_id FROM tasks WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`,
+		taskID, userID,
+	).Scan(&groupID)
+
 	now := time.Now()
 	result, err := h.db.Exec(c.Context(),
 		`UPDATE tasks SET status = 'completed', completed_at = $1, version = version + 1, updated_at = $1
@@ -521,6 +556,11 @@ func (h *TaskHandler) Complete(c *fiber.Ctx) error {
 
 	if result.RowsAffected() == 0 {
 		return httputil.NotFound(c, "task")
+	}
+
+	// Update task_count for the list (completed tasks don't count)
+	if groupID != nil {
+		h.updateListTaskCount(c.Context(), *groupID)
 	}
 
 	task, childCount, _ := h.getTask(c.Context(), taskID, userID)
@@ -539,6 +579,13 @@ func (h *TaskHandler) Uncomplete(c *fiber.Ctx) error {
 		return httputil.BadRequest(c, "invalid task ID")
 	}
 
+	// Get task group_id for task_count update
+	var groupID *uuid.UUID
+	_ = h.db.QueryRow(c.Context(),
+		`SELECT group_id FROM tasks WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`,
+		taskID, userID,
+	).Scan(&groupID)
+
 	now := time.Now()
 	result, err := h.db.Exec(c.Context(),
 		`UPDATE tasks SET status = 'pending', completed_at = NULL, version = version + 1, updated_at = $1
@@ -551,6 +598,11 @@ func (h *TaskHandler) Uncomplete(c *fiber.Ctx) error {
 
 	if result.RowsAffected() == 0 {
 		return httputil.NotFound(c, "task")
+	}
+
+	// Update task_count for the list (uncompleted task now counts again)
+	if groupID != nil {
+		h.updateListTaskCount(c.Context(), *groupID)
 	}
 
 	task, childCount, _ := h.getTask(c.Context(), taskID, userID)
@@ -786,8 +838,16 @@ Return ONLY a JSON object:
 		return httputil.InternalError(c, "failed to parse AI response")
 	}
 
-	// Store original and update
-	task.OriginalText = &task.Title
+	// Store original values before cleanup (for revert functionality)
+	// Only store original if it differs from cleaned version
+	if cleaned.Title != task.Title {
+		task.OriginalTitle = &task.Title
+	}
+	if task.Description != nil && cleaned.Summary != "" && cleaned.Summary != *task.Description {
+		task.OriginalDescription = task.Description
+	}
+
+	// Update with cleaned values
 	task.Title = cleaned.Title
 	if cleaned.Summary != "" {
 		task.AISummary = &cleaned.Summary
@@ -796,16 +856,469 @@ Return ONLY a JSON object:
 	task.IncrementVersion()
 
 	_, err = h.db.Exec(c.Context(),
-		`UPDATE tasks SET title = $1, ai_summary = $2, original_text = $3, ai_cleaned_title = true,
-		 version = $4, updated_at = $5
-		 WHERE id = $6 AND user_id = $7`,
-		task.Title, task.AISummary, task.OriginalText, task.Version, task.UpdatedAt, taskID, userID,
+		`UPDATE tasks SET title = $1, ai_summary = $2, original_title = $3, original_description = $4,
+		 ai_cleaned_title = true, version = $5, updated_at = $6
+		 WHERE id = $7 AND user_id = $8`,
+		task.Title, task.AISummary, task.OriginalTitle, task.OriginalDescription,
+		task.Version, task.UpdatedAt, taskID, userID,
 	)
 	if err != nil {
 		return httputil.InternalError(c, "failed to update task")
 	}
 
 	return httputil.Success(c, toTaskResponse(task, childCount))
+}
+
+// AIRate rates the complexity of a task (1-10 scale)
+func (h *TaskHandler) AIRate(c *fiber.Ctx) error {
+	if h.llm == nil {
+		return httputil.ServiceUnavailable(c, "AI service not available")
+	}
+
+	userID, err := middleware.GetUserID(c)
+	if err != nil {
+		return httputil.Unauthorized(c, "")
+	}
+
+	taskID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return httputil.BadRequest(c, "invalid task ID")
+	}
+
+	task, childCount, err := h.getTask(c.Context(), taskID, userID)
+	if err != nil {
+		return err
+	}
+
+	// Check feature access
+	if h.aiService != nil {
+		canUse, _ := h.aiService.CheckAndIncrementUsage(c.Context(), userID, FeatureComplexity)
+		if !canUse {
+			return httputil.PaymentRequired(c, "Upgrade to Light tier for complexity rating")
+		}
+	}
+
+	prompt := fmt.Sprintf(`Rate the complexity of this task on a scale of 1-10.
+
+Task: %s
+%s
+
+Rating scale:
+1-2: Trivial (e.g., "buy milk", "send text")
+3-4: Simple (e.g., "schedule meeting", "write short email")
+5-6: Moderate (e.g., "prepare presentation", "review document")
+7-8: Complex (e.g., "design feature", "plan event")
+9-10: Very complex (e.g., "launch product", "migrate system")
+
+Return ONLY a JSON object:
+{"complexity": <number 1-10>, "reason": "Brief explanation (max 15 words)"}`,
+		task.Title, func() string {
+			if task.Description != nil {
+				return "Description: " + *task.Description
+			}
+			return ""
+		}())
+
+	resp, err := h.llm.Complete(c.Context(), llm.CompletionRequest{
+		Messages: []llm.Message{
+			{Role: "user", Content: prompt},
+		},
+		MaxTokens:   100,
+		Temperature: 0.3,
+	})
+	if err != nil {
+		return httputil.ServiceUnavailable(c, "AI service error")
+	}
+
+	var rated struct {
+		Complexity int    `json:"complexity"`
+		Reason     string `json:"reason"`
+	}
+	if err := json.Unmarshal([]byte(resp.Content), &rated); err != nil {
+		return httputil.InternalError(c, "failed to parse AI response")
+	}
+
+	// Update task with complexity
+	task.Complexity = rated.Complexity
+	task.IncrementVersion()
+
+	_, err = h.db.Exec(c.Context(),
+		`UPDATE tasks SET complexity = $1, version = $2, updated_at = $3
+		 WHERE id = $4 AND user_id = $5`,
+		task.Complexity, task.Version, task.UpdatedAt, taskID, userID,
+	)
+	if err != nil {
+		return httputil.InternalError(c, "failed to update task")
+	}
+
+	return httputil.Success(c, map[string]interface{}{
+		"task":       toTaskResponse(task, childCount),
+		"complexity": rated.Complexity,
+		"reason":     rated.Reason,
+	})
+}
+
+// AIExtract extracts entities (people, places, dates) from a task
+func (h *TaskHandler) AIExtract(c *fiber.Ctx) error {
+	if h.llm == nil {
+		return httputil.ServiceUnavailable(c, "AI service not available")
+	}
+
+	userID, err := middleware.GetUserID(c)
+	if err != nil {
+		return httputil.Unauthorized(c, "")
+	}
+
+	taskID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return httputil.BadRequest(c, "invalid task ID")
+	}
+
+	task, childCount, err := h.getTask(c.Context(), taskID, userID)
+	if err != nil {
+		return err
+	}
+
+	// Check feature access
+	if h.aiService != nil {
+		canUse, _ := h.aiService.CheckAndIncrementUsage(c.Context(), userID, FeatureEntityExtraction)
+		if !canUse {
+			return httputil.PaymentRequired(c, "Upgrade to Light tier for entity extraction")
+		}
+	}
+
+	prompt := fmt.Sprintf(`Extract key entities from this task.
+
+Task: %s
+%s
+
+Return ONLY a JSON object:
+{
+  "entities": [
+    {"type": "person", "value": "name"},
+    {"type": "date", "value": "parsed date"},
+    {"type": "location", "value": "place"},
+    {"type": "organization", "value": "company name"},
+    {"type": "email", "value": "email@example.com"},
+    {"type": "phone", "value": "+1234567890"}
+  ]
+}
+
+Only include entities that are actually present. Leave array empty if none found.`,
+		task.Title, func() string {
+			if task.Description != nil {
+				return "Description: " + *task.Description
+			}
+			return ""
+		}())
+
+	resp, err := h.llm.Complete(c.Context(), llm.CompletionRequest{
+		Messages: []llm.Message{
+			{Role: "user", Content: prompt},
+		},
+		MaxTokens:   300,
+		Temperature: 0.2,
+	})
+	if err != nil {
+		return httputil.ServiceUnavailable(c, "AI service error")
+	}
+
+	var extracted struct {
+		Entities []Entity `json:"entities"`
+	}
+	if err := json.Unmarshal([]byte(resp.Content), &extracted); err != nil {
+		return httputil.InternalError(c, "failed to parse AI response")
+	}
+
+	// Store entities as JSON in task
+	entitiesJSON, _ := json.Marshal(extracted.Entities)
+	task.IncrementVersion()
+
+	_, err = h.db.Exec(c.Context(),
+		`UPDATE tasks SET ai_entities = $1, version = $2, updated_at = $3
+		 WHERE id = $4 AND user_id = $5`,
+		entitiesJSON, task.Version, task.UpdatedAt, taskID, userID,
+	)
+	if err != nil {
+		return httputil.InternalError(c, "failed to update task")
+	}
+
+	return httputil.Success(c, map[string]interface{}{
+		"task":     toTaskResponse(task, childCount),
+		"entities": extracted.Entities,
+	})
+}
+
+// AIRemind suggests a reminder time for a task
+func (h *TaskHandler) AIRemind(c *fiber.Ctx) error {
+	if h.llm == nil {
+		return httputil.ServiceUnavailable(c, "AI service not available")
+	}
+
+	userID, err := middleware.GetUserID(c)
+	if err != nil {
+		return httputil.Unauthorized(c, "")
+	}
+
+	taskID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return httputil.BadRequest(c, "invalid task ID")
+	}
+
+	task, childCount, err := h.getTask(c.Context(), taskID, userID)
+	if err != nil {
+		return err
+	}
+
+	// Check feature access
+	if h.aiService != nil {
+		canUse, _ := h.aiService.CheckAndIncrementUsage(c.Context(), userID, FeatureReminder)
+		if !canUse {
+			return httputil.PaymentRequired(c, "Upgrade to Premium tier for smart reminders")
+		}
+	}
+
+	now := time.Now()
+	dueInfo := ""
+	if task.DueDate != nil {
+		dueInfo = fmt.Sprintf("Due date: %s", task.DueDate.Format("2006-01-02 15:04"))
+	}
+
+	prompt := fmt.Sprintf(`Suggest an appropriate reminder time for this task.
+
+Task: %s
+%s
+%s
+Current time: %s
+
+Return ONLY a JSON object:
+{"reminder_time": "ISO 8601 datetime", "reason": "Brief explanation (max 15 words)"}
+
+Guidelines:
+- Suggest time that gives enough prep time before any deadlines
+- Consider task complexity and urgency
+- Default to morning (9 AM) for general tasks
+- For meetings, suggest 1 day before and 1 hour before`,
+		task.Title, func() string {
+			if task.Description != nil {
+				return "Description: " + *task.Description
+			}
+			return ""
+		}(), dueInfo, now.Format(time.RFC3339))
+
+	resp, err := h.llm.Complete(c.Context(), llm.CompletionRequest{
+		Messages: []llm.Message{
+			{Role: "user", Content: prompt},
+		},
+		MaxTokens:   150,
+		Temperature: 0.3,
+	})
+	if err != nil {
+		return httputil.ServiceUnavailable(c, "AI service error")
+	}
+
+	var suggested struct {
+		ReminderTime string `json:"reminder_time"`
+		Reason       string `json:"reason"`
+	}
+	if err := json.Unmarshal([]byte(resp.Content), &suggested); err != nil {
+		return httputil.InternalError(c, "failed to parse AI response")
+	}
+
+	// Parse and validate reminder time
+	reminderTime, err := time.Parse(time.RFC3339, suggested.ReminderTime)
+	if err != nil {
+		// Try alternate format
+		reminderTime, err = time.Parse("2006-01-02T15:04:05", suggested.ReminderTime)
+		if err != nil {
+			return httputil.InternalError(c, "invalid reminder time from AI")
+		}
+	}
+
+	// Update task with reminder
+	task.ReminderAt = &reminderTime
+	task.IncrementVersion()
+
+	_, err = h.db.Exec(c.Context(),
+		`UPDATE tasks SET reminder_at = $1, version = $2, updated_at = $3
+		 WHERE id = $4 AND user_id = $5`,
+		task.ReminderAt, task.Version, task.UpdatedAt, taskID, userID,
+	)
+	if err != nil {
+		return httputil.InternalError(c, "failed to update task")
+	}
+
+	return httputil.Success(c, map[string]interface{}{
+		"task":          toTaskResponse(task, childCount),
+		"reminder_time": reminderTime,
+		"reason":        suggested.Reason,
+	})
+}
+
+// AIEmail drafts an email based on the task
+func (h *TaskHandler) AIEmail(c *fiber.Ctx) error {
+	if h.llm == nil {
+		return httputil.ServiceUnavailable(c, "AI service not available")
+	}
+
+	userID, err := middleware.GetUserID(c)
+	if err != nil {
+		return httputil.Unauthorized(c, "")
+	}
+
+	taskID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return httputil.BadRequest(c, "invalid task ID")
+	}
+
+	task, _, err := h.getTask(c.Context(), taskID, userID)
+	if err != nil {
+		return err
+	}
+
+	// Check feature access
+	if h.aiService != nil {
+		canUse, _ := h.aiService.CheckAndIncrementUsage(c.Context(), userID, FeatureDraftEmail)
+		if !canUse {
+			return httputil.PaymentRequired(c, "Upgrade to Premium tier for email drafts")
+		}
+	}
+
+	prompt := fmt.Sprintf(`Draft a professional email based on this task.
+
+Task: %s
+%s
+
+Return ONLY a JSON object:
+{
+  "to": "recipient if mentioned, otherwise leave empty",
+  "subject": "Clear, concise email subject",
+  "body": "Professional email body. Be concise but complete. Include greeting and sign-off placeholder."
+}`,
+		task.Title, func() string {
+			if task.Description != nil {
+				return "Description: " + *task.Description
+			}
+			return ""
+		}())
+
+	resp, err := h.llm.Complete(c.Context(), llm.CompletionRequest{
+		Messages: []llm.Message{
+			{Role: "user", Content: prompt},
+		},
+		MaxTokens:   500,
+		Temperature: 0.4,
+	})
+	if err != nil {
+		return httputil.ServiceUnavailable(c, "AI service error")
+	}
+
+	var draft DraftContent
+	if err := json.Unmarshal([]byte(resp.Content), &draft); err != nil {
+		return httputil.InternalError(c, "failed to parse AI response")
+	}
+	draft.Type = "email"
+
+	// Save draft
+	var draftID uuid.UUID
+	if h.aiService != nil {
+		draftID, _ = h.aiService.SaveDraft(c.Context(), userID, taskID, &draft)
+	}
+
+	return httputil.Success(c, map[string]interface{}{
+		"draft_id": draftID,
+		"draft":    draft,
+	})
+}
+
+// AIInvite drafts a calendar invite based on the task
+func (h *TaskHandler) AIInvite(c *fiber.Ctx) error {
+	if h.llm == nil {
+		return httputil.ServiceUnavailable(c, "AI service not available")
+	}
+
+	userID, err := middleware.GetUserID(c)
+	if err != nil {
+		return httputil.Unauthorized(c, "")
+	}
+
+	taskID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return httputil.BadRequest(c, "invalid task ID")
+	}
+
+	task, _, err := h.getTask(c.Context(), taskID, userID)
+	if err != nil {
+		return err
+	}
+
+	// Check feature access
+	if h.aiService != nil {
+		canUse, _ := h.aiService.CheckAndIncrementUsage(c.Context(), userID, FeatureDraftCalendar)
+		if !canUse {
+			return httputil.PaymentRequired(c, "Upgrade to Premium tier for calendar invites")
+		}
+	}
+
+	now := time.Now()
+	dueInfo := ""
+	if task.DueDate != nil {
+		dueInfo = fmt.Sprintf("Due/scheduled: %s", task.DueDate.Format("2006-01-02 15:04"))
+	}
+
+	prompt := fmt.Sprintf(`Create a calendar event based on this task.
+
+Task: %s
+%s
+%s
+Current time: %s
+
+Return ONLY a JSON object:
+{
+  "title": "Event title",
+  "start_time": "ISO 8601 datetime",
+  "end_time": "ISO 8601 datetime",
+  "attendees": ["list of attendees if mentioned"],
+  "body": "Event description/agenda"
+}
+
+Guidelines:
+- Default duration is 30 minutes for calls, 1 hour for meetings
+- If no time specified, suggest next business day at 10 AM`,
+		task.Title, func() string {
+			if task.Description != nil {
+				return "Description: " + *task.Description
+			}
+			return ""
+		}(), dueInfo, now.Format(time.RFC3339))
+
+	resp, err := h.llm.Complete(c.Context(), llm.CompletionRequest{
+		Messages: []llm.Message{
+			{Role: "user", Content: prompt},
+		},
+		MaxTokens:   400,
+		Temperature: 0.4,
+	})
+	if err != nil {
+		return httputil.ServiceUnavailable(c, "AI service error")
+	}
+
+	var draft DraftContent
+	if err := json.Unmarshal([]byte(resp.Content), &draft); err != nil {
+		return httputil.InternalError(c, "failed to parse AI response")
+	}
+	draft.Type = "calendar"
+
+	// Save draft
+	var draftID uuid.UUID
+	if h.aiService != nil {
+		draftID, _ = h.aiService.SaveDraft(c.Context(), userID, taskID, &draft)
+	}
+
+	return httputil.Success(c, map[string]interface{}{
+		"draft_id": draftID,
+		"draft":    draft,
+	})
 }
 
 // Sync handles task synchronization
@@ -984,7 +1497,7 @@ func (h *TaskHandler) getTask(ctx context.Context, taskID, userID uuid.UUID) (*m
 		`SELECT t.id, t.user_id, t.title, t.description, t.ai_summary, t.ai_steps, t.status, t.priority,
 		 t.due_date, t.completed_at, t.tags, t.parent_id, t.depth, t.complexity,
 		 t.group_id, g.name, t.ai_cleaned_title, t.ai_extracted_due, t.ai_decomposed,
-		 t.original_text, t.version, t.created_at, t.updated_at,
+		 t.original_title, t.original_description, t.skip_auto_cleanup, t.version, t.created_at, t.updated_at,
 		 (SELECT COUNT(*) FROM tasks WHERE parent_id = t.id AND deleted_at IS NULL) as children_count
 		 FROM tasks t
 		 LEFT JOIN task_groups g ON t.group_id = g.id
@@ -995,7 +1508,7 @@ func (h *TaskHandler) getTask(ctx context.Context, taskID, userID uuid.UUID) (*m
 		&task.Status, &task.Priority, &task.DueDate, &task.CompletedAt, &task.Tags,
 		&task.ParentID, &task.Depth, &task.Complexity, &task.GroupID, &groupName,
 		&task.AICleanedTitle, &task.AIExtractedDue, &task.AIDecomposed,
-		&task.OriginalText, &task.Version, &task.CreatedAt, &task.UpdatedAt, &childCount,
+		&task.OriginalTitle, &task.OriginalDescription, &task.SkipAutoCleanup, &task.Version, &task.CreatedAt, &task.UpdatedAt, &childCount,
 	)
 
 	if err == pgx.ErrNoRows {
@@ -2099,6 +2612,18 @@ func contains(slice []string, item string) bool {
 		}
 	}
 	return false
+}
+
+// updateListTaskCount recalculates the task count for a specific list
+func (h *TaskHandler) updateListTaskCount(ctx context.Context, listID uuid.UUID) {
+	_, _ = h.db.Exec(ctx,
+		`UPDATE task_groups SET task_count = (
+			SELECT COUNT(*) FROM tasks
+			WHERE group_id = $1 AND deleted_at IS NULL AND status != 'completed'
+		)
+		WHERE id = $1`,
+		listID,
+	)
 }
 
 // =====================================================

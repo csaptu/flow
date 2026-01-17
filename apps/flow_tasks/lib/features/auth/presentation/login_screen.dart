@@ -301,6 +301,24 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             : "Don't have an account? Create one",
                       ),
                     ),
+                    const SizedBox(height: FlowSpacing.xxl),
+                    // Version info
+                    Text(
+                      'v2026-01-17 07:17 GMT+7',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: FlowColors.lightTextSecondary.withOpacity(0.5),
+                          ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'AI Settings & Cleanup Revert',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: FlowColors.lightTextSecondary.withOpacity(0.4),
+                            fontSize: 10,
+                          ),
+                      textAlign: TextAlign.center,
+                    ),
                   ],
                 ),
               ),

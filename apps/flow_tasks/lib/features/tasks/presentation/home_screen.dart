@@ -36,12 +36,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    // Start periodic cleanup timer (every 1 minute)
-    _cleanupTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+    // Start periodic cleanup timer (every 10 minutes - less aggressive)
+    // Cleanup only removes lists whose hashtags are no longer in any tasks
+    _cleanupTimer = Timer.periodic(const Duration(minutes: 10), (_) {
       _runListCleanup();
     });
-    // Run initial cleanup after a short delay
-    Future.delayed(const Duration(seconds: 5), _runListCleanup);
+    // Don't run cleanup on startup - wait for lists to sync properly first
   }
 
   @override
@@ -274,9 +274,40 @@ class _DraggableTaskSheetState extends ConsumerState<_DraggableTaskSheet> {
       DraggableScrollableController();
 
   @override
+  void initState() {
+    super.initState();
+    _controller.addListener(_onSizeChanged);
+  }
+
+  @override
   void dispose() {
+    _controller.removeListener(_onSizeChanged);
     _controller.dispose();
     super.dispose();
+  }
+
+  void _onSizeChanged() {
+    // When dragged up past 0.9, snap to full screen
+    if (_controller.size > 0.9 && _controller.size < 1.0) {
+      _controller.animateTo(
+        1.0,
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+      );
+    }
+  }
+
+  void _handleTap() {
+    // If at full screen, go back to half. Otherwise close.
+    if (_controller.size > 0.9) {
+      _controller.animateTo(
+        0.5,
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+      );
+    } else {
+      Navigator.of(context).pop();
+    }
   }
 
   @override
@@ -303,35 +334,20 @@ class _DraggableTaskSheetState extends ConsumerState<_DraggableTaskSheet> {
           ),
           child: Column(
             children: [
-              // Drag handle
+              // Drag handle - tap to close/collapse
               GestureDetector(
-                onTap: () {
-                  // Toggle between half and full
-                  final currentSize = _controller.size;
-                  if (currentSize < 0.75) {
-                    _controller.animateTo(
-                      1.0,
-                      duration: const Duration(milliseconds: 300),
-                      curve: Curves.easeOut,
-                    );
-                  } else {
-                    _controller.animateTo(
-                      0.5,
-                      duration: const Duration(milliseconds: 300),
-                      curve: Curves.easeOut,
-                    );
-                  }
-                },
+                onTap: _handleTap,
+                behavior: HitTestBehavior.opaque,
                 child: Container(
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(vertical: 12),
                   child: Center(
                     child: Container(
                       width: 36,
-                      height: 4,
+                      height: 3,
                       decoration: BoxDecoration(
-                        color: context.flowColors.textTertiary.withAlpha(100),
-                        borderRadius: BorderRadius.circular(2),
+                        color: context.flowColors.textTertiary.withAlpha(80),
+                        borderRadius: BorderRadius.circular(1.5),
                       ),
                     ),
                   ),
@@ -360,6 +376,9 @@ class _Header extends ConsumerWidget {
     final colors = context.flowColors;
     final selectedListId = ref.watch(selectedListIdProvider);
     final lists = ref.watch(listsProvider);
+    final groupByDate = ref.watch(groupByDateProvider);
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isNarrowScreen = screenWidth < 600;
 
     // Find list name if a list is selected
     String title;
@@ -371,6 +390,77 @@ class _Header extends ConsumerWidget {
       title = selectedIndex < titles.length ? titles[selectedIndex] : 'Tasks';
     }
 
+    // Show group by date button for views that support it (not trash)
+    final showGroupByDate = selectedIndex != 3; // 3 = Trash
+
+    // Mobile layout: two rows (hamburger + actions, then title)
+    if (isNarrowScreen) {
+      return Container(
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: BorderSide(color: colors.divider, width: 0.5),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // First row: hamburger menu + action buttons
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+              child: Row(
+                children: [
+                  // Hamburger menu button
+                  IconButton(
+                    icon: const Icon(Icons.menu),
+                    tooltip: 'Lists',
+                    onPressed: () => _showListsDrawer(context, ref),
+                  ),
+                  const Spacer(),
+                  // Sync indicator
+                  const _SyncIndicator(),
+                  // Group by Date toggle
+                  if (showGroupByDate)
+                    IconButton(
+                      icon: Icon(
+                        Icons.view_agenda_outlined,
+                        color: groupByDate ? colors.primary : colors.textSecondary,
+                      ),
+                      tooltip: groupByDate ? 'Ungroup tasks' : 'Group by date',
+                      onPressed: () {
+                        ref.read(groupByDateProvider.notifier).state = !groupByDate;
+                      },
+                    ),
+                  // Settings
+                  IconButton(
+                    icon: const Icon(Icons.settings_outlined),
+                    tooltip: 'Settings',
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (context) => const SettingsScreen(),
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+            // Second row: List name
+            Padding(
+              padding: const EdgeInsets.only(left: 16, right: 16, bottom: 12),
+              child: Text(
+                title,
+                style: Theme.of(context).textTheme.headlineLarge?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Desktop layout: single row
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
       decoration: BoxDecoration(
@@ -387,33 +477,343 @@ class _Header extends ConsumerWidget {
           const Spacer(),
           // Sync indicator with success animation
           const _SyncIndicator(),
-          // Admin panel
-          IconButton(
-            icon: const Icon(Icons.admin_panel_settings_outlined),
-            tooltip: 'Admin',
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (context) => const AdminScreen(),
+          // Group by Date toggle
+          if (showGroupByDate)
+            Tooltip(
+              message: groupByDate ? 'Ungroup tasks' : 'Group by date',
+              child: IconButton(
+                icon: Icon(
+                  Icons.view_agenda_outlined,
+                  color: groupByDate ? colors.primary : colors.textSecondary,
                 ),
-              );
-            },
-          ),
-          // Settings
-          IconButton(
-            icon: const Icon(Icons.settings_outlined),
-            tooltip: 'Settings',
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (context) => const SettingsScreen(),
-                ),
-              );
-            },
-          ),
+                onPressed: () {
+                  ref.read(groupByDateProvider.notifier).state = !groupByDate;
+                },
+              ),
+            ),
         ],
       ),
     );
+  }
+
+  void _showListsDrawer(BuildContext context, WidgetRef ref) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => const _ListsDrawer(),
+    );
+  }
+}
+
+/// Bottom sheet drawer for selecting lists on mobile
+class _ListsDrawer extends ConsumerWidget {
+  const _ListsDrawer();
+
+  static const _items = [
+    (icon: Icons.today_rounded, label: 'Today', index: 0),
+    (icon: Icons.date_range_rounded, label: 'Next 7 days', index: 1),
+    (icon: Icons.all_inbox_rounded, label: 'All', index: 2),
+    (icon: Icons.delete_outline_rounded, label: 'Trash', index: 3),
+  ];
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final colors = context.flowColors;
+    final selectedIndex = ref.watch(selectedSidebarIndexProvider);
+    final selectedListId = ref.watch(selectedListIdProvider);
+    final lists = ref.watch(listTreeProvider);
+    final archivedLists = ref.watch(archivedListTreeProvider);
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.7,
+      minChildSize: 0.4,
+      maxChildSize: 0.9,
+      builder: (context, scrollController) {
+        return Container(
+          decoration: BoxDecoration(
+            color: colors.surface,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+          ),
+          child: Column(
+            children: [
+              // Drag handle
+              Container(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Container(
+                  width: 32,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: colors.textTertiary.withAlpha(100),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              // Header
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.check_circle,
+                      color: FlowColors.primary,
+                      size: 24,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Flow',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              // Content
+              Expanded(
+                child: ListView(
+                  controller: scrollController,
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  children: [
+                    // Main navigation items
+                    ..._items.map((item) {
+                      final isSelected = item.index == selectedIndex && selectedListId == null;
+                      return _DrawerItem(
+                        icon: item.icon,
+                        label: item.label,
+                        isSelected: isSelected,
+                        onTap: () {
+                          ref.read(selectedSidebarIndexProvider.notifier).state = item.index;
+                          ref.read(selectedListIdProvider.notifier).state = null;
+                          Navigator.of(context).pop();
+                        },
+                      );
+                    }),
+
+                    // Lists section
+                    if (lists.isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                        child: Text(
+                          'Lists',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: colors.textTertiary,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ),
+                      ...lists.map((list) => _DrawerListItem(
+                        list: list,
+                        isSelected: selectedListId == list.id,
+                        isArchived: false,
+                        onTap: () {
+                          ref.read(selectedListIdProvider.notifier).state = list.id;
+                          ref.read(selectedSidebarIndexProvider.notifier).state = 100;
+                          Navigator.of(context).pop();
+                        },
+                      )),
+                    ],
+
+                    // Archived lists section
+                    if (archivedLists.isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.archive_outlined,
+                              size: 14,
+                              color: colors.textTertiary,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              'Archived',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: colors.textTertiary,
+                                letterSpacing: 0.5,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      ...archivedLists.map((list) => _DrawerListItem(
+                        list: list,
+                        isSelected: selectedListId == list.id,
+                        isArchived: true,
+                        onTap: () {
+                          ref.read(selectedListIdProvider.notifier).state = list.id;
+                          ref.read(selectedSidebarIndexProvider.notifier).state = 100;
+                          Navigator.of(context).pop();
+                        },
+                      )),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Drawer navigation item
+class _DrawerItem extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  const _DrawerItem({
+    required this.icon,
+    required this.label,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.flowColors;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+      child: Material(
+        color: isSelected ? colors.sidebarSelected : Colors.transparent,
+        borderRadius: BorderRadius.circular(FlowSpacing.radiusSm),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(FlowSpacing.radiusSm),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Row(
+              children: [
+                Icon(
+                  icon,
+                  size: 22,
+                  color: isSelected ? colors.primary : colors.textSecondary,
+                ),
+                const SizedBox(width: 14),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                    color: isSelected ? colors.textPrimary : colors.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Drawer list item
+class _DrawerListItem extends StatelessWidget {
+  final TaskList list;
+  final bool isSelected;
+  final bool isArchived;
+  final VoidCallback onTap;
+
+  const _DrawerListItem({
+    required this.list,
+    required this.isSelected,
+    required this.isArchived,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.flowColors;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+          child: Material(
+            color: isSelected ? colors.sidebarSelected : Colors.transparent,
+            borderRadius: BorderRadius.circular(FlowSpacing.radiusSm),
+            child: InkWell(
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(FlowSpacing.radiusSm),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.tag,
+                      size: 18,
+                      color: isSelected
+                          ? colors.primary
+                          : isArchived
+                              ? colors.textTertiary
+                              : (list.color != null
+                                  ? _parseColor(list.color!)
+                                  : colors.textSecondary),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Text(
+                        list.name,
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                          color: isSelected
+                              ? colors.textPrimary
+                              : isArchived
+                                  ? colors.textTertiary
+                                  : colors.textSecondary,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (list.taskCount > 0)
+                      Text(
+                        '${list.taskCount}',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: colors.textTertiary,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+        // Sublists
+        if (list.children.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(left: 24),
+            child: Column(
+              children: list.children.map((sublist) => _DrawerListItem(
+                list: sublist,
+                isSelected: false, // TODO: check properly
+                isArchived: isArchived,
+                onTap: onTap,
+              )).toList(),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Color _parseColor(String color) {
+    if (color.startsWith('#')) {
+      return Color(int.parse(color.substring(1), radix: 16) + 0xFF000000);
+    }
+    return Colors.grey;
   }
 }
 
@@ -475,30 +875,72 @@ class _SyncIndicatorState extends ConsumerState<_SyncIndicator>
 
     final isSyncing = syncState.status == SyncStatus.syncing;
     final isOffline = syncState.status == SyncStatus.offline;
-    final hasPending = syncState.pendingCount > 0;
 
-    // Always show indicator (Saved, Saving, or unsaved count)
-
-    // Success state - green checkmark that fades out
+    // Success state - brief "Saved" that fades out
     if (_showSuccess) {
       return FadeTransition(
         opacity: _fadeAnimation,
-        child: Container(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          child: Text(
+            'Saved',
+            style: TextStyle(
+              fontSize: 12,
+              color: colors.textTertiary,
+            ),
+          ),
+        ),
+      );
+    }
+
+    // Only show indicator when syncing or offline
+    // Don't show "N unsaved" - optimistic updates handle this silently
+    if (isSyncing) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 12,
+              height: 12,
+              child: CircularProgressIndicator(
+                strokeWidth: 1.5,
+                color: colors.textTertiary,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              'Saving',
+              style: TextStyle(
+                fontSize: 12,
+                color: colors.textTertiary,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (isOffline) {
+      return Tooltip(
+        message: 'Offline - changes will sync when connected',
+        child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(
-                Icons.cloud_done_outlined,
-                size: 16,
-                color: colors.success,
+                Icons.cloud_off_outlined,
+                size: 14,
+                color: colors.warning,
               ),
               const SizedBox(width: 4),
               Text(
-                'Synced',
+                'Offline',
                 style: TextStyle(
                   fontSize: 12,
-                  color: colors.success,
+                  color: colors.warning,
                 ),
               ),
             ],
@@ -507,71 +949,8 @@ class _SyncIndicatorState extends ConsumerState<_SyncIndicator>
       );
     }
 
-    // Determine label text
-    String label;
-    if (isSyncing) {
-      label = 'Saving...';
-    } else if (isOffline) {
-      label = 'Offline';
-    } else if (hasPending) {
-      label = syncState.pendingCount == 1
-          ? '1 unsaved'
-          : '${syncState.pendingCount} unsaved';
-    } else {
-      label = 'Saved';
-    }
-
-    // Normal sync state
-    return Tooltip(
-      message: isOffline
-          ? 'Offline - ${syncState.pendingCount} changes pending'
-          : hasPending
-              ? '${syncState.pendingCount} changes to sync'
-              : 'All changes saved',
-      child: TextButton.icon(
-        onPressed: isSyncing
-            ? null
-            : () => ref.read(syncEngineProvider).syncNow(),
-        icon: isSyncing
-            ? SizedBox(
-                width: 14,
-                height: 14,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: colors.textTertiary,
-                ),
-              )
-            : Icon(
-                isOffline
-                    ? Icons.cloud_off_outlined
-                    : hasPending
-                        ? Icons.cloud_upload_outlined
-                        : Icons.cloud_done_outlined,
-                size: 16,
-                color: isOffline
-                    ? colors.warning
-                    : hasPending
-                        ? colors.textTertiary
-                        : colors.success,
-              ),
-        label: Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            color: isOffline
-                ? colors.warning
-                : hasPending
-                    ? colors.textTertiary
-                    : colors.success,
-          ),
-        ),
-        style: TextButton.styleFrom(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          minimumSize: Size.zero,
-          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        ),
-      ),
-    );
+    // Hide when everything is normal (synced or pending)
+    return const SizedBox.shrink();
   }
 }
 
@@ -598,6 +977,7 @@ class _Sidebar extends ConsumerWidget {
     final colors = context.flowColors;
     final lists = ref.watch(listTreeProvider);
     final archivedLists = ref.watch(archivedListTreeProvider);
+    final isAdmin = ref.watch(isAdminProvider);
 
     return Container(
       width: width,
@@ -764,6 +1144,70 @@ class _Sidebar extends ConsumerWidget {
                     },
                   )),
                 ],
+              ],
+            ),
+          ),
+
+          // Bottom actions: Settings and Admin
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            decoration: BoxDecoration(
+              border: Border(
+                top: BorderSide(color: colors.divider, width: 0.5),
+              ),
+            ),
+            child: Row(
+              children: [
+                // Settings button (subtle)
+                Tooltip(
+                  message: 'Settings',
+                  child: InkWell(
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (context) => const SettingsScreen(),
+                        ),
+                      );
+                    },
+                    borderRadius: BorderRadius.circular(6),
+                    child: Padding(
+                      padding: const EdgeInsets.all(8),
+                      child: Icon(
+                        Icons.tune,
+                        size: 18,
+                        color: colors.textTertiary,
+                      ),
+                    ),
+                  ),
+                ),
+                // Admin button (only show if admin)
+                isAdmin.when(
+                  data: (admin) => admin
+                      ? Tooltip(
+                          message: 'Admin',
+                          child: InkWell(
+                            onTap: () {
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (context) => const AdminScreen(),
+                                ),
+                              );
+                            },
+                            borderRadius: BorderRadius.circular(6),
+                            child: Padding(
+                              padding: const EdgeInsets.all(8),
+                              child: Icon(
+                                Icons.shield_outlined,
+                                size: 18,
+                                color: colors.textTertiary,
+                              ),
+                            ),
+                          ),
+                        )
+                      : const SizedBox.shrink(),
+                  loading: () => const SizedBox.shrink(),
+                  error: (_, __) => const SizedBox.shrink(),
+                ),
               ],
             ),
           ),

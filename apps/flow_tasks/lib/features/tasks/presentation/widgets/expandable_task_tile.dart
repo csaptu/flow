@@ -133,34 +133,72 @@ class ExpandableTaskTile extends ConsumerWidget {
     );
   }
 
-  bool get _hasMetadata => task.groupName != null;
+  bool get _hasMetadata =>
+      task.groupName != null || (task.description != null && task.description!.isNotEmpty);
 
   Widget _buildMetadataRow(FlowColorScheme colors) {
-    final parts = <Widget>[];
+    final widgets = <Widget>[];
 
-    // List name (from hashtag)
-    if (task.groupName != null) {
-      parts.add(Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            Icons.tag,
-            size: 12,
-            color: colors.textTertiary,
+    // Show first 2 lines of description (without hashtags)
+    if (task.description != null && task.description!.isNotEmpty) {
+      final descriptionPreview = _getDescriptionPreview(task.description!);
+      if (descriptionPreview.isNotEmpty) {
+        widgets.add(Text(
+          descriptionPreview,
+          style: TextStyle(
+            fontSize: 13,
+            color: colors.textSecondary,
+            height: 1.3,
           ),
-          const SizedBox(width: 4),
-          Text(
-            task.groupName!,
-            style: TextStyle(
-              fontSize: 12,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ));
+      }
+    }
+
+    // List name (from hashtag) on separate line
+    if (task.groupName != null) {
+      widgets.add(Padding(
+        padding: EdgeInsets.only(top: widgets.isNotEmpty ? 4 : 0),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.tag,
+              size: 12,
               color: colors.textTertiary,
             ),
-          ),
-        ],
+            const SizedBox(width: 4),
+            Text(
+              task.groupName!,
+              style: TextStyle(
+                fontSize: 12,
+                color: colors.textTertiary,
+              ),
+            ),
+          ],
+        ),
       ));
     }
 
-    return Wrap(spacing: 12, children: parts);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: widgets,
+    );
+  }
+
+  /// Get first 2 lines of description, removing hashtags
+  String _getDescriptionPreview(String description) {
+    // Remove hashtags from description
+    final cleaned = removeHashtags(description).trim();
+    if (cleaned.isEmpty) return '';
+
+    // Get first 2 lines (approximately 120 chars max)
+    final lines = cleaned.split('\n').take(2).join(' ').trim();
+    if (lines.length > 120) {
+      return '${lines.substring(0, 117)}...';
+    }
+    return lines;
   }
 
   bool _isToday(DateTime date) {

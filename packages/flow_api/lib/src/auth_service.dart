@@ -71,6 +71,24 @@ class AuthService {
     throw ApiException.fromResponse(response.data);
   }
 
+  /// Update current user's profile
+  Future<User> updateProfile({
+    String? name,
+    String? avatarUrl,
+  }) async {
+    final data = <String, dynamic>{};
+    if (name != null) data['name'] = name;
+    if (avatarUrl != null) data['avatar_url'] = avatarUrl;
+
+    final response = await _dio.put('/auth/me', data: data);
+
+    if (response.data['success'] == true) {
+      return User.fromJson(response.data['data']);
+    }
+
+    throw ApiException.fromResponse(response.data);
+  }
+
   /// Logout
   Future<void> logout() async {
     try {

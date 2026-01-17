@@ -97,6 +97,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 isSelected: _selectedSection == 'appearance',
                 onTap: () => setState(() => _selectedSection = 'appearance'),
               ),
+              _SidebarItem(
+                icon: Icons.auto_fix_high_outlined,
+                label: 'AI & Agentic',
+                isSelected: _selectedSection == 'ai',
+                onTap: () => setState(() => _selectedSection = 'ai'),
+              ),
               // Admin section
               isAdmin.when(
                 data: (admin) => admin
@@ -159,6 +165,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           subtitle: _getThemeLabel(themeMode),
           onTap: () => _showThemePicker(context, ref),
         ),
+        _MenuTile(
+          icon: Icons.auto_fix_high_outlined,
+          label: 'AI & Agentic Actions',
+          subtitle: 'Configure AI features',
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const _AISettingsPage()),
+          ),
+        ),
         isAdmin.when(
           data: (admin) => admin
               ? _MenuTile(
@@ -190,6 +204,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         return const SubscriptionScreen();
       case 'appearance':
         return _AppearanceContent();
+      case 'ai':
+        return _AISettingsContent();
       case 'admin':
         return const AdminScreen();
       case 'about':
@@ -396,14 +412,27 @@ class _AccountCard extends ConsumerWidget {
           ],
         ),
         const SizedBox(height: 16),
-        // Name
-        Text(
-          user?.name ?? 'User',
-          style: TextStyle(
-            fontSize: 24,
-            fontWeight: FontWeight.bold,
-            color: colors.textPrimary,
-          ),
+        // Name with edit button
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              user?.name ?? 'User',
+              style: TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+                color: colors.textPrimary,
+              ),
+            ),
+            const SizedBox(width: 8),
+            IconButton(
+              icon: Icon(Icons.edit_outlined, size: 18, color: colors.textTertiary),
+              onPressed: () => _showEditNameDialog(context, ref, user?.name ?? ''),
+              tooltip: 'Edit name',
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
+            ),
+          ],
         ),
         const SizedBox(height: 4),
         // Email
@@ -456,6 +485,62 @@ class _AccountCard extends ConsumerWidget {
           ),
         ),
       ],
+    );
+  }
+
+  void _showEditNameDialog(BuildContext context, WidgetRef ref, String currentName) {
+    final colors = context.flowColors;
+    final controller = TextEditingController(text: currentName);
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: colors.surface,
+        title: Text('Edit Name', style: TextStyle(color: colors.textPrimary)),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: InputDecoration(
+            hintText: 'Enter your name',
+            hintStyle: TextStyle(color: colors.textTertiary),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+          style: TextStyle(color: colors.textPrimary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text('Cancel', style: TextStyle(color: colors.textSecondary)),
+          ),
+          FilledButton(
+            onPressed: () async {
+              final newName = controller.text.trim();
+              if (newName.isEmpty) return;
+
+              Navigator.of(context).pop();
+
+              try {
+                await ref.read(authStateProvider.notifier).updateProfile(name: newName);
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Name updated')),
+                  );
+                }
+              } catch (e) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Failed to update: $e')),
+                  );
+                }
+              }
+            },
+            style: FilledButton.styleFrom(backgroundColor: colors.primary),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -641,6 +726,7 @@ class _AppearanceContent extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final colors = context.flowColors;
     final themeMode = ref.watch(themeModeProvider);
+    final userTimezone = ref.watch(userTimezoneProvider);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(40),
@@ -686,8 +772,289 @@ class _AppearanceContent extends ConsumerWidget {
                 isSelected: themeMode == ThemeMode.dark,
                 onTap: () => ref.read(themeModeProvider.notifier).setThemeMode(ThemeMode.dark),
               ),
+              const SizedBox(height: 32),
+              // Timezone section
+              Text(
+                'Timezone',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: colors.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Due dates and times will be displayed in your selected timezone.',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: colors.textTertiary,
+                ),
+              ),
+              const SizedBox(height: 16),
+              _TimezoneSelector(
+                currentTimezone: userTimezone,
+                onTimezoneChanged: (newTimezone, refreshDates) async {
+                  final changed = await ref.read(userTimezoneProvider.notifier).setTimezone(newTimezone);
+                  if (changed && refreshDates && context.mounted) {
+                    // Show snackbar confirming the change
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          refreshDates
+                              ? 'Timezone updated. Due dates will be refreshed.'
+                              : 'Timezone updated. Due dates kept as-is.',
+                        ),
+                        duration: const Duration(seconds: 3),
+                      ),
+                    );
+                  }
+                },
+              ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Timezone selector with change confirmation dialog
+class _TimezoneSelector extends ConsumerStatefulWidget {
+  final String? currentTimezone;
+  final void Function(String? timezone, bool refreshDates) onTimezoneChanged;
+
+  const _TimezoneSelector({
+    required this.currentTimezone,
+    required this.onTimezoneChanged,
+  });
+
+  @override
+  ConsumerState<_TimezoneSelector> createState() => _TimezoneSelectorState();
+}
+
+class _TimezoneSelectorState extends ConsumerState<_TimezoneSelector> {
+  String _getTimezoneLabel(String? timezone) {
+    if (timezone == null) {
+      final deviceTz = DateTime.now().timeZoneName;
+      final offset = DateTime.now().timeZoneOffset;
+      final offsetStr = '${offset.isNegative ? '-' : '+'}${offset.inHours.abs().toString().padLeft(2, '0')}:${(offset.inMinutes.abs() % 60).toString().padLeft(2, '0')}';
+      return 'Device Default ($deviceTz, $offsetStr)';
+    }
+
+    final option = commonTimezones.where((t) => t.id == timezone).firstOrNull;
+    if (option != null) {
+      return '${option.label} (${option.offset})';
+    }
+    return timezone;
+  }
+
+  Future<void> _showTimezonePicker() async {
+    final colors = context.flowColors;
+    final result = await showModalBottomSheet<String?>(
+      context: context,
+      backgroundColor: colors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      isScrollControlled: true,
+      builder: (context) => DraggableScrollableSheet(
+        initialChildSize: 0.6,
+        minChildSize: 0.4,
+        maxChildSize: 0.9,
+        expand: false,
+        builder: (context, scrollController) => Column(
+          children: [
+            const SizedBox(height: 8),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: colors.border,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(
+                'Select Timezone',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: colors.textPrimary,
+                ),
+              ),
+            ),
+            Expanded(
+              child: ListView.builder(
+                controller: scrollController,
+                itemCount: commonTimezones.length,
+                itemBuilder: (context, index) {
+                  final tz = commonTimezones[index];
+                  final isSelected = (tz.id == 'device' && widget.currentTimezone == null) ||
+                      (tz.id == widget.currentTimezone);
+
+                  return ListTile(
+                    leading: Icon(
+                      Icons.access_time,
+                      color: isSelected ? colors.primary : colors.textSecondary,
+                    ),
+                    title: Text(
+                      tz.label,
+                      style: TextStyle(
+                        color: isSelected ? colors.primary : colors.textPrimary,
+                        fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                      ),
+                    ),
+                    subtitle: Text(
+                      tz.offset,
+                      style: TextStyle(color: colors.textTertiary),
+                    ),
+                    trailing: isSelected
+                        ? Icon(Icons.check, color: colors.primary)
+                        : null,
+                    onTap: () {
+                      final newValue = tz.id == 'device' ? null : tz.id;
+                      Navigator.of(context).pop(newValue);
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    // If user selected a new timezone (result is not the current value)
+    if (result != widget.currentTimezone && mounted) {
+      // Show confirmation dialog
+      await _showTimezoneChangeDialog(result);
+    }
+  }
+
+  Future<void> _showTimezoneChangeDialog(String? newTimezone) async {
+    final colors = context.flowColors;
+    final oldLabel = _getTimezoneLabel(widget.currentTimezone);
+    final newLabel = _getTimezoneLabel(newTimezone);
+
+    final result = await showDialog<bool?>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: colors.surface,
+        title: Text(
+          'Timezone Changed',
+          style: TextStyle(color: colors.textPrimary),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'You are changing your timezone from:',
+              style: TextStyle(color: colors.textSecondary),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              oldLabel,
+              style: TextStyle(
+                color: colors.textPrimary,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'To:',
+              style: TextStyle(color: colors.textSecondary),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              newLabel,
+              style: TextStyle(
+                color: colors.primary,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Would you like to adjust your existing due dates to the new timezone?',
+              style: TextStyle(color: colors.textSecondary),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '(If you choose "No", your due dates will stay at the same clock time)',
+              style: TextStyle(
+                color: colors.textTertiary,
+                fontSize: 12,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(null), // Cancel
+            child: Text('Cancel', style: TextStyle(color: colors.textSecondary)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false), // Keep dates
+            child: Text('No, Keep Dates', style: TextStyle(color: colors.textPrimary)),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true), // Refresh dates
+            style: FilledButton.styleFrom(
+              backgroundColor: colors.primary,
+            ),
+            child: const Text('Yes, Adjust Dates'),
+          ),
+        ],
+      ),
+    );
+
+    if (result != null && mounted) {
+      widget.onTimezoneChanged(newTimezone, result);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.flowColors;
+
+    return InkWell(
+      onTap: _showTimezonePicker,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: colors.surfaceVariant,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: colors.border),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              Icons.public,
+              color: colors.textSecondary,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _getTimezoneLabel(widget.currentTimezone),
+                    style: TextStyle(
+                      color: colors.textPrimary,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              Icons.chevron_right,
+              color: colors.textTertiary,
+            ),
+          ],
         ),
       ),
     );
@@ -793,6 +1160,388 @@ class _AboutContent extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+// =====================================================
+// AI & Agentic Actions Settings
+// =====================================================
+
+/// AI Settings content for wide layout
+class _AISettingsContent extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final colors = context.flowColors;
+    final aiPrefs = ref.watch(aiPreferencesProvider);
+    final userTier = ref.watch(userTierProvider);
+    final aiUsage = ref.watch(aiUsageProvider);
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(40),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 500),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'AI & Agentic Actions',
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: colors.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Configure how AI features behave. Auto runs automatically, Ask shows suggestions, Off disables.',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: colors.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 32),
+
+              // Free tier features
+              _AIFeatureSection(
+                title: 'Free Features',
+                subtitle: 'Available to all users',
+                features: [
+                  AIFeature.cleanTitle,
+                  AIFeature.cleanDescription,
+                  AIFeature.smartDueDate,
+                ],
+                aiPrefs: aiPrefs,
+                userTier: userTier,
+              ),
+              const SizedBox(height: 24),
+
+              // Light tier features
+              _AIFeatureSection(
+                title: 'Light Plan Features',
+                subtitle: 'Requires Light subscription',
+                features: [
+                  AIFeature.decompose,
+                  AIFeature.complexity,
+                  AIFeature.entityExtraction,
+                  AIFeature.recurringDetection,
+                  AIFeature.autoGroup,
+                  AIFeature.reminder,
+                  AIFeature.draftEmail,
+                  AIFeature.draftCalendar,
+                ],
+                aiPrefs: aiPrefs,
+                userTier: userTier,
+              ),
+              const SizedBox(height: 24),
+
+              // Premium tier features
+              _AIFeatureSection(
+                title: 'Premium Features',
+                subtitle: 'Requires Premium subscription',
+                features: [
+                  AIFeature.sendEmail,
+                  AIFeature.sendCalendar,
+                ],
+                aiPrefs: aiPrefs,
+                userTier: userTier,
+              ),
+
+              const SizedBox(height: 32),
+
+              // Usage stats
+              aiUsage.when(
+                data: (stats) => stats != null
+                    ? _AIUsageSection(stats: stats)
+                    : const SizedBox.shrink(),
+                loading: () => const SizedBox.shrink(),
+                error: (_, __) => const SizedBox.shrink(),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// AI Settings page for narrow layout
+class _AISettingsPage extends ConsumerWidget {
+  const _AISettingsPage();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final colors = context.flowColors;
+
+    return Scaffold(
+      backgroundColor: colors.background,
+      appBar: AppBar(
+        backgroundColor: colors.surface,
+        title: Text('AI & Agentic Actions', style: TextStyle(color: colors.textPrimary)),
+        leading: IconButton(
+          icon: Icon(Icons.arrow_back, color: colors.textPrimary),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+        elevation: 0,
+      ),
+      body: _AISettingsContent(),
+    );
+  }
+}
+
+/// Feature section with header
+class _AIFeatureSection extends ConsumerWidget {
+  final String title;
+  final String subtitle;
+  final List<AIFeature> features;
+  final AIPreferences aiPrefs;
+  final UserTier userTier;
+
+  const _AIFeatureSection({
+    required this.title,
+    required this.subtitle,
+    required this.features,
+    required this.aiPrefs,
+    required this.userTier,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final colors = context.flowColors;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+            color: colors.textPrimary,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          subtitle,
+          style: TextStyle(
+            fontSize: 12,
+            color: colors.textTertiary,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Container(
+          decoration: BoxDecoration(
+            color: colors.surface,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: colors.border),
+          ),
+          child: Column(
+            children: features.asMap().entries.map((entry) {
+              final index = entry.key;
+              final feature = entry.value;
+              final isLast = index == features.length - 1;
+              return _AIFeatureRow(
+                feature: feature,
+                currentSetting: aiPrefs.getSetting(feature),
+                isEnabled: _canAccessFeature(feature, userTier),
+                isLast: isLast,
+              );
+            }).toList(),
+          ),
+        ),
+      ],
+    );
+  }
+
+  bool _canAccessFeature(AIFeature feature, UserTier tier) {
+    switch (feature.requiredTier) {
+      case UserTier.free:
+        return true;
+      case UserTier.light:
+        return tier == UserTier.light || tier == UserTier.premium;
+      case UserTier.premium:
+        return tier == UserTier.premium;
+    }
+  }
+}
+
+/// Individual feature row with dropdown
+class _AIFeatureRow extends ConsumerWidget {
+  final AIFeature feature;
+  final AISetting currentSetting;
+  final bool isEnabled;
+  final bool isLast;
+
+  const _AIFeatureRow({
+    required this.feature,
+    required this.currentSetting,
+    required this.isEnabled,
+    required this.isLast,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final colors = context.flowColors;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        border: isLast
+            ? null
+            : Border(bottom: BorderSide(color: colors.border, width: 0.5)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text(
+                      feature.displayName,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: isEnabled ? colors.textPrimary : colors.textTertiary,
+                      ),
+                    ),
+                    if (!isEnabled) ...[
+                      const SizedBox(width: 8),
+                      Icon(
+                        Icons.lock_outline,
+                        size: 14,
+                        color: colors.textTertiary,
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  feature.description,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: colors.textTertiary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          // Dropdown for setting
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: isEnabled ? colors.surfaceVariant : colors.surface,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: colors.border),
+            ),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<AISetting>(
+                value: currentSetting,
+                isDense: true,
+                style: TextStyle(
+                  fontSize: 13,
+                  color: isEnabled ? colors.textPrimary : colors.textTertiary,
+                ),
+                dropdownColor: colors.surface,
+                items: AISetting.values.map((setting) {
+                  return DropdownMenuItem<AISetting>(
+                    value: setting,
+                    child: Text(setting.label),
+                  );
+                }).toList(),
+                onChanged: isEnabled
+                    ? (newSetting) {
+                        if (newSetting != null) {
+                          ref
+                              .read(aiPreferencesProvider.notifier)
+                              .setSetting(feature, newSetting);
+                        }
+                      }
+                    : null,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// AI usage stats section
+class _AIUsageSection extends StatelessWidget {
+  final AIUsageStats stats;
+
+  const _AIUsageSection({required this.stats});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.flowColors;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Today\'s Usage',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+            color: colors.textPrimary,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: colors.surface,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: colors.border),
+          ),
+          child: Column(
+            children: stats.usage.entries.map((entry) {
+              final featureKey = entry.key;
+              final used = entry.value;
+              final limit = stats.limits[featureKey] ?? 0;
+              final isUnlimited = limit == -1;
+              final feature = AIFeature.values.firstWhere(
+                (f) => f.key == featureKey,
+                orElse: () => AIFeature.cleanTitle,
+              );
+
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  children: [
+                    Icon(Icons.auto_fix_high, size: 16, color: colors.textSecondary),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        feature.displayName,
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: colors.textSecondary,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      isUnlimited ? '$used used' : '$used / $limit',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: isUnlimited || used < limit
+                            ? colors.textTertiary
+                            : colors.error,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }).toList(),
+          ),
+        ),
+      ],
     );
   }
 }

@@ -275,6 +275,81 @@ func (h *Handler) Me(c *fiber.Ctx) error {
 	return httputil.Success(c, toUserResponse(&user))
 }
 
+// UpdateProfileRequest represents profile update request
+type UpdateProfileRequest struct {
+	Name      *string `json:"name,omitempty"`
+	AvatarURL *string `json:"avatar_url,omitempty"`
+}
+
+// UpdateProfile updates the current user's profile
+func (h *Handler) UpdateProfile(c *fiber.Ctx) error {
+	userID, err := middleware.GetUserID(c)
+	if err != nil {
+		return httputil.Error(c, err)
+	}
+
+	var req UpdateProfileRequest
+	if err := c.BodyParser(&req); err != nil {
+		return httputil.BadRequest(c, "invalid request body")
+	}
+
+	// Build update query
+	updates := []string{}
+	args := []interface{}{}
+	argNum := 1
+
+	if req.Name != nil {
+		if *req.Name == "" {
+			return httputil.ValidationError(c, "validation failed", map[string]string{
+				"name": "cannot be empty",
+			})
+		}
+		updates = append(updates, "name = $"+string(rune('0'+argNum)))
+		args = append(args, *req.Name)
+		argNum++
+	}
+
+	if req.AvatarURL != nil {
+		updates = append(updates, "avatar_url = $"+string(rune('0'+argNum)))
+		args = append(args, *req.AvatarURL)
+		argNum++
+	}
+
+	if len(updates) == 0 {
+		return httputil.BadRequest(c, "no fields to update")
+	}
+
+	// Add updated_at and user_id
+	updates = append(updates, "updated_at = NOW()")
+	args = append(args, userID)
+
+	query := "UPDATE users SET " + updates[0]
+	for i := 1; i < len(updates); i++ {
+		query += ", " + updates[i]
+	}
+	query += " WHERE id = $" + string(rune('0'+argNum)) + " AND deleted_at IS NULL"
+
+	_, err = h.db.Exec(c.Context(), query, args...)
+	if err != nil {
+		return httputil.InternalError(c, "failed to update profile")
+	}
+
+	// Return updated user
+	var user models.User
+	err = h.db.QueryRow(c.Context(),
+		`SELECT id, email, email_verified, name, avatar_url, created_at, updated_at
+		 FROM users WHERE id = $1 AND deleted_at IS NULL`,
+		userID,
+	).Scan(&user.ID, &user.Email, &user.EmailVerified, &user.Name, &user.AvatarURL,
+		&user.CreatedAt, &user.UpdatedAt)
+
+	if err != nil {
+		return httputil.InternalError(c, "failed to fetch updated profile")
+	}
+
+	return httputil.Success(c, toUserResponse(&user))
+}
+
 // GoogleOAuth handles Google OAuth login/registration
 func (h *Handler) GoogleOAuth(c *fiber.Ctx) error {
 	var req OAuthRequest

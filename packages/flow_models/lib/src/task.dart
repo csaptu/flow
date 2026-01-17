@@ -1,6 +1,17 @@
 import 'package:equatable/equatable.dart';
 import 'enums.dart';
 
+/// Parse a date string and convert to local timezone
+/// This ensures dates are always compared in the user's local timezone
+DateTime _parseToLocal(String dateString) {
+  final parsed = DateTime.parse(dateString);
+  // If the date is in UTC, convert to local
+  if (parsed.isUtc) {
+    return parsed.toLocal();
+  }
+  return parsed;
+}
+
 /// Task step from AI decomposition
 class TaskStep extends Equatable {
   final int step;
@@ -60,6 +71,11 @@ class Task extends Equatable {
   final int childrenCount;
   final DateTime createdAt;
   final DateTime updatedAt;
+  // AI cleanup tracking - stores original values before AI modification
+  final String? originalTitle;
+  final String? originalDescription;
+  // Flag to prevent auto-cleanup after user reverts
+  final bool skipAutoCleanup;
 
   const Task({
     required this.id,
@@ -81,7 +97,17 @@ class Task extends Equatable {
     this.childrenCount = 0,
     required this.createdAt,
     required this.updatedAt,
+    this.originalTitle,
+    this.originalDescription,
+    this.skipAutoCleanup = false,
   });
+
+  /// Returns true if the title was cleaned by AI (original differs from current)
+  bool get titleWasCleaned => originalTitle != null && originalTitle != title;
+
+  /// Returns true if the description was cleaned by AI
+  bool get descriptionWasCleaned =>
+      originalDescription != null && originalDescription != description;
 
   factory Task.fromJson(Map<String, dynamic> json) {
     return Task(
@@ -96,10 +122,10 @@ class Task extends Equatable {
       status: TaskStatus.fromString(json['status'] as String? ?? 'pending'),
       priority: Priority.fromInt(json['priority'] as int? ?? 0),
       dueDate: json['due_date'] != null
-          ? DateTime.parse(json['due_date'] as String)
+          ? _parseToLocal(json['due_date'] as String)
           : null,
       completedAt: json['completed_at'] != null
-          ? DateTime.parse(json['completed_at'] as String)
+          ? _parseToLocal(json['completed_at'] as String)
           : null,
       tags: (json['tags'] as List<dynamic>?)?.cast<String>() ?? [],
       parentId: json['parent_id'] as String?,
@@ -111,6 +137,9 @@ class Task extends Equatable {
       childrenCount: json['children_count'] as int? ?? 0,
       createdAt: DateTime.parse(json['created_at'] as String),
       updatedAt: DateTime.parse(json['updated_at'] as String),
+      originalTitle: json['original_title'] as String?,
+      originalDescription: json['original_description'] as String?,
+      skipAutoCleanup: json['skip_auto_cleanup'] as bool? ?? false,
     );
   }
 
@@ -134,12 +163,48 @@ class Task extends Equatable {
         'children_count': childrenCount,
         'created_at': createdAt.toIso8601String(),
         'updated_at': updatedAt.toIso8601String(),
+        'original_title': originalTitle,
+        'original_description': originalDescription,
+        'skip_auto_cleanup': skipAutoCleanup,
       };
 
   bool get isCompleted => status == TaskStatus.completed;
 
-  bool get isOverdue =>
-      dueDate != null && DateTime.now().isAfter(dueDate!) && !isCompleted;
+  /// Check if the due date has a specific time set (not midnight)
+  bool get hasSpecificTime {
+    if (dueDate == null) return false;
+    return dueDate!.hour != 0 || dueDate!.minute != 0 || dueDate!.second != 0;
+  }
+
+  /// A task is overdue if:
+  /// - It has a due date in the past (before today), OR
+  /// - It's due today with a specific time that has already passed
+  ///
+  /// A task due "Today" without a specific time is NOT overdue
+  /// (it means "due sometime today")
+  bool get isOverdue {
+    if (dueDate == null || isCompleted) return false;
+
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final dueDateOnly = DateTime(dueDate!.year, dueDate!.month, dueDate!.day);
+
+    // If due date is before today, it's overdue
+    if (dueDateOnly.isBefore(today)) return true;
+
+    // If due date is today
+    if (dueDateOnly.isAtSameMomentAs(today)) {
+      // Only overdue if it has a specific time AND that time has passed
+      if (hasSpecificTime && now.isAfter(dueDate!)) {
+        return true;
+      }
+      // Due today without specific time = not overdue
+      return false;
+    }
+
+    // Future date = not overdue
+    return false;
+  }
 
   double get progress {
     if (aiSteps.isEmpty) return isCompleted ? 100.0 : 0.0;
@@ -167,6 +232,9 @@ class Task extends Equatable {
     int? childrenCount,
     DateTime? createdAt,
     DateTime? updatedAt,
+    String? originalTitle,
+    String? originalDescription,
+    bool? skipAutoCleanup,
   }) {
     return Task(
       id: id ?? this.id,
@@ -188,6 +256,9 @@ class Task extends Equatable {
       childrenCount: childrenCount ?? this.childrenCount,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      originalTitle: originalTitle ?? this.originalTitle,
+      originalDescription: originalDescription ?? this.originalDescription,
+      skipAutoCleanup: skipAutoCleanup ?? this.skipAutoCleanup,
     );
   }
 

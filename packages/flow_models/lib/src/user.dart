@@ -73,38 +73,136 @@ class User extends Equatable {
   List<Object?> get props => [id, email, emailVerified, name, avatarUrl];
 }
 
-/// AI preferences for user
+/// AI preferences for user - matches all features in the plan document
 class AIPreferences extends Equatable {
+  // Free tier features
   final AISetting cleanTitle;
   final AISetting cleanDescription;
-  final AISetting decompose;
-  final AISetting complexityCheck;
   final AISetting smartDueDates;
+
+  // Light tier features
+  final AISetting decompose;
+  final AISetting complexity;
+  final AISetting entityExtraction;
+  final AISetting recurringDetection;
   final AISetting autoGroup;
+  final AISetting reminder;
   final AISetting draftEmail;
   final AISetting draftCalendar;
 
+  // Premium tier features
+  final AISetting sendEmail;
+  final AISetting sendCalendar;
+
   const AIPreferences({
+    // Free - Auto by default
     this.cleanTitle = AISetting.auto,
     this.cleanDescription = AISetting.auto,
-    this.decompose = AISetting.ask,
-    this.complexityCheck = AISetting.auto,
     this.smartDueDates = AISetting.auto,
+    // Light - Mixed defaults
+    this.decompose = AISetting.ask,
+    this.complexity = AISetting.auto,
+    this.entityExtraction = AISetting.auto,
+    this.recurringDetection = AISetting.ask,
     this.autoGroup = AISetting.ask,
+    this.reminder = AISetting.ask,
     this.draftEmail = AISetting.ask,
     this.draftCalendar = AISetting.ask,
+    // Premium - Ask by default
+    this.sendEmail = AISetting.ask,
+    this.sendCalendar = AISetting.ask,
   });
+
+  /// Create with all defaults
+  factory AIPreferences.defaults() => const AIPreferences();
 
   factory AIPreferences.fromJson(Map<String, dynamic> json) {
     return AIPreferences(
       cleanTitle: AISetting.fromString(json['clean_title'] ?? 'auto'),
       cleanDescription: AISetting.fromString(json['clean_description'] ?? 'auto'),
-      decompose: AISetting.fromString(json['decompose'] ?? 'ask'),
-      complexityCheck: AISetting.fromString(json['complexity_check'] ?? 'auto'),
       smartDueDates: AISetting.fromString(json['smart_due_dates'] ?? 'auto'),
+      decompose: AISetting.fromString(json['decompose'] ?? 'ask'),
+      complexity: AISetting.fromString(json['complexity'] ?? 'auto'),
+      entityExtraction: AISetting.fromString(json['entity_extraction'] ?? 'auto'),
+      recurringDetection: AISetting.fromString(json['recurring_detection'] ?? 'ask'),
       autoGroup: AISetting.fromString(json['auto_group'] ?? 'ask'),
+      reminder: AISetting.fromString(json['reminder'] ?? 'ask'),
       draftEmail: AISetting.fromString(json['draft_email'] ?? 'ask'),
       draftCalendar: AISetting.fromString(json['draft_calendar'] ?? 'ask'),
+      sendEmail: AISetting.fromString(json['send_email'] ?? 'ask'),
+      sendCalendar: AISetting.fromString(json['send_calendar'] ?? 'ask'),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'clean_title': cleanTitle.name,
+        'clean_description': cleanDescription.name,
+        'smart_due_dates': smartDueDates.name,
+        'decompose': decompose.name,
+        'complexity': complexity.name,
+        'entity_extraction': entityExtraction.name,
+        'recurring_detection': recurringDetection.name,
+        'auto_group': autoGroup.name,
+        'reminder': reminder.name,
+        'draft_email': draftEmail.name,
+        'draft_calendar': draftCalendar.name,
+        'send_email': sendEmail.name,
+        'send_calendar': sendCalendar.name,
+      };
+
+  /// Get setting for an AIFeature
+  AISetting getSetting(dynamic feature) {
+    // feature can be AIFeature enum from ai.dart
+    final key = feature.key as String;
+    switch (key) {
+      case 'clean_title':
+        return cleanTitle;
+      case 'clean_description':
+        return cleanDescription;
+      case 'smart_due_date':
+        return smartDueDates;
+      case 'decompose':
+        return decompose;
+      case 'complexity':
+        return complexity;
+      case 'entity_extraction':
+        return entityExtraction;
+      case 'recurring_detection':
+        return recurringDetection;
+      case 'auto_group':
+        return autoGroup;
+      case 'reminder':
+        return reminder;
+      case 'draft_email':
+        return draftEmail;
+      case 'draft_calendar':
+        return draftCalendar;
+      case 'send_email':
+        return sendEmail;
+      case 'send_calendar':
+        return sendCalendar;
+      default:
+        return AISetting.ask;
+    }
+  }
+
+  /// Create a copy with an updated setting for a feature
+  AIPreferences copyWithFeature({required dynamic feature, required AISetting setting}) {
+    final key = feature.key as String;
+    return AIPreferences(
+      cleanTitle: key == 'clean_title' ? setting : cleanTitle,
+      cleanDescription: key == 'clean_description' ? setting : cleanDescription,
+      smartDueDates: key == 'smart_due_date' ? setting : smartDueDates,
+      decompose: key == 'decompose' ? setting : decompose,
+      complexity: key == 'complexity' ? setting : complexity,
+      entityExtraction: key == 'entity_extraction' ? setting : entityExtraction,
+      recurringDetection: key == 'recurring_detection' ? setting : recurringDetection,
+      autoGroup: key == 'auto_group' ? setting : autoGroup,
+      reminder: key == 'reminder' ? setting : reminder,
+      draftEmail: key == 'draft_email' ? setting : draftEmail,
+      draftCalendar: key == 'draft_calendar' ? setting : draftCalendar,
+      sendEmail: key == 'send_email' ? setting : sendEmail,
+      sendCalendar: key == 'send_calendar' ? setting : sendCalendar,
     );
   }
 
@@ -112,11 +210,16 @@ class AIPreferences extends Equatable {
   List<Object?> get props => [
         cleanTitle,
         cleanDescription,
-        decompose,
-        complexityCheck,
         smartDueDates,
+        decompose,
+        complexity,
+        entityExtraction,
+        recurringDetection,
         autoGroup,
+        reminder,
         draftEmail,
         draftCalendar,
+        sendEmail,
+        sendCalendar,
       ];
 }

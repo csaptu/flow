@@ -105,10 +105,10 @@ class ApiMeta {
 
   factory ApiMeta.fromJson(Map<String, dynamic> json) {
     return ApiMeta(
-      page: json['page'] as int,
-      pageSize: json['page_size'] as int,
-      totalCount: json['total_count'] as int,
-      totalPages: json['total_pages'] as int,
+      page: (json['page'] as num?)?.toInt() ?? 1,
+      pageSize: (json['page_size'] as num?)?.toInt() ?? 50,
+      totalCount: (json['total_count'] as num?)?.toInt() ?? 0,
+      totalPages: (json['total_pages'] as num?)?.toInt() ?? 1,
     );
   }
 }

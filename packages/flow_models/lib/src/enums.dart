@@ -173,4 +173,15 @@ enum AISetting {
       orElse: () => AISetting.auto,
     );
   }
+
+  String get label {
+    switch (this) {
+      case AISetting.auto:
+        return 'Auto';
+      case AISetting.ask:
+        return 'Ask';
+      case AISetting.off:
+        return 'Off';
+    }
+  }
 }

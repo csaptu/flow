@@ -6,6 +6,7 @@ import 'package:flow_tasks/core/theme/flow_theme.dart';
 import 'package:flow_tasks/features/tasks/presentation/widgets/task_date_time_picker.dart';
 import 'package:flow_tasks/features/tasks/presentation/widgets/move_to_list_picker.dart';
 import 'package:flow_tasks/features/tasks/presentation/widgets/attachment_picker.dart';
+import 'package:flow_tasks/features/tasks/presentation/widgets/markdown_description_field.dart';
 import 'package:intl/intl.dart';
 
 /// Task detail panel - shows on the right on desktop, bottom sheet on mobile
@@ -28,6 +29,8 @@ class TaskDetailPanel extends ConsumerStatefulWidget {
 class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
   late TextEditingController _titleController;
   late TextEditingController _descriptionController;
+  bool _isCleaningTitle = false;
+  bool _isCleaningDescription = false;
 
   @override
   void initState() {
@@ -72,6 +75,60 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
     );
   }
 
+  Future<void> _cleanTitle() async {
+    setState(() => _isCleaningTitle = true);
+    try {
+      final aiActions = ref.read(aiActionsProvider);
+      await aiActions.cleanTitle(widget.task.id);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isCleaningTitle = false);
+    }
+  }
+
+  Future<void> _cleanDescription() async {
+    setState(() => _isCleaningDescription = true);
+    try {
+      final aiActions = ref.read(aiActionsProvider);
+      await aiActions.cleanDescription(widget.task.id);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isCleaningDescription = false);
+    }
+  }
+
+  Future<void> _revertTitle() async {
+    if (widget.task.originalTitle == null) return;
+    final actions = ref.read(taskActionsProvider);
+    await actions.update(
+      widget.task.id,
+      title: widget.task.originalTitle!,
+      skipAutoCleanup: true,
+    );
+    _titleController.text = widget.task.originalTitle!;
+  }
+
+  Future<void> _revertDescription() async {
+    if (widget.task.originalDescription == null) return;
+    final actions = ref.read(taskActionsProvider);
+    await actions.update(
+      widget.task.id,
+      description: widget.task.originalDescription,
+      skipAutoCleanup: true,
+    );
+    _descriptionController.text = widget.task.originalDescription ?? '';
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = context.flowColors;
@@ -91,7 +148,7 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
       ),
       child: Column(
         children: [
-          // Header
+          // Header (minimal)
           _buildHeader(context, colors, task),
 
           // Content
@@ -104,46 +161,162 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
                   // Due date indicator
                   if (task.dueDate != null) _buildDueDateRow(colors, task),
 
-                  const SizedBox(height: 16),
+                  if (task.dueDate != null) const SizedBox(height: 16),
 
-                  // Title (editable)
-                  TextField(
-                    controller: _titleController,
-                    style: const TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w600,
-                    ),
-                    decoration: const InputDecoration(
-                      border: InputBorder.none,
-                      hintText: 'Task title',
-                      contentPadding: EdgeInsets.zero,
-                      filled: false,
-                    ),
-                    maxLines: null,
-                    onEditingComplete: _updateTitle,
-                    onTapOutside: (_) => _updateTitle(),
+                  // Title with inline clean/revert button and cleaned indicator
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Subtle cleaned indicator
+                      if (task.titleWasCleaned)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 6, top: 6),
+                          child: Tooltip(
+                            message: 'AI cleaned',
+                            child: Icon(
+                              Icons.auto_fix_high_rounded,
+                              size: 12,
+                              color: colors.textTertiary.withAlpha(120),
+                            ),
+                          ),
+                        ),
+                      Expanded(
+                        child: TextField(
+                          controller: _titleController,
+                          style: const TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          decoration: const InputDecoration(
+                            border: InputBorder.none,
+                            enabledBorder: InputBorder.none,
+                            focusedBorder: InputBorder.none,
+                            hintText: 'Task title',
+                            contentPadding: EdgeInsets.zero,
+                            isDense: true,
+                            filled: false,
+                          ),
+                          maxLines: null,
+                          onEditingComplete: _updateTitle,
+                          onTapOutside: (_) => _updateTitle(),
+                        ),
+                      ),
+                      // Inline clean/revert title button
+                      if (_isCleaningTitle)
+                        Padding(
+                          padding: const EdgeInsets.only(left: 8, top: 4),
+                          child: SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: colors.textTertiary,
+                            ),
+                          ),
+                        )
+                      else if (task.titleWasCleaned)
+                        InkWell(
+                          onTap: _revertTitle,
+                          borderRadius: BorderRadius.circular(4),
+                          child: Padding(
+                            padding: const EdgeInsets.only(left: 8, top: 4),
+                            child: Text(
+                              'revert',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: colors.textTertiary,
+                              ),
+                            ),
+                          ),
+                        )
+                      else
+                        InkWell(
+                          onTap: _cleanTitle,
+                          borderRadius: BorderRadius.circular(4),
+                          child: Padding(
+                            padding: const EdgeInsets.only(left: 8, top: 4),
+                            child: Icon(
+                              Icons.auto_fix_high_rounded,
+                              size: 16,
+                              color: colors.textTertiary,
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
 
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 12),
 
-                  // Description (editable)
-                  TextField(
-                    controller: _descriptionController,
-                    style: TextStyle(
-                      fontSize: 15,
-                      color: colors.textSecondary,
-                      height: 1.5,
-                    ),
-                    decoration: InputDecoration(
-                      border: InputBorder.none,
-                      hintText: 'Add description...',
-                      hintStyle: TextStyle(color: colors.textPlaceholder),
-                      contentPadding: EdgeInsets.zero,
-                      filled: false,
-                    ),
-                    maxLines: null,
-                    minLines: 3,
-                    onTapOutside: (_) => _updateDescription(),
+                  // Description with markdown support and clean/revert button
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Subtle cleaned indicator
+                      if (task.descriptionWasCleaned)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 6, top: 4),
+                          child: Tooltip(
+                            message: 'AI cleaned',
+                            child: Icon(
+                              Icons.auto_fix_high_rounded,
+                              size: 12,
+                              color: colors.textTertiary.withAlpha(120),
+                            ),
+                          ),
+                        ),
+                      Expanded(
+                        child: MarkdownDescriptionField(
+                          initialValue: task.description,
+                          hintText: 'Add description... (supports markdown)',
+                          onChanged: (value) {
+                            _descriptionController.text = value;
+                          },
+                          onEditingComplete: _updateDescription,
+                        ),
+                      ),
+                      // Inline clean/revert description button
+                      if (_descriptionController.text.isNotEmpty || task.descriptionWasCleaned)
+                        if (_isCleaningDescription)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 8, top: 4),
+                            child: SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: colors.textTertiary,
+                              ),
+                            ),
+                          )
+                        else if (task.descriptionWasCleaned)
+                          InkWell(
+                            onTap: _revertDescription,
+                            borderRadius: BorderRadius.circular(4),
+                            child: Padding(
+                              padding: const EdgeInsets.only(left: 8, top: 4),
+                              child: Text(
+                                'revert',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: colors.textTertiary,
+                                ),
+                              ),
+                            ),
+                          )
+                        else
+                          InkWell(
+                            onTap: _cleanDescription,
+                            borderRadius: BorderRadius.circular(4),
+                            child: Padding(
+                              padding: const EdgeInsets.only(left: 8, top: 4),
+                              child: Icon(
+                                Icons.auto_fix_high_rounded,
+                                size: 16,
+                                color: colors.textTertiary,
+                              ),
+                            ),
+                          ),
+                    ],
                   ),
 
                   const SizedBox(height: 24),
@@ -154,8 +327,8 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
                     const SizedBox(height: 24),
                   ],
 
-                  // Metadata section
-                  _buildMetadataSection(colors, task),
+                  // Tags only (no timestamps here)
+                  if (task.tags.isNotEmpty) _buildTagsSection(colors, task),
                 ],
               ),
             ),
@@ -222,12 +395,37 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
 
           const SizedBox(width: 8),
 
-          // More options
-          IconButton(
+          // More options (with timestamps)
+          PopupMenuButton<String>(
             icon: Icon(Icons.more_horiz, color: colors.textSecondary),
-            onPressed: () {
-              // TODO: Show more options menu
+            onSelected: (value) {
+              // Handle menu actions if needed
             },
+            itemBuilder: (context) => [
+              PopupMenuItem<String>(
+                enabled: false,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Created ${_formatDateTime(task.createdAt)}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: colors.textTertiary,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Updated ${_formatDateTime(task.updatedAt)}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: colors.textTertiary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -242,7 +440,7 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
       onTap: () async {
         final date = await TaskDateTimePicker.show(
           context,
-          initialDate: task.dueDate, // Navigate calendar to the due date
+          initialDate: task.dueDate,
           onClear: () async {
             final actions = ref.read(taskActionsProvider);
             await actions.update(task.id, dueDate: null);
@@ -355,74 +553,30 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
     );
   }
 
-  Widget _buildMetadataSection(FlowColorScheme colors, Task task) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Tags
-        if (task.tags.isNotEmpty) ...[
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: task.tags
-                .map((tag) => Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: colors.surfaceVariant,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        tag,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: colors.textSecondary,
-                        ),
-                      ),
-                    ))
-                .toList(),
-          ),
-          const SizedBox(height: 16),
-        ],
-
-        // Created/Updated info
-        Text(
-          'Created ${_formatDateTime(task.createdAt)}',
-          style: TextStyle(
-            fontSize: 12,
-            color: colors.textTertiary,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          'Updated ${_formatDateTime(task.updatedAt)}',
-          style: TextStyle(
-            fontSize: 12,
-            color: colors.textTertiary,
-          ),
-        ),
-      ],
+  Widget _buildTagsSection(FlowColorScheme colors, Task task) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: task.tags
+          .map((tag) => Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: colors.surfaceVariant,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  tag,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: colors.textSecondary,
+                  ),
+                ),
+              ))
+          .toList(),
     );
-  }
-
-  String _getMimeType(String? extension) {
-    switch (extension?.toLowerCase()) {
-      case 'pdf':
-        return 'application/pdf';
-      case 'doc':
-        return 'application/msword';
-      case 'docx':
-        return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-      case 'png':
-        return 'image/png';
-      case 'jpg':
-      case 'jpeg':
-        return 'image/jpeg';
-      default:
-        return 'application/octet-stream';
-    }
   }
 
   String _formatDueDate(DateTime date) {
@@ -491,17 +645,15 @@ class _AIToolbarState extends ConsumerState<_AIToolbar> {
   // Bear app red color
   static const bearRed = Color(0xFFE53935);
 
-  // AI action definitions with tier badges
-  // Tier 0 = Free, Tier 1 = Light (*), Tier 2 = Premium (**)
+  // AI action definitions - matches plan document
+  // Free = no badge, Light = *, Premium = **
   static const _aiActions = [
-    _AIAction('clean', Icons.cleaning_services_outlined, 'Clean up', 0),
-    _AIAction('steps', Icons.account_tree_outlined, 'Break into steps', 1),
-    _AIAction('complexity', Icons.analytics_outlined, 'Complexity', 1),
-    _AIAction('extract', Icons.content_paste_search_outlined, 'Extract', 1),
-    _AIAction('reminder', Icons.notifications_outlined, 'Reminder', 2),
-    _AIAction('email', Icons.email_outlined, 'Email', 2),
-    _AIAction('calendar', Icons.calendar_month_outlined, 'Calendar', 2),
-    _AIAction('solution', Icons.lightbulb_outline, 'Solutions', 2),
+    _AIAction('decompose', 'Steps', Icons.checklist_rounded, 1, AIFeature.decompose),
+    _AIAction('complexity', 'Rate', Icons.speed_rounded, 1, AIFeature.complexity),
+    _AIAction('entities', 'Extract', Icons.person_search_rounded, 1, AIFeature.entityExtraction),
+    _AIAction('remind', 'Remind', Icons.alarm_rounded, 2, AIFeature.reminder),
+    _AIAction('email', 'Email', Icons.email_outlined, 2, AIFeature.draftEmail),
+    _AIAction('calendar', 'Invite', Icons.calendar_month_rounded, 2, AIFeature.draftCalendar),
   ];
 
   Future<void> _runAIAction(String action) async {
@@ -514,35 +666,41 @@ class _AIToolbarState extends ConsumerState<_AIToolbar> {
       final aiActions = ref.read(aiActionsProvider);
 
       switch (action) {
-        case 'clean':
-          await aiActions.clean(widget.task.id);
-          _showSnackBar('Task cleaned up');
-          break;
-        case 'steps':
+        case 'decompose':
           await aiActions.decompose(widget.task.id);
-          _showSnackBar('Task broken into steps');
+          _showSnackBar('Steps generated');
           break;
         case 'complexity':
-          _showSnackBar('Complexity assessment coming soon');
+          final result = await aiActions.rate(widget.task.id);
+          _showSnackBar('Complexity: ${result.complexity}/10 - ${result.reason}');
           break;
-        case 'extract':
-          _showSnackBar('Extract information coming soon');
+        case 'entities':
+          final result = await aiActions.extract(widget.task.id);
+          if (result.entities.isEmpty) {
+            _showSnackBar('No entities found');
+          } else {
+            final summary = result.entities
+                .map((e) => '${e.type}: ${e.value}')
+                .take(3)
+                .join(', ');
+            _showSnackBar('Found: $summary');
+          }
           break;
-        case 'reminder':
-          _showSnackBar('Reminder coming soon');
+        case 'remind':
+          final result = await aiActions.remind(widget.task.id);
+          _showSnackBar('Reminder set: ${result.reason}');
           break;
         case 'email':
-          _showSnackBar('Draft email coming soon');
+          final result = await aiActions.email(widget.task.id);
+          _showDraftDialog(result.draft);
           break;
         case 'calendar':
-          _showSnackBar('Calendar invite coming soon');
-          break;
-        case 'solution':
-          _showSnackBar('Solution planning coming soon');
+          final result = await aiActions.invite(widget.task.id);
+          _showDraftDialog(result.draft);
           break;
       }
     } catch (e) {
-      _showSnackBar('AI error: $e');
+      _showSnackBar('Error: $e');
     } finally {
       if (mounted) {
         setState(() {
@@ -551,6 +709,81 @@ class _AIToolbarState extends ConsumerState<_AIToolbar> {
         });
       }
     }
+  }
+
+  void _showDraftDialog(dynamic draft) {
+    if (!mounted) return;
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(draft.type == 'email' ? 'Email Draft' : 'Calendar Invite'),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (draft.type == 'email') ...[
+                if (draft.to != null && draft.to!.isNotEmpty)
+                  _buildDraftField('To', draft.to!),
+                if (draft.subject != null)
+                  _buildDraftField('Subject', draft.subject!),
+                if (draft.body != null)
+                  _buildDraftField('Body', draft.body!),
+              ] else ...[
+                if (draft.title != null)
+                  _buildDraftField('Title', draft.title!),
+                if (draft.startTime != null)
+                  _buildDraftField('Start', draft.startTime!),
+                if (draft.endTime != null)
+                  _buildDraftField('End', draft.endTime!),
+                if (draft.attendees.isNotEmpty)
+                  _buildDraftField('Attendees', draft.attendees.join(', ')),
+                if (draft.body != null)
+                  _buildDraftField('Description', draft.body!),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              _showSnackBar('Draft saved');
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDraftField(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              fontWeight: FontWeight.w600,
+              fontSize: 12,
+              color: Colors.grey,
+            ),
+          ),
+          const SizedBox(height: 4),
+          SelectableText(
+            value,
+            style: const TextStyle(fontSize: 14),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showSnackBar(String message) {
@@ -603,35 +836,32 @@ class _AIToolbarState extends ConsumerState<_AIToolbar> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        // AI Actions row (shown when wand is clicked)
+        // AI Actions row (shown when wand is clicked) - minimal text style
         AnimatedCrossFade(
           duration: const Duration(milliseconds: 200),
           crossFadeState: _showAIActions
               ? CrossFadeState.showFirst
               : CrossFadeState.showSecond,
           firstChild: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             decoration: BoxDecoration(
-              color: colors.surfaceVariant.withAlpha(100),
               border: Border(
                 top: BorderSide(color: colors.divider, width: 0.5),
               ),
             ),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: _aiActions.map((action) {
-                  final isActionLoading = _loadingAction == action.id;
-                  return Padding(
-                    padding: const EdgeInsets.only(right: 4),
-                    child: _AIActionChip(
-                      action: action,
-                      isLoading: isActionLoading,
-                      onTap: _isLoading ? null : () => _runAIAction(action.id),
-                    ),
-                  );
-                }).toList(),
-              ),
+            child: Row(
+              children: _aiActions.map((action) {
+                final isActionLoading = _loadingAction == action.id;
+                final isLast = action == _aiActions.last;
+                return Padding(
+                  padding: EdgeInsets.only(right: isLast ? 0 : 16),
+                  child: _AIActionText(
+                    action: action,
+                    isLoading: isActionLoading,
+                    onTap: _isLoading ? null : () => _runAIAction(action.id),
+                  ),
+                );
+              }).toList(),
             ),
           ),
           secondChild: const SizedBox(height: 0),
@@ -765,23 +995,24 @@ class _AIToolbarState extends ConsumerState<_AIToolbar> {
   }
 }
 
-/// AI Action definition
+/// AI Action definition - matches plan document
 class _AIAction {
   final String id;
-  final IconData icon;
   final String label;
+  final IconData icon;
   final int tier; // 0=Free, 1=Light(*), 2=Premium(**)
+  final AIFeature feature;
 
-  const _AIAction(this.id, this.icon, this.label, this.tier);
+  const _AIAction(this.id, this.label, this.icon, this.tier, this.feature);
 }
 
-/// AI Action chip with tier badge
-class _AIActionChip extends StatelessWidget {
+/// AI Action button with icon
+class _AIActionText extends StatelessWidget {
   final _AIAction action;
   final bool isLoading;
   final VoidCallback? onTap;
 
-  const _AIActionChip({
+  const _AIActionText({
     required this.action,
     required this.isLoading,
     this.onTap,
@@ -791,66 +1022,59 @@ class _AIActionChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = context.flowColors;
 
-    return Tooltip(
-      message: action.label,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          decoration: BoxDecoration(
-            color: colors.surface,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: colors.divider),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (isLoading)
-                SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: _AIToolbarState.bearRed,
-                  ),
-                )
-              else
-                Icon(action.icon, size: 16, color: colors.textSecondary),
-              const SizedBox(width: 6),
-              Text(
-                action.label,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: colors.textSecondary,
-                  fontWeight: FontWeight.w500,
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(4),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (isLoading)
+              SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                  strokeWidth: 1.5,
+                  color: colors.textTertiary,
                 ),
-              ),
-              // Tier badge
-              if (action.tier > 0) ...[
-                const SizedBox(width: 4),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                  decoration: BoxDecoration(
-                    color: action.tier == 1
-                        ? const Color(0xFF4CAF50).withAlpha(30)
-                        : const Color(0xFFFFB300).withAlpha(30),
-                    borderRadius: BorderRadius.circular(4),
+              )
+            else
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Icon(
+                    action.icon,
+                    size: 20,
+                    color: colors.textTertiary,
                   ),
-                  child: Text(
-                    action.tier == 1 ? '*' : '**',
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                      color: action.tier == 1
-                          ? const Color(0xFF4CAF50)
-                          : const Color(0xFFFFB300),
+                  // Tier badge
+                  if (action.tier > 0)
+                    Positioned(
+                      top: -4,
+                      right: -6,
+                      child: Text(
+                        action.tier == 1 ? '*' : '**',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: action.tier == 1
+                              ? const Color(0xFF4CAF50)
+                              : const Color(0xFFFFB300),
+                        ),
+                      ),
                     ),
-                  ),
-                ),
-              ],
-            ],
-          ),
+                ],
+              ),
+            const SizedBox(height: 2),
+            Text(
+              action.label,
+              style: TextStyle(
+                fontSize: 10,
+                color: colors.textTertiary,
+              ),
+            ),
+          ],
         ),
       ),
     );

@@ -222,11 +222,18 @@ class _HashtagSuggestionsOverlayState
     final query = ref.watch(hashtagQueryProvider);
     final colors = context.flowColors;
 
-    // Show dropdown if there are suggestions OR if user is typing a new list name
-    final showCreateOption = query.isNotEmpty && suggestions.isEmpty;
-    if (suggestions.isEmpty && !showCreateOption) {
+    // Always show dropdown when query exists (to show Create option)
+    // If query is empty and no suggestions, show nothing
+    if (query.isEmpty && suggestions.isEmpty) {
       return const SizedBox.shrink();
     }
+
+    // Show "Create list" option when query doesn't match existing lists
+    final hasExactMatch = suggestions.any(
+      (l) => l.name.toLowerCase() == query.toLowerCase() ||
+             l.fullPath.toLowerCase() == query.toLowerCase()
+    );
+    final showCreateOption = query.isNotEmpty && !hasExactMatch;
 
     return Stack(
       children: [
@@ -238,73 +245,113 @@ class _HashtagSuggestionsOverlayState
             child: const SizedBox.expand(),
           ),
         ),
-        // Animated suggestions dropdown
-        Positioned(
-          width: 260,
-          child: CompositedTransformFollower(
-            link: widget.link,
-            showWhenUnlinked: false,
-            offset: const Offset(0, 44),
-            child: FadeTransition(
-              opacity: _fadeAnimation,
-              child: SlideTransition(
-                position: _slideAnimation,
-                child: Material(
-                  elevation: 0,
-                  color: Colors.transparent,
-                  child: Container(
-                    constraints: const BoxConstraints(maxHeight: 220),
-                    decoration: BoxDecoration(
-                      color: colors.surface,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: colors.border.withOpacity(0.5),
+        // Animated suggestions dropdown - use UnconstrainedBox for proper positioning
+        CompositedTransformFollower(
+          link: widget.link,
+          showWhenUnlinked: false,
+          offset: const Offset(0, 44),
+          targetAnchor: Alignment.bottomLeft,
+          followerAnchor: Alignment.topLeft,
+          child: FadeTransition(
+            opacity: _fadeAnimation,
+            child: SlideTransition(
+              position: _slideAnimation,
+              child: Material(
+                elevation: 0,
+                color: Colors.transparent,
+                child: Container(
+                  width: 280,
+                  constraints: const BoxConstraints(maxHeight: 260),
+                  decoration: BoxDecoration(
+                    color: colors.surface,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: colors.border.withOpacity(0.5),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.12),
+                        blurRadius: 20,
+                        offset: const Offset(0, 8),
                       ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.08),
-                          blurRadius: 16,
-                          offset: const Offset(0, 4),
-                        ),
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.04),
-                          blurRadius: 4,
-                          offset: const Offset(0, 1),
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.04),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        // Header when searching
+                        if (query.isNotEmpty)
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                            decoration: BoxDecoration(
+                              border: Border(
+                                bottom: BorderSide(color: colors.border.withOpacity(0.3)),
+                              ),
+                            ),
+                            child: Text(
+                              'Lists matching "#$query"',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                                color: colors.textTertiary,
+                              ),
+                            ),
+                          ),
+                        // Scrollable list
+                        Flexible(
+                          child: ListView(
+                            shrinkWrap: true,
+                            padding: const EdgeInsets.symmetric(vertical: 6),
+                            children: [
+                              // Show "Create list" option when query doesn't match existing
+                              if (showCreateOption)
+                                _CreateListTile(
+                                  listName: query,
+                                  onTap: () {
+                                    final now = DateTime.now();
+                                    final newList = TaskList(
+                                      id: '',
+                                      name: query,
+                                      fullPath: query,
+                                      depth: 0,
+                                      taskCount: 0,
+                                      children: [],
+                                      createdAt: now,
+                                      updatedAt: now,
+                                    );
+                                    widget.onSelect(newList);
+                                  },
+                                ),
+                              // Show matching lists
+                              ...suggestions.map((list) => _SuggestionTile(
+                                    list: list,
+                                    onTap: () => widget.onSelect(list),
+                                  )),
+                              // Empty state when no query and no lists
+                              if (suggestions.isEmpty && !showCreateOption)
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 20),
+                                  child: Text(
+                                    'Type a list name after #',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: colors.textTertiary,
+                                    ),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                ),
+                            ],
+                          ),
                         ),
                       ],
-                    ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: ListView(
-                        shrinkWrap: true,
-                        padding: const EdgeInsets.symmetric(vertical: 6),
-                        children: [
-                          // Show "Create list" option when no matches
-                          if (showCreateOption)
-                            _CreateListTile(
-                              listName: query,
-                              onTap: () {
-                                final now = DateTime.now();
-                                final newList = TaskList(
-                                  id: '',
-                                  name: query,
-                                  fullPath: query,
-                                  depth: 0,
-                                  taskCount: 0,
-                                  children: [],
-                                  createdAt: now,
-                                  updatedAt: now,
-                                );
-                                widget.onSelect(newList);
-                              },
-                            ),
-                          // Show matching lists
-                          ...suggestions.map((list) => _SuggestionTile(
-                                list: list,
-                                onTap: () => widget.onSelect(list),
-                              )),
-                        ],
-                      ),
                     ),
                   ),
                 ),

@@ -146,6 +146,11 @@ func (s *Server) registerRoutes() {
 	// AI features (per-task)
 	tasks.Post("/:id/ai/decompose", taskHandler.AIDecompose)
 	tasks.Post("/:id/ai/clean", taskHandler.AIClean)
+	tasks.Post("/:id/ai/rate", taskHandler.AIRate)
+	tasks.Post("/:id/ai/extract", taskHandler.AIExtract)
+	tasks.Post("/:id/ai/remind", taskHandler.AIRemind)
+	tasks.Post("/:id/ai/email", taskHandler.AIEmail)
+	tasks.Post("/:id/ai/invite", taskHandler.AIInvite)
 
 	// AI management routes
 	ai := v1.Group("/ai")

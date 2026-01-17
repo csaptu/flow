@@ -18,13 +18,18 @@ type Task struct {
 	ParentID *uuid.UUID `json:"parent_id,omitempty" db:"parent_id"`
 	Depth    int        `json:"depth" db:"depth"` // 0 = root, 1 = child (max)
 
-	// Original text (before AI cleanup)
-	OriginalText *string `json:"original_text,omitempty" db:"original_text"`
+	// Original text (before AI cleanup) - preserves user input for revert
+	OriginalTitle       *string `json:"original_title,omitempty" db:"original_title"`
+	OriginalDescription *string `json:"original_description,omitempty" db:"original_description"`
+	SkipAutoCleanup     bool    `json:"skip_auto_cleanup" db:"skip_auto_cleanup"`
 
 	// Recurrence
 	RecurrenceRule *string    `json:"recurrence_rule,omitempty" db:"recurrence_rule"` // RRULE format
 	LastOccurrence *time.Time `json:"last_occurrence,omitempty" db:"last_occurrence"`
 	NextOccurrence *time.Time `json:"next_occurrence,omitempty" db:"next_occurrence"`
+
+	// Reminder
+	ReminderAt *time.Time `json:"reminder_at,omitempty" db:"reminder_at"`
 
 	// AI features
 	AICleanedTitle bool     `json:"ai_cleaned_title" db:"ai_cleaned_title"`
