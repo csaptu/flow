@@ -1495,9 +1495,9 @@ func (h *TaskHandler) getTask(ctx context.Context, taskID, userID uuid.UUID) (*m
 
 	err := h.db.QueryRow(ctx,
 		`SELECT t.id, t.user_id, t.title, t.description, t.ai_summary, t.ai_steps, t.status, t.priority,
-		 t.due_date, t.completed_at, t.tags, t.parent_id, t.depth, t.complexity,
-		 t.group_id, g.name, t.ai_cleaned_title, t.ai_extracted_due, t.ai_decomposed,
-		 t.original_title, t.original_description, t.skip_auto_cleanup, t.version, t.created_at, t.updated_at,
+		 t.due_date, t.completed_at, t.tags, t.parent_id, t.depth, COALESCE(t.complexity, 0),
+		 t.group_id, g.name, COALESCE(t.ai_cleaned_title, false), COALESCE(t.ai_extracted_due, false), COALESCE(t.ai_decomposed, false),
+		 t.original_title, t.original_description, COALESCE(t.skip_auto_cleanup, false), t.version, t.created_at, t.updated_at,
 		 (SELECT COUNT(*) FROM tasks WHERE parent_id = t.id AND deleted_at IS NULL) as children_count
 		 FROM tasks t
 		 LEFT JOIN task_groups g ON t.group_id = g.id

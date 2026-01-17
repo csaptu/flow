@@ -245,25 +245,33 @@ class _BearCheckbox extends StatelessWidget {
     final priorityColor = FlowColors.getPriorityColor(priority);
 
     return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        curve: Curves.easeOutCubic,
-        width: 22,
-        height: 22,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: isChecked ? colors.primary : Colors.transparent,
-          border: Border.all(
-            color: isChecked
-                ? colors.primary
-                : (priorityColor != Colors.transparent ? priorityColor : colors.border),
-            width: isChecked ? 0 : 1.5,
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        // Stop event from bubbling to parent InkWell
+        onTap();
+      },
+      child: Padding(
+        // Larger tap area
+        padding: const EdgeInsets.all(4),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOutCubic,
+          width: 22,
+          height: 22,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: isChecked ? colors.primary : Colors.transparent,
+            border: Border.all(
+              color: isChecked
+                  ? colors.primary
+                  : (priorityColor != Colors.transparent ? priorityColor : colors.border),
+              width: isChecked ? 0 : 1.5,
+            ),
           ),
+          child: isChecked
+              ? const Icon(Icons.check_rounded, size: 14, color: Colors.white)
+              : null,
         ),
-        child: isChecked
-            ? const Icon(Icons.check_rounded, size: 14, color: Colors.white)
-            : null,
       ),
     );
   }

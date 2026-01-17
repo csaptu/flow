@@ -70,7 +70,7 @@ class TaskList extends ConsumerWidget {
     final today = DateTime(now.year, now.month, now.day);
     final tomorrow = today.add(const Duration(days: 1));
 
-    // Separate overdue tasks
+    // Separate tasks by date
     final overdueTasks = <Task>[];
     final todayTasks = <Task>[];
     final tomorrowTasks = <Task>[];
@@ -78,16 +78,19 @@ class TaskList extends ConsumerWidget {
     final noDateTasks = <Task>[];
 
     for (final task in tasks) {
-      if (task.isOverdue) {
-        overdueTasks.add(task);
-      } else if (task.dueDate == null) {
+      if (task.dueDate == null) {
         noDateTasks.add(task);
       } else {
         final dueDate = DateTime(task.dueDate!.year, task.dueDate!.month, task.dueDate!.day);
+
+        // Tasks due today go to "Today" section, even if past the specific time
         if (dueDate.isAtSameMomentAs(today)) {
           todayTasks.add(task);
         } else if (dueDate.isAtSameMomentAs(tomorrow)) {
           tomorrowTasks.add(task);
+        } else if (dueDate.isBefore(today)) {
+          // Only truly overdue (before today)
+          overdueTasks.add(task);
         } else {
           // Group by date string for future dates
           final dateKey = _formatGroupDate(task.dueDate!);

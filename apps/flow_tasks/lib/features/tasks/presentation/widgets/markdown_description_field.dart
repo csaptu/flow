@@ -78,9 +78,87 @@ class _MarkdownDescriptionFieldState extends State<MarkdownDescriptionField> {
   void _handleKeyEvent(KeyEvent event) {
     if (event is! KeyDownEvent) return;
 
+    // Check for modifier keys (Ctrl on Windows/Linux, Cmd on Mac)
+    final isModifierPressed = HardwareKeyboard.instance.isControlPressed ||
+        HardwareKeyboard.instance.isMetaPressed;
+
+    if (isModifierPressed) {
+      if (event.logicalKey == LogicalKeyboardKey.keyB) {
+        _toggleBold();
+        return;
+      }
+      if (event.logicalKey == LogicalKeyboardKey.keyI) {
+        _toggleItalic();
+        return;
+      }
+    }
+
     if (event.logicalKey == LogicalKeyboardKey.enter) {
       _handleEnterKey();
     }
+  }
+
+  void _toggleBold() {
+    _wrapSelection('**', '**');
+  }
+
+  void _toggleItalic() {
+    _wrapSelection('*', '*');
+  }
+
+  void _wrapSelection(String before, String after) {
+    final text = _controller.text;
+    final selection = _controller.selection;
+
+    if (!selection.isValid) return;
+
+    final selectedText = selection.textInside(text);
+
+    // Check if already wrapped - unwrap if so
+    final start = selection.start;
+    final end = selection.end;
+
+    final beforeLen = before.length;
+    final afterLen = after.length;
+
+    // Check if selection is already wrapped
+    if (start >= beforeLen && end + afterLen <= text.length) {
+      final potentialBefore = text.substring(start - beforeLen, start);
+      final potentialAfter = text.substring(end, end + afterLen);
+
+      if (potentialBefore == before && potentialAfter == after) {
+        // Unwrap: remove the markers
+        final newText = text.substring(0, start - beforeLen) +
+            selectedText +
+            text.substring(end + afterLen);
+
+        _controller.value = TextEditingValue(
+          text: newText,
+          selection: TextSelection(
+            baseOffset: start - beforeLen,
+            extentOffset: end - beforeLen,
+          ),
+        );
+        widget.onChanged?.call(newText);
+        return;
+      }
+    }
+
+    // Wrap selection
+    final newText = text.substring(0, start) +
+        before +
+        selectedText +
+        after +
+        text.substring(end);
+
+    final newStart = start + beforeLen;
+    final newEnd = newStart + selectedText.length;
+
+    _controller.value = TextEditingValue(
+      text: newText,
+      selection: TextSelection(baseOffset: newStart, extentOffset: newEnd),
+    );
+    widget.onChanged?.call(newText);
   }
 
   void _handleEnterKey() {

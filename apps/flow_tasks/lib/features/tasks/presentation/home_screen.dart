@@ -185,7 +185,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         return const widgets.TaskList(type: widgets.TaskListType.next7days);
       case 2: // All
         return const widgets.TaskList(type: widgets.TaskListType.all);
-      case 3: // Trash
+      case 3: // Completed
+        return const widgets.TaskList(type: widgets.TaskListType.completed);
+      case 4: // Trash
         return const widgets.TaskList(type: widgets.TaskListType.trash);
       default:
         // Index >= 100 means a list is selected
@@ -386,12 +388,12 @@ class _Header extends ConsumerWidget {
       final list = lists.where((l) => l.id == selectedListId).firstOrNull;
       title = list?.name ?? 'List';
     } else {
-      final titles = ['Today', 'Next 7 days', 'All', 'Trash'];
+      final titles = ['Today', 'Next 7 days', 'All', 'Completed', 'Trash'];
       title = selectedIndex < titles.length ? titles[selectedIndex] : 'Tasks';
     }
 
     // Show group by date button for views that support it (not trash)
-    final showGroupByDate = selectedIndex != 3; // 3 = Trash
+    final showGroupByDate = selectedIndex != 4; // 4 = Trash
 
     // Mobile layout: two rows (hamburger + actions, then title)
     if (isNarrowScreen) {
@@ -514,7 +516,8 @@ class _ListsDrawer extends ConsumerWidget {
     (icon: Icons.today_rounded, label: 'Today', index: 0),
     (icon: Icons.date_range_rounded, label: 'Next 7 days', index: 1),
     (icon: Icons.all_inbox_rounded, label: 'All', index: 2),
-    (icon: Icons.delete_outline_rounded, label: 'Trash', index: 3),
+    (icon: Icons.check_circle_outline_rounded, label: 'Completed', index: 3),
+    (icon: Icons.delete_outline_rounded, label: 'Trash', index: 4),
   ];
 
   @override
@@ -969,6 +972,7 @@ class _Sidebar extends ConsumerWidget {
     _SidebarItem(icon: Icons.today_rounded, label: 'Today'),
     _SidebarItem(icon: Icons.date_range_rounded, label: 'Next 7 days'),
     _SidebarItem(icon: Icons.all_inbox_rounded, label: 'All'),
+    _SidebarItem(icon: Icons.check_circle_outline_rounded, label: 'Completed'),
     _SidebarItem(icon: Icons.delete_outline_rounded, label: 'Trash'),
   ];
 

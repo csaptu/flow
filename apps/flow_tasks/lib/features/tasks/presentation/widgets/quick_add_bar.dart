@@ -41,9 +41,11 @@ class _QuickAddBarState extends ConsumerState<QuickAddBar> {
 
     try {
       // Use optimistic task actions - instant UI update
-      // Auto-add to "today" by setting due date to now
+      // Auto-add to "today" by setting due date to start of today (no specific time)
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
       final actions = ref.read(taskActionsProvider);
-      await actions.create(title: text.trim(), dueDate: DateTime.now());
+      await actions.create(title: text.trim(), dueDate: today);
 
       _controller.clear();
       _focusNode.unfocus();

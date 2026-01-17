@@ -35,7 +35,8 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
   @override
   void initState() {
     super.initState();
-    _titleController = TextEditingController(text: widget.task.title);
+    // Use aiSummary (cleaned title) if available, otherwise use original title
+    _titleController = TextEditingController(text: widget.task.aiSummary ?? widget.task.title);
     _descriptionController =
         TextEditingController(text: widget.task.description ?? '');
   }
@@ -43,8 +44,14 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
   @override
   void didUpdateWidget(covariant TaskDetailPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.task.id != widget.task.id) {
-      _titleController.text = widget.task.title;
+    // Update when task changes (different ID or same ID with updated data)
+    if (oldWidget.task.id != widget.task.id ||
+        oldWidget.task.aiSummary != widget.task.aiSummary ||
+        oldWidget.task.title != widget.task.title) {
+      _titleController.text = widget.task.aiSummary ?? widget.task.title;
+    }
+    if (oldWidget.task.id != widget.task.id ||
+        oldWidget.task.description != widget.task.description) {
       _descriptionController.text = widget.task.description ?? '';
     }
   }
@@ -267,7 +274,7 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
                       Expanded(
                         child: MarkdownDescriptionField(
                           initialValue: task.description,
-                          hintText: 'Add description... (supports markdown)',
+                          hintText: 'Add description...',
                           onChanged: (value) {
                             _descriptionController.text = value;
                           },
