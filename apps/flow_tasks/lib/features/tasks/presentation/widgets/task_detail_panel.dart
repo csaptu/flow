@@ -4,7 +4,6 @@ import 'package:flow_models/flow_models.dart';
 import 'package:flow_tasks/core/providers/providers.dart';
 import 'package:flow_tasks/core/theme/flow_theme.dart';
 import 'package:flow_tasks/features/tasks/presentation/widgets/task_date_time_picker.dart';
-import 'package:flow_tasks/features/tasks/presentation/widgets/move_to_list_picker.dart';
 import 'package:flow_tasks/features/tasks/presentation/widgets/attachment_picker.dart';
 import 'package:flow_tasks/features/tasks/presentation/widgets/markdown_description_field.dart';
 import 'package:intl/intl.dart';
@@ -31,6 +30,8 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
   late TextEditingController _descriptionController;
   bool _isCleaningTitle = false;
   bool _isCleaningDescription = false;
+  // Local state for dueDate - single source of truth for display
+  DateTime? _localDueDate;
 
   @override
   void initState() {
@@ -39,6 +40,7 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
     _titleController = TextEditingController(text: widget.task.aiSummary ?? widget.task.title);
     _descriptionController =
         TextEditingController(text: widget.task.description ?? '');
+    _localDueDate = widget.task.dueDate;
   }
 
   @override
@@ -53,6 +55,10 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
     if (oldWidget.task.id != widget.task.id ||
         oldWidget.task.description != widget.task.description) {
       _descriptionController.text = widget.task.description ?? '';
+    }
+    // Update local due date when task changes (different task selected)
+    if (oldWidget.task.id != widget.task.id) {
+      _localDueDate = widget.task.dueDate;
     }
   }
 
@@ -166,10 +172,11 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Due date indicator
-                  if (task.dueDate != null) _buildDueDateRow(colors, task),
-
-                  if (task.dueDate != null) const SizedBox(height: 16),
+                  // Due date indicator - use local state as source of truth
+                  if (_localDueDate != null) ...[
+                    _buildDueDateRow(colors, task),
+                    const SizedBox(height: 16),
+                  ],
 
                   // Title with inline clean/revert button and cleaned indicator
                   Row(
@@ -343,7 +350,12 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
           ),
 
           // Bottom toolbar with AI actions row
-          _AIToolbar(task: task, onClose: widget.onClose),
+          _AIToolbar(
+            task: task,
+            onClose: widget.onClose,
+            localDueDate: _localDueDate,
+            onDateChanged: (date) => setState(() => _localDueDate = date),
+          ),
         ],
       ),
     );
@@ -352,7 +364,8 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
   Widget _buildHeader(
       BuildContext context, FlowColorScheme colors, Task task) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      height: 44,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
       decoration: BoxDecoration(
         border: Border(
           bottom: BorderSide(color: colors.divider, width: 0.5),
@@ -360,39 +373,27 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
       ),
       child: Row(
         children: [
-          // Close button
-          IconButton(
-            icon: Icon(
-              widget.isBottomSheet ? Icons.keyboard_arrow_down : Icons.close,
-              color: colors.textSecondary,
-            ),
-            onPressed: widget.onClose,
-            tooltip: 'Close',
-          ),
-
-          const Spacer(),
-
           // Priority indicator
           if (task.priority != Priority.none)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
                 color: _getPriorityColor(task.priority.value).withAlpha(25),
-                borderRadius: BorderRadius.circular(4),
+                borderRadius: BorderRadius.circular(6),
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(
                     Icons.flag_rounded,
-                    size: 14,
+                    size: 12,
                     color: _getPriorityColor(task.priority.value),
                   ),
                   const SizedBox(width: 4),
                   Text(
                     _getPriorityLabel(task.priority.value),
                     style: TextStyle(
-                      fontSize: 12,
+                      fontSize: 11,
                       color: _getPriorityColor(task.priority.value),
                       fontWeight: FontWeight.w500,
                     ),
@@ -401,39 +402,25 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
               ),
             ),
 
-          const SizedBox(width: 8),
+          const Spacer(),
 
-          // More options (with timestamps)
-          PopupMenuButton<String>(
-            icon: Icon(Icons.more_horiz, color: colors.textSecondary),
-            onSelected: (value) {
-              // Handle menu actions if needed
+          // Close button - simple text link style
+          GestureDetector(
+            onTap: () async {
+              // Save any pending changes before closing
+              await _updateTitle();
+              await _updateDescription();
+              ref.read(isNewlyCreatedTaskProvider.notifier).state = false;
+              widget.onClose();
             },
-            itemBuilder: (context) => [
-              PopupMenuItem<String>(
-                enabled: false,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Created ${_formatDateTime(task.createdAt)}',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: colors.textTertiary,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Updated ${_formatDateTime(task.updatedAt)}',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: colors.textTertiary,
-                      ),
-                    ),
-                  ],
-                ),
+            child: Text(
+              'Close',
+              style: TextStyle(
+                fontSize: 14,
+                color: colors.textSecondary,
+                fontWeight: FontWeight.w500,
               ),
-            ],
+            ),
           ),
         ],
       ),
@@ -441,22 +428,35 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
   }
 
   Widget _buildDueDateRow(FlowColorScheme colors, Task task) {
-    final isOverdue = task.isOverdue;
+    // Check overdue using local state
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final dueDateOnly = _localDueDate != null
+        ? DateTime(_localDueDate!.year, _localDueDate!.month, _localDueDate!.day)
+        : null;
+    final isOverdue = dueDateOnly != null && dueDateOnly.isBefore(today) && task.status != TaskStatus.completed;
     final dateColor = isOverdue ? colors.error : colors.textSecondary;
 
     return InkWell(
       onTap: () async {
+        final taskId = task.id; // Capture task ID before async gap
         final date = await TaskDateTimePicker.show(
           context,
-          initialDate: task.dueDate,
+          initialDate: _localDueDate,
           onClear: () async {
+            // Update local state immediately
+            setState(() => _localDueDate = null);
+            // Then update the store
             final actions = ref.read(taskActionsProvider);
-            await actions.update(task.id, dueDate: null);
+            await actions.update(taskId, dueDate: null);
           },
         );
-        if (date != null) {
+        if (date != null && mounted) {
+          // Update local state immediately for instant feedback
+          setState(() => _localDueDate = date);
+          // Then update the store (will sync in background)
           final actions = ref.read(taskActionsProvider);
-          await actions.update(task.id, dueDate: date);
+          await actions.update(taskId, dueDate: date);
         }
       },
       borderRadius: BorderRadius.circular(4),
@@ -468,7 +468,7 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
             Icon(Icons.event_outlined, size: 16, color: dateColor),
             const SizedBox(width: 8),
             Text(
-              _formatDueDate(task.dueDate!),
+              _formatDueDate(_localDueDate!),
               style: TextStyle(
                 fontSize: 13,
                 color: dateColor,
@@ -603,10 +603,6 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
     }
   }
 
-  String _formatDateTime(DateTime dt) {
-    return DateFormat('MMM d, yyyy \'at\' h:mm a').format(dt);
-  }
-
   Color _getPriorityColor(int priority) {
     switch (priority) {
       case 3:
@@ -638,8 +634,15 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
 class _AIToolbar extends ConsumerStatefulWidget {
   final Task task;
   final VoidCallback onClose;
+  final DateTime? localDueDate;
+  final ValueChanged<DateTime?> onDateChanged;
 
-  const _AIToolbar({required this.task, required this.onClose});
+  const _AIToolbar({
+    required this.task,
+    required this.onClose,
+    required this.localDueDate,
+    required this.onDateChanged,
+  });
 
   @override
   ConsumerState<_AIToolbar> createState() => _AIToolbarState();
@@ -836,10 +839,15 @@ class _AIToolbarState extends ConsumerState<_AIToolbar> {
     }
   }
 
+  String _formatDateTime(DateTime dt) {
+    return DateFormat('MMM d, yyyy \'at\' h:mm a').format(dt);
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = context.flowColors;
-    final task = widget.task;
+    // Watch the task from provider to get live updates
+    final task = ref.watch(selectedTaskProvider) ?? widget.task;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -889,40 +897,30 @@ class _AIToolbarState extends ConsumerState<_AIToolbar> {
               IconButton(
                 icon: Icon(
                   Icons.event_outlined,
-                  color: task.dueDate != null ? colors.primary : colors.textSecondary,
+                  color: widget.localDueDate != null ? colors.primary : colors.textSecondary,
                 ),
                 onPressed: () async {
+                  final taskId = task.id; // Capture task ID before async gap
                   final date = await TaskDateTimePicker.show(
                     context,
-                    initialDate: task.dueDate,
+                    initialDate: widget.localDueDate,
                     onClear: () async {
+                      // Update parent's local state immediately
+                      widget.onDateChanged(null);
+                      // Then update the store
                       final actions = ref.read(taskActionsProvider);
-                      await actions.update(task.id, dueDate: null);
+                      await actions.update(taskId, dueDate: null);
                     },
                   );
-                  if (date != null) {
+                  if (date != null && mounted) {
+                    // Update parent's local state immediately for instant feedback
+                    widget.onDateChanged(date);
+                    // Then update the store (will sync in background)
                     final actions = ref.read(taskActionsProvider);
-                    await actions.update(task.id, dueDate: date);
+                    await actions.update(taskId, dueDate: date);
                   }
                 },
-                tooltip: task.dueDate != null ? _formatDueDate(task.dueDate!) : 'Due Date',
-                iconSize: 20,
-              ),
-
-              // List button
-              IconButton(
-                icon: Icon(Icons.tag, color: colors.textSecondary),
-                onPressed: () async {
-                  final selectedList = await MoveToListPicker.show(context, task);
-                  if (selectedList != null) {
-                    final actions = ref.read(taskActionsProvider);
-                    await actions.update(
-                      task.id,
-                      tags: [...task.tags, 'list:${selectedList.fullPath}'],
-                    );
-                  }
-                },
-                tooltip: 'Move to List',
+                tooltip: widget.localDueDate != null ? _formatDueDate(widget.localDueDate!) : 'Due Date',
                 iconSize: 20,
               ),
 
@@ -983,6 +981,40 @@ class _AIToolbarState extends ConsumerState<_AIToolbar> {
               ),
 
               const Spacer(),
+
+              // More options (with timestamps)
+              PopupMenuButton<String>(
+                icon: Icon(Icons.more_horiz, color: colors.textSecondary, size: 20),
+                padding: EdgeInsets.zero,
+                onSelected: (value) {
+                  // Handle menu actions if needed
+                },
+                itemBuilder: (context) => [
+                  PopupMenuItem<String>(
+                    enabled: false,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Created ${_formatDateTime(task.createdAt)}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: colors.textTertiary,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Updated ${_formatDateTime(task.updatedAt)}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: colors.textTertiary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
 
               // Move to trash button
               IconButton(

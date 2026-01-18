@@ -358,7 +358,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     const SizedBox(height: FlowSpacing.xxl),
                     // Version info
                     Text(
-                      'v2026-01-17 08:26 GMT+7',
+                      'v2026-01-18 20:07 GMT+7',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                             color: FlowColors.lightTextSecondary.withOpacity(0.5),
                           ),
@@ -366,7 +366,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'AI Settings & Cleanup Revert',
+                      'Admin in sidebar, bottom sheet drag fix, API timeout increase',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                             color: FlowColors.lightTextSecondary.withOpacity(0.4),
                             fontSize: 10,

@@ -13,6 +13,7 @@ class TasksService {
 
   /// Create a new task
   Future<Task> create({
+    String? id, // Client-provided ID for offline-first sync
     required String title,
     String? description,
     DateTime? dueDate,
@@ -21,6 +22,7 @@ class TasksService {
     String? parentId,
   }) async {
     final response = await _dio.post('/tasks', data: {
+      if (id != null) 'id': id,
       'title': title,
       'description': description,
       'due_date': dueDate?.toIso8601String(),
@@ -316,162 +318,6 @@ class TasksService {
     throw ApiException.fromResponse(response.data);
   }
 
-  /// List task groups
-  Future<List<TaskGroup>> listGroups() async {
-    final response = await _dio.get('/groups');
-
-    if (response.data['success'] == true) {
-      return (response.data['data'] as List)
-          .map((e) => TaskGroup.fromJson(e as Map<String, dynamic>))
-          .toList();
-    }
-
-    throw ApiException.fromResponse(response.data);
-  }
-
-  /// Create a task group
-  Future<TaskGroup> createGroup({
-    required String name,
-    String? icon,
-    String? color,
-  }) async {
-    final response = await _dio.post('/groups', data: {
-      'name': name,
-      'icon': icon,
-      'color': color,
-    });
-
-    if (response.data['success'] == true) {
-      return TaskGroup.fromJson(response.data['data']);
-    }
-
-    throw ApiException.fromResponse(response.data);
-  }
-
-  // =====================================================
-  // List Endpoints (Bear-style #List/Sublist)
-  // =====================================================
-
-  /// Get all lists (flat)
-  Future<List<TaskList>> getLists({bool archived = false}) async {
-    final response = await _dio.get('/lists', queryParameters: {
-      'archived': archived.toString(),
-    });
-
-    if (response.data['success'] == true) {
-      return (response.data['data'] as List)
-          .map((e) => TaskList.fromJson(e as Map<String, dynamic>))
-          .toList();
-    }
-
-    throw ApiException.fromResponse(response.data);
-  }
-
-  /// Get lists as a tree structure
-  Future<List<TaskList>> getListTree({bool archived = false}) async {
-    final response = await _dio.get('/lists/tree', queryParameters: {
-      'archived': archived.toString(),
-    });
-
-    if (response.data['success'] == true) {
-      return (response.data['data'] as List)
-          .map((e) => TaskList.fromJson(e as Map<String, dynamic>))
-          .toList();
-    }
-
-    throw ApiException.fromResponse(response.data);
-  }
-
-  /// Create a new list
-  Future<TaskList> createList({
-    required String name,
-    String? icon,
-    String? color,
-    String? parentId,
-  }) async {
-    final response = await _dio.post('/lists', data: {
-      'name': name,
-      'icon': icon,
-      'color': color,
-      'parent_id': parentId,
-    });
-
-    if (response.data['success'] == true) {
-      return TaskList.fromJson(response.data['data']);
-    }
-
-    throw ApiException.fromResponse(response.data);
-  }
-
-  /// Search lists by name prefix
-  Future<List<TaskList>> searchLists(String query, {String? parentId}) async {
-    final response = await _dio.post('/lists/search', data: {
-      'query': query,
-      'parent_id': parentId,
-    });
-
-    if (response.data['success'] == true) {
-      return (response.data['data'] as List)
-          .map((e) => TaskList.fromJson(e as Map<String, dynamic>))
-          .toList();
-    }
-
-    throw ApiException.fromResponse(response.data);
-  }
-
-  /// Get tasks in a list
-  Future<List<Task>> getListTasks(String listId, {bool includeSublists = false}) async {
-    final response = await _dio.get('/lists/$listId/tasks', queryParameters: {
-      'include_sublists': includeSublists.toString(),
-    });
-
-    if (response.data['success'] == true) {
-      return (response.data['data'] as List)
-          .map((e) => Task.fromJson(e as Map<String, dynamic>))
-          .toList();
-    }
-
-    throw ApiException.fromResponse(response.data);
-  }
-
-  /// Delete a list
-  Future<void> deleteList(String listId) async {
-    final response = await _dio.delete('/lists/$listId');
-
-    if (response.data['success'] != true && response.statusCode != 204) {
-      throw ApiException.fromResponse(response.data);
-    }
-  }
-
-  /// Archive a list
-  Future<void> archiveList(String listId) async {
-    final response = await _dio.post('/lists/$listId/archive');
-
-    if (response.data['success'] != true) {
-      throw ApiException.fromResponse(response.data);
-    }
-  }
-
-  /// Unarchive a list
-  Future<void> unarchiveList(String listId) async {
-    final response = await _dio.post('/lists/$listId/unarchive');
-
-    if (response.data['success'] != true) {
-      throw ApiException.fromResponse(response.data);
-    }
-  }
-
-  /// Cleanup empty lists (removes lists/sublists with 0 tasks)
-  Future<Map<String, dynamic>> cleanupEmptyLists() async {
-    final response = await _dio.post('/lists/cleanup-empty');
-
-    if (response.data['success'] == true) {
-      return response.data['data'] as Map<String, dynamic>;
-    }
-
-    throw ApiException.fromResponse(response.data);
-  }
-
   // =====================================================
   // Attachment Endpoints
   // =====================================================
@@ -729,11 +575,13 @@ class TasksService {
   Future<void> updateUserSubscription(String userId, {
     required String tier,
     String? planId,
+    DateTime? startsAt,
     DateTime? expiresAt,
   }) async {
     final response = await _dio.put('/admin/users/$userId/subscription', data: {
       'tier': tier,
       'plan_id': planId,
+      'starts_at': startsAt?.toIso8601String(),
       'expires_at': expiresAt?.toIso8601String(),
     });
 
@@ -769,6 +617,30 @@ class TasksService {
     }
 
     throw ApiException.fromResponse(response.data);
+  }
+
+  /// Get all AI prompt configurations (admin only)
+  Future<List<AIPromptConfig>> getAIConfigs() async {
+    final response = await _dio.get('/admin/ai-configs');
+
+    if (response.data['success'] == true) {
+      return (response.data['data'] as List)
+          .map((e) => AIPromptConfig.fromJson(e as Map<String, dynamic>))
+          .toList();
+    }
+
+    throw ApiException.fromResponse(response.data);
+  }
+
+  /// Update an AI prompt configuration (admin only)
+  Future<void> updateAIConfig(String key, String value) async {
+    final response = await _dio.put('/admin/ai-configs/$key', data: {
+      'value': value,
+    });
+
+    if (response.data['success'] != true) {
+      throw ApiException.fromResponse(response.data);
+    }
   }
 }
 

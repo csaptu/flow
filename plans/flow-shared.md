@@ -7,7 +7,8 @@ This document covers the backend infrastructure for the Flow productivity suite.
 **Architecture Summary:**
 - **3 Domains**: shared, tasks, projects (each deploys independently)
 - **3 Databases**: shared_db, tasks_db, projects_db (each domain owns one)
-- **Cross-domain**: REST APIs only (no shared DB access between domains)
+- **Cross-domain**: `shared/repository` package (Go imports, not HTTP)
+- **Single Source of Truth**: Services call shared repository for cross-domain data (users, subscriptions, etc.)
 - **Models**: Base types in `common/`, extensions in domain `models/` folders
 
 ---
@@ -304,7 +305,94 @@ Flow Tasks App                                      projects-service
                                               └─────────────────┘
 ```
 
-### 1.5 Cross-Domain Communication
+### 1.5 Cross-Domain Communication via shared/repository
+
+**Monorepo Internal API Pattern:**
+
+Services access cross-domain data through direct Go imports from `shared/repository`, NOT via HTTP APIs. This is a monorepo internal API pattern.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        CROSS-DOMAIN DATA ACCESS                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  tasks-service                             projects-service
+       │                                           │
+       │ import "shared/repository"                │ import "shared/repository"
+       │                                           │
+       ▼                                           ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         shared/repository                                     │
+│                                                                               │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
+│  │ subscription │  │    user      │  │    plan      │  │    order     │     │
+│  │   .go        │  │   .go        │  │   .go        │  │   .go        │     │
+│  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘     │
+│                                                                               │
+│  Functions:                                                                   │
+│  - GetUserTier(ctx, userID) → string                                         │
+│  - GetUserByID(ctx, userID) → *User                                          │
+│  - GetSubscription(ctx, userID) → *Subscription                              │
+│  - IsAdmin(ctx, email) → bool                                                │
+│  - ListPlans(ctx) → []Plan                                                   │
+│  - CreateOrder(ctx, order) → error                                           │
+│                                                                               │
+└───────────────────────────────────┬─────────────────────────────────────────┘
+                                    │
+                                    │ owns & queries
+                                    ▼
+                           ┌─────────────────┐
+                           │   shared_db     │
+                           │   PostgreSQL    │
+                           │                 │
+                           │ • users         │
+                           │ • subscriptions │
+                           │ • plans         │
+                           │ • orders        │
+                           │ • admin_users   │
+                           └─────────────────┘
+```
+
+**Service Initialization:**
+
+Each service must initialize the shared repository in its server setup:
+
+```go
+// tasks/server.go or projects/server.go
+import "github.com/csaptu/flow/shared/repository"
+
+func NewServer(cfg *config.Config) (*Server, error) {
+    // Initialize shared repository for cross-domain data access
+    if err := repository.Init(cfg); err != nil {
+        return nil, fmt.Errorf("failed to initialize shared repository: %w", err)
+    }
+    // ...
+}
+```
+
+**Usage Example (tasks service accessing user tier):**
+
+```go
+// tasks/ai_service.go
+import "github.com/csaptu/flow/shared/repository"
+
+func (s *AIService) GetUserTier(ctx context.Context, userID uuid.UUID) (string, error) {
+    // Direct Go call, NOT HTTP
+    tier, err := repository.GetUserTier(ctx, userID)
+    if err != nil {
+        return "free", nil // Default to free tier
+    }
+    return tier, nil
+}
+```
+
+**Key Benefits:**
+- Type safety (compile-time checks)
+- No network latency for cross-domain queries
+- Single source of truth for shared data
+- No duplicate tables across service databases
+
+**Event-based Communication (for async notifications):**
 
 ```go
 // common/events/task_events.go

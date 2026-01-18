@@ -11,6 +11,7 @@ import (
 	"github.com/csaptu/flow/pkg/httputil"
 	"github.com/csaptu/flow/pkg/middleware"
 	"github.com/csaptu/flow/projects/models"
+	"github.com/csaptu/flow/shared/repository"
 )
 
 // ProjectHandler handles project endpoints
@@ -335,7 +336,7 @@ func (h *ProjectHandler) Delete(c *fiber.Ctx) error {
 
 // Team management endpoints
 
-// ListMembers lists project members
+// ListMembers lists project members (uses shared repository for user info)
 func (h *ProjectHandler) ListMembers(c *fiber.Ctx) error {
 	userID, err := middleware.GetUserID(c)
 	if err != nil {
@@ -351,12 +352,12 @@ func (h *ProjectHandler) ListMembers(c *fiber.Ctx) error {
 		return httputil.Forbidden(c, "not a project member")
 	}
 
+	// Query local project_members table (projects domain data)
 	rows, err := h.db.Query(c.Context(),
-		`SELECT pm.id, pm.user_id, pm.role, pm.joined_at, u.name, u.email, u.avatar_url
-		 FROM project_members pm
-		 JOIN users u ON pm.user_id = u.id
-		 WHERE pm.project_id = $1 AND pm.left_at IS NULL
-		 ORDER BY pm.joined_at ASC`,
+		`SELECT id, user_id, role, joined_at
+		 FROM project_members
+		 WHERE project_id = $1 AND left_at IS NULL
+		 ORDER BY joined_at ASC`,
 		projectID,
 	)
 	if err != nil {
@@ -369,22 +370,28 @@ func (h *ProjectHandler) ListMembers(c *fiber.Ctx) error {
 		var id, memberUserID uuid.UUID
 		var role commonModels.MemberRole
 		var joinedAt time.Time
-		var name, email string
-		var avatarURL *string
 
-		if err := rows.Scan(&id, &memberUserID, &role, &joinedAt, &name, &email, &avatarURL); err != nil {
+		if err := rows.Scan(&id, &memberUserID, &role, &joinedAt); err != nil {
 			continue
 		}
 
-		members = append(members, map[string]interface{}{
-			"id":         id.String(),
-			"user_id":    memberUserID.String(),
-			"role":       string(role),
-			"joined_at":  joinedAt.Format(time.RFC3339),
-			"name":       name,
-			"email":      email,
-			"avatar_url": avatarURL,
-		})
+		member := map[string]interface{}{
+			"id":        id.String(),
+			"user_id":   memberUserID.String(),
+			"role":      string(role),
+			"joined_at": joinedAt.Format(time.RFC3339),
+		}
+
+		// Fetch user info from shared repository (cross-domain call)
+		user, err := repository.GetUserByID(c.Context(), memberUserID)
+		if err == nil && user != nil {
+			member["email"] = user.Email
+			if user.Name != nil {
+				member["name"] = *user.Name
+			}
+		}
+
+		members = append(members, member)
 	}
 
 	return httputil.Success(c, members)

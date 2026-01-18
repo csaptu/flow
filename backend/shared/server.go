@@ -17,6 +17,8 @@ import (
 	"github.com/csaptu/flow/pkg/llm"
 	"github.com/csaptu/flow/pkg/middleware"
 	"github.com/csaptu/flow/shared/auth"
+	"github.com/csaptu/flow/shared/repository"
+	"github.com/csaptu/flow/shared/subscription"
 	"github.com/csaptu/flow/shared/user"
 )
 
@@ -35,6 +37,11 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	db, err := initDatabase(cfg.Databases.Shared)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
+
+	// Initialize repository (for internal monorepo API calls)
+	if err := repository.Init(cfg); err != nil {
+		return nil, fmt.Errorf("failed to initialize repository: %w", err)
 	}
 
 	// Initialize Redis client
@@ -159,6 +166,17 @@ func (s *Server) registerRoutes() {
 	protected.Get("/users/:id", userHandler.GetByID)
 	protected.Put("/users/:id", userHandler.Update)
 	protected.Delete("/users/:id", userHandler.Delete)
+
+	// Subscription routes (protected)
+	subHandler := subscription.NewHandler(s.db)
+	protected.Get("/subscriptions/:user_id", subHandler.GetUserSubscription)
+	protected.Get("/plans", subHandler.ListPlans)
+	protected.Get("/plans/:plan_id", subHandler.GetPlan)
+
+	// Internal routes (for service-to-service calls)
+	// Note: For monorepo internal calls, use shared/repository directly instead of HTTP
+	internal := v1.Group("/internal")
+	internal.Get("/admin/check/:email", subHandler.CheckAdmin)
 }
 
 func (s *Server) healthCheck(c *fiber.Ctx) error {

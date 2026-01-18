@@ -15,7 +15,37 @@ Flow Projects is the **powerful project management app** for complex, multi-phas
 - `source_task_id` field tracks if a WBS node was promoted from a personal task
 - Projects-service exposes API for "Assigned to Me" queries from tasks-service
 
-**Cross-Domain APIs:**
+**Cross-Domain Data Access (Monorepo Internal API):**
+
+Services access shared data via `shared/repository` (Go imports, not HTTP):
+
+```go
+// projects/server.go - initialize repository
+import "github.com/csaptu/flow/shared/repository"
+
+func NewServer(cfg *config.Config) (*Server, error) {
+    if err := repository.Init(cfg); err != nil {
+        return nil, fmt.Errorf("failed to initialize shared repository: %w", err)
+    }
+    // ...
+}
+
+// projects/project_handler.go - access user info
+func (h *ProjectHandler) ListMembers(c *fiber.Ctx) error {
+    // Query local project_members table (projects domain)
+    members := h.queryLocalMembers(projectID)
+
+    // Fetch user details from shared repository (cross-domain)
+    for _, m := range members {
+        user, _ := repository.GetUserByID(c.Context(), m.UserID)
+        m.Email = user.Email
+        m.Name = user.Name
+    }
+    return c.JSON(members)
+}
+```
+
+**External APIs (called by Flutter apps):**
 ```
 # Flow Tasks app calls this to show "Assigned to Me" tab
 GET /api/v1/users/{user_id}/assigned-tasks

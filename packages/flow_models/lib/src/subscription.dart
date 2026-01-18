@@ -6,6 +6,7 @@ class SubscriptionPlan extends Equatable {
   final String name;
   final String tier;
   final double priceMonthly;
+  final double? priceYearly;
   final String currency;
   final List<String> features;
   final bool isPopular;
@@ -15,6 +16,7 @@ class SubscriptionPlan extends Equatable {
     required this.name,
     required this.tier,
     required this.priceMonthly,
+    this.priceYearly,
     required this.currency,
     required this.features,
     this.isPopular = false,
@@ -26,6 +28,7 @@ class SubscriptionPlan extends Equatable {
       name: json['name'] as String,
       tier: json['tier'] as String,
       priceMonthly: (json['price_monthly'] as num).toDouble(),
+      priceYearly: json['price_yearly'] != null ? (json['price_yearly'] as num).toDouble() : null,
       currency: json['currency'] as String? ?? 'USD',
       features: (json['features'] as List<dynamic>?)?.cast<String>() ?? [],
       isPopular: json['is_popular'] as bool? ?? false,
@@ -33,10 +36,16 @@ class SubscriptionPlan extends Equatable {
   }
 
   bool get isFree => priceMonthly == 0;
+  bool get hasYearlyOption => priceYearly != null && priceYearly! > 0;
 
   String get formattedPrice {
     if (isFree) return 'Free';
     return '\$${priceMonthly.toStringAsFixed(2)}/mo';
+  }
+
+  String get formattedYearlyPrice {
+    if (priceYearly == null) return '';
+    return '\$${priceYearly!.toStringAsFixed(2)}/yr';
   }
 
   @override
@@ -214,4 +223,43 @@ class AdminUser extends Equatable {
 
   @override
   List<Object?> get props => [id, email];
+}
+
+/// AI prompt configuration for admin
+class AIPromptConfig extends Equatable {
+  final String key;
+  final String value;
+  final String? description;
+  final DateTime updatedAt;
+  final String? updatedBy;
+
+  const AIPromptConfig({
+    required this.key,
+    required this.value,
+    this.description,
+    required this.updatedAt,
+    this.updatedBy,
+  });
+
+  factory AIPromptConfig.fromJson(Map<String, dynamic> json) {
+    return AIPromptConfig(
+      key: json['key'] as String,
+      value: json['value'] as String,
+      description: json['description'] as String?,
+      updatedAt: DateTime.tryParse(json['updated_at'] as String? ?? '') ?? DateTime.now(),
+      updatedBy: json['updated_by'] as String?,
+    );
+  }
+
+  /// Returns a human-readable display name for the config key
+  String get displayName {
+    return key
+        .replaceAll('_', ' ')
+        .split(' ')
+        .map((word) => word.isEmpty ? word : '${word[0].toUpperCase()}${word.substring(1)}')
+        .join(' ');
+  }
+
+  @override
+  List<Object?> get props => [key];
 }

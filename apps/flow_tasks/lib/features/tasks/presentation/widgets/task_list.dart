@@ -47,6 +47,7 @@ class TaskList extends ConsumerWidget {
         itemBuilder: (context, index) {
           final task = tasks[index];
           return ExpandableTaskTile(
+            key: ValueKey(task.id),
             task: task,
             onComplete: () => _completeTask(ref, task),
             onUncomplete: () => _uncompleteTask(ref, task),
@@ -361,6 +362,7 @@ class _GroupedTaskListViewState extends ConsumerState<_GroupedTaskListView> {
             // Task items (only if expanded)
             if (isExpanded)
               ...group.tasks.map((task) => ExpandableTaskTile(
+                key: ValueKey(task.id),
                 task: task,
                 onComplete: () => _completeTask(task),
                 onUncomplete: () => _uncompleteTask(task),

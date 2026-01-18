@@ -16,6 +16,7 @@ class SyncEngine {
   StreamSubscription? _connectivitySubscription;
   bool _isOnline = true;
   bool _isSyncing = false;
+  Completer<void>? _syncCompleter;
 
   SyncEngine({
     required TasksService tasksService,
@@ -92,12 +93,25 @@ class SyncEngine {
 
   /// Sync if there are pending operations and we're online
   Future<void> _syncIfNeeded() async {
-    if (!_isOnline || _isSyncing) return;
+    if (!_isOnline) return;
+
+    // If already syncing, wait for it to complete then check for more
+    if (_isSyncing) {
+      if (_syncCompleter != null) {
+        await _syncCompleter!.future;
+      }
+      // After waiting, check if there are still pending ops to sync
+      final stillPending = _localStore.currentState.pendingOperations;
+      if (stillPending.isEmpty) return;
+      // Recurse to sync remaining operations
+      return _syncIfNeeded();
+    }
 
     final pending = _localStore.currentState.pendingOperations;
     if (pending.isEmpty) return;
 
     _isSyncing = true;
+    _syncCompleter = Completer<void>();
     _updateState();
 
     try {
@@ -105,6 +119,8 @@ class SyncEngine {
     } finally {
       _isSyncing = false;
       _updateState();
+      _syncCompleter?.complete();
+      _syncCompleter = null;
     }
   }
 
@@ -142,6 +158,7 @@ class SyncEngine {
     switch (operation.type) {
       case SyncOperationType.create:
         final task = await _tasksService.create(
+          id: operation.entityId, // Send client ID for offline-first sync
           title: operation.data['title'] as String,
           description: operation.data['description'] as String?,
           dueDate: operation.data['due_date'] != null
@@ -178,6 +195,18 @@ class SyncEngine {
   /// Force sync now
   Future<void> syncNow() async {
     await _syncIfNeeded();
+  }
+
+  /// Awaits until pending operations are synced.
+  /// Simply calls syncNow() which already handles in-progress syncs properly.
+  Future<void> awaitSync() async {
+    if (!_isOnline) return;
+
+    final pending = _localStore.currentState.pendingOperations;
+    if (pending.isEmpty && !_isSyncing) return;
+
+    // Just call syncNow and wait - it handles everything
+    await syncNow();
   }
 
   /// Fetch latest from server and merge

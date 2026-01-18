@@ -10,8 +10,6 @@ class TaskList extends Equatable {
   final int depth;
   final int taskCount;
   final String fullPath;
-  final bool archived;
-  final DateTime? archivedAt;
   final List<TaskList> children;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -25,8 +23,6 @@ class TaskList extends Equatable {
     this.depth = 0,
     this.taskCount = 0,
     required this.fullPath,
-    this.archived = false,
-    this.archivedAt,
     this.children = const [],
     required this.createdAt,
     required this.updatedAt,
@@ -42,10 +38,6 @@ class TaskList extends Equatable {
       depth: json['depth'] as int? ?? 0,
       taskCount: json['task_count'] as int? ?? 0,
       fullPath: json['full_path'] as String? ?? json['name'] as String,
-      archived: json['archived'] as bool? ?? false,
-      archivedAt: json['archived_at'] != null
-          ? DateTime.parse(json['archived_at'] as String)
-          : null,
       children: (json['children'] as List<dynamic>?)
               ?.map((e) => TaskList.fromJson(e as Map<String, dynamic>))
               .toList() ??
@@ -64,8 +56,6 @@ class TaskList extends Equatable {
         'depth': depth,
         'task_count': taskCount,
         'full_path': fullPath,
-        'archived': archived,
-        'archived_at': archivedAt?.toIso8601String(),
         'children': children.map((e) => e.toJson()).toList(),
         'created_at': createdAt.toIso8601String(),
         'updated_at': updatedAt.toIso8601String(),
@@ -92,8 +82,6 @@ class TaskList extends Equatable {
     int? depth,
     int? taskCount,
     String? fullPath,
-    bool? archived,
-    DateTime? archivedAt,
     List<TaskList>? children,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -107,8 +95,6 @@ class TaskList extends Equatable {
       depth: depth ?? this.depth,
       taskCount: taskCount ?? this.taskCount,
       fullPath: fullPath ?? this.fullPath,
-      archived: archived ?? this.archived,
-      archivedAt: archivedAt ?? this.archivedAt,
       children: children ?? this.children,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
@@ -116,5 +102,5 @@ class TaskList extends Equatable {
   }
 
   @override
-  List<Object?> get props => [id, name, fullPath, archived];
+  List<Object?> get props => [id, name, fullPath];
 }

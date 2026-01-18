@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/csaptu/flow/pkg/llm"
+	"github.com/csaptu/flow/shared/repository"
 )
 
 // UserTier represents subscription level
@@ -78,13 +79,66 @@ var featureLimits = map[UserTier]map[AIFeature]int{
 
 // AIService handles all AI operations
 type AIService struct {
-	db  *pgxpool.Pool
-	llm *llm.MultiClient
+	db      *pgxpool.Pool
+	llm     *llm.MultiClient
+	configs map[string]string
 }
 
 // NewAIService creates a new AI service
 func NewAIService(db *pgxpool.Pool, llmClient *llm.MultiClient) *AIService {
-	return &AIService{db: db, llm: llmClient}
+	s := &AIService{db: db, llm: llmClient, configs: make(map[string]string)}
+	s.loadPromptConfigs()
+	return s
+}
+
+// loadPromptConfigs loads AI prompt configurations from the shared repository
+func (s *AIService) loadPromptConfigs() {
+	configs, err := repository.GetAIPromptConfigsAsMap(context.Background())
+	if err != nil {
+		// Use defaults if loading fails
+		s.configs = map[string]string{
+			"clean_title_instruction":     "Concise, action-oriented title (max 10 words)",
+			"summary_instruction":         "Brief summary if description is long (max 20 words)",
+			"complexity_instruction":      "1-10 scale (1=trivial like 'buy milk', 10=complex multi-step project)",
+			"due_date_instruction":        "ISO 8601 date if mentioned (e.g., 'tomorrow' = next day, 'next week' = next Monday)",
+			"reminder_instruction":        "ISO 8601 datetime if 'remind me' or similar phrase found",
+			"entities_instruction":        "person|place|organization",
+			"recurrence_instruction":      "RRULE string if recurring pattern detected (e.g., 'every Monday')",
+			"suggested_group_instruction": "Category suggestion based on content (e.g., 'Work', 'Shopping', 'Health')",
+			"decompose_step_count":        "2-5",
+			"decompose_rules":             "Each step should be a single, concrete action\nSteps should be in logical order\nUse action verbs (Call, Send, Research, Write, etc.)\nKeep each step under 10 words",
+		}
+		return
+	}
+	s.configs = configs
+}
+
+// ReloadConfigs reloads the AI prompt configurations from the database
+func (s *AIService) ReloadConfigs() {
+	s.loadPromptConfigs()
+}
+
+// getConfig returns a config value with a fallback default
+func (s *AIService) getConfig(key, defaultValue string) string {
+	if val, ok := s.configs[key]; ok && val != "" {
+		return val
+	}
+	return defaultValue
+}
+
+// getConfigEscaped returns a config value with JSON-unsafe characters escaped
+// Use this when embedding config values inside JSON examples in prompts
+func (s *AIService) getConfigEscaped(key, defaultValue string) string {
+	val := s.getConfig(key, defaultValue)
+	return escapeForJSONPrompt(val)
+}
+
+// escapeForJSONPrompt escapes characters that could break JSON structure in prompts
+func escapeForJSONPrompt(s string) string {
+	// Escape backslashes first, then quotes
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	return s
 }
 
 // AIProcessResult contains all AI processing results
@@ -129,19 +183,13 @@ type DraftContent struct {
 	Attendees []string `json:"attendees,omitempty"`
 }
 
-// GetUserTier retrieves the user's subscription tier
+// GetUserTier retrieves the user's subscription tier from the shared repository
 func (s *AIService) GetUserTier(ctx context.Context, userID uuid.UUID) (UserTier, error) {
-	var tier string
-	err := s.db.QueryRow(ctx,
-		`SELECT COALESCE(tier, 'free') FROM user_subscriptions WHERE user_id = $1`,
-		userID,
-	).Scan(&tier)
-
+	tier, err := repository.GetUserTier(ctx, userID)
 	if err != nil {
-		// Default to free if no subscription found
+		// Default to free if error
 		return TierFree, nil
 	}
-
 	return UserTier(tier), nil
 }
 
@@ -240,6 +288,13 @@ func (s *AIService) buildAutoProcessPrompt(tier UserTier, title, description str
 	today := time.Now().Format("2006-01-02")
 	dayOfWeek := time.Now().Weekday().String()
 
+	// Get configurable instructions (escaped for safe JSON embedding)
+	cleanTitleInstr := s.getConfigEscaped("clean_title_instruction", "Concise, action-oriented title (max 10 words)")
+	summaryInstr := s.getConfigEscaped("summary_instruction", "Brief summary if description is long (max 20 words)")
+	dueDateInstr := s.getConfigEscaped("due_date_instruction", "ISO 8601 date if mentioned (e.g., 'tomorrow' = next day, 'next week' = next Monday)")
+	reminderInstr := s.getConfigEscaped("reminder_instruction", "ISO 8601 datetime if 'remind me' or similar phrase found")
+	complexityInstr := s.getConfigEscaped("complexity_instruction", "1-10 scale (1=trivial like 'buy milk', 10=complex multi-step project)")
+
 	basePrompt := fmt.Sprintf(`Analyze this task and extract information. Today is %s (%s).
 
 Task Title: %s
@@ -248,18 +303,22 @@ Description: %s
 Return a JSON object with these fields (omit fields if not applicable):
 
 {
-  "cleaned_title": "Concise, action-oriented title (max 10 words)",
-  "summary": "Brief summary if description is long (max 20 words)",
-  "due_date": "ISO 8601 date if mentioned (e.g., 'tomorrow' = next day, 'next week' = next Monday)",
-  "reminder_time": "ISO 8601 datetime if 'remind me' or similar phrase found",
-  "complexity": 1-10 scale (1=trivial like 'buy milk', 10=complex multi-step project)`, today, dayOfWeek, title, description)
+  "cleaned_title": "%s",
+  "summary": "%s",
+  "due_date": "%s",
+  "reminder_time": "%s",
+  "complexity": %s`, today, dayOfWeek, title, description, cleanTitleInstr, summaryInstr, dueDateInstr, reminderInstr, complexityInstr)
 
 	// Add tier-specific features
 	if tier == TierLight || tier == TierPremium {
-		basePrompt += `,
-  "entities": [{"type": "person|place|organization", "value": "extracted value"}],
-  "recurrence_rule": "RRULE string if recurring pattern detected (e.g., 'every Monday')",
-  "suggested_group": "Category suggestion based on content (e.g., 'Work', 'Shopping', 'Health')"`
+		entitiesInstr := s.getConfigEscaped("entities_instruction", "person|place|organization")
+		recurrenceInstr := s.getConfigEscaped("recurrence_instruction", "RRULE string if recurring pattern detected (e.g., 'every Monday')")
+		suggestedGroupInstr := s.getConfigEscaped("suggested_group_instruction", "Category suggestion based on content (e.g., 'Work', 'Shopping', 'Health')")
+
+		basePrompt += fmt.Sprintf(`,
+  "entities": [{"type": "%s", "value": "extracted value"}],
+  "recurrence_rule": "%s",
+  "suggested_group": "%s"`, entitiesInstr, recurrenceInstr, suggestedGroupInstr)
 	}
 
 	// Check for draft triggers
@@ -421,7 +480,24 @@ func (s *AIService) Decompose(ctx context.Context, userID uuid.UUID, title, desc
 		return nil, fmt.Errorf("daily limit reached for decompose feature")
 	}
 
-	prompt := fmt.Sprintf(`Break down this task into 2-5 actionable steps.
+	// Get configurable decompose settings
+	stepCount := s.getConfig("decompose_step_count", "2-5")
+	decomposeRules := s.getConfig("decompose_rules", `Each step should be a single, concrete action
+Steps should be in logical order
+Use action verbs (Call, Send, Research, Write, etc.)
+Keep each step under 10 words`)
+
+	// Format rules as bullet points
+	ruleLines := strings.Split(decomposeRules, "\n")
+	formattedRules := ""
+	for _, rule := range ruleLines {
+		rule = strings.TrimSpace(rule)
+		if rule != "" {
+			formattedRules += "- " + rule + "\n"
+		}
+	}
+
+	prompt := fmt.Sprintf(`Break down this task into %s actionable steps.
 
 Task: %s
 %s
@@ -433,15 +509,12 @@ Return ONLY a JSON array:
 ]
 
 Rules:
-- Each step should be a single, concrete action
-- Steps should be in logical order
-- Use action verbs (Call, Send, Research, Write, etc.)
-- Keep each step under 10 words`, title, func() string {
+%s`, stepCount, title, func() string {
 		if description != "" {
 			return "Description: " + description
 		}
 		return ""
-	}())
+	}(), formattedRules)
 
 	resp, err := s.llm.Complete(ctx, llm.CompletionRequest{
 		Messages: []llm.Message{

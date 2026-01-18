@@ -67,7 +67,8 @@
 **Key Design Principles:**
 - Each domain deploys independently
 - Each domain owns its database exclusively
-- Cross-domain communication via REST APIs (not shared DB access)
+- Cross-domain data access via `shared/repository` package (Go imports, not HTTP)
+- Single source of truth: always call shared repository for cross-domain data
 - Common base models in `common/`, domain extensions in domain folders
 
 ```
@@ -101,7 +102,36 @@
    └─────────────────┘   └─────────────────┘   └─────────────────┘
 ```
 
-**Cross-Domain Data Flow:**
+**Cross-Domain Data Access (Monorepo Internal API):**
+
+Services access shared data via direct Go imports from `shared/repository`:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         MONOREPO INTERNAL API                                 │
+│                                                                               │
+│  tasks-service          projects-service        (Go imports, NOT HTTP)       │
+│       │                        │                                              │
+│       │ import "shared/repo"   │ import "shared/repo"                        │
+│       ▼                        ▼                                              │
+│  ┌──────────────────────────────────────────────────────────────────────┐   │
+│  │                      shared/repository                                │   │
+│  │  - GetUserTier(ctx, userID) → string                                 │   │
+│  │  - GetUserByID(ctx, userID) → *User                                  │   │
+│  │  - GetSubscription(ctx, userID) → *Subscription                      │   │
+│  │  - IsAdmin(ctx, email) → bool                                        │   │
+│  │  - ListPlans(ctx) → []Plan                                           │   │
+│  └───────────────────────────────┬──────────────────────────────────────┘   │
+│                                  │ owns                                      │
+│                                  ▼                                           │
+│                          ┌─────────────────┐                                 │
+│                          │   shared_db     │                                 │
+│                          │   PostgreSQL    │                                 │
+│                          └─────────────────┘                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**External APIs (for Flutter apps):**
 ```
 Flow Tasks App                              Flow Projects App
      │                                            │

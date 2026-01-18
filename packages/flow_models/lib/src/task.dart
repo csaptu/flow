@@ -65,8 +65,6 @@ class Task extends Equatable {
   final String? parentId;
   final int depth;
   final int complexity;
-  final String? groupId;
-  final String? groupName;
   final bool hasChildren;
   final int childrenCount;
   final DateTime createdAt;
@@ -91,8 +89,6 @@ class Task extends Equatable {
     this.parentId,
     this.depth = 0,
     this.complexity = 0,
-    this.groupId,
-    this.groupName,
     this.hasChildren = false,
     this.childrenCount = 0,
     required this.createdAt,
@@ -131,8 +127,6 @@ class Task extends Equatable {
       parentId: json['parent_id'] as String?,
       depth: json['depth'] as int? ?? 0,
       complexity: json['complexity'] as int? ?? 0,
-      groupId: json['group_id'] as String?,
-      groupName: json['group_name'] as String?,
       hasChildren: json['has_children'] as bool? ?? false,
       childrenCount: json['children_count'] as int? ?? 0,
       createdAt: DateTime.parse(json['created_at'] as String),
@@ -157,8 +151,6 @@ class Task extends Equatable {
         'parent_id': parentId,
         'depth': depth,
         'complexity': complexity,
-        'group_id': groupId,
-        'group_name': groupName,
         'has_children': hasChildren,
         'children_count': childrenCount,
         'created_at': createdAt.toIso8601String(),
@@ -226,8 +218,6 @@ class Task extends Equatable {
     String? parentId,
     int? depth,
     int? complexity,
-    String? groupId,
-    String? groupName,
     bool? hasChildren,
     int? childrenCount,
     DateTime? createdAt,
@@ -250,8 +240,6 @@ class Task extends Equatable {
       parentId: parentId ?? this.parentId,
       depth: depth ?? this.depth,
       complexity: complexity ?? this.complexity,
-      groupId: groupId ?? this.groupId,
-      groupName: groupName ?? this.groupName,
       hasChildren: hasChildren ?? this.hasChildren,
       childrenCount: childrenCount ?? this.childrenCount,
       createdAt: createdAt ?? this.createdAt,
@@ -264,40 +252,4 @@ class Task extends Equatable {
 
   @override
   List<Object?> get props => [id, title, status, priority, dueDate, updatedAt];
-}
-
-/// Task group model
-class TaskGroup extends Equatable {
-  final String id;
-  final String name;
-  final String? icon;
-  final String? color;
-  final bool aiCreated;
-  final DateTime createdAt;
-  final DateTime updatedAt;
-
-  const TaskGroup({
-    required this.id,
-    required this.name,
-    this.icon,
-    this.color,
-    this.aiCreated = false,
-    required this.createdAt,
-    required this.updatedAt,
-  });
-
-  factory TaskGroup.fromJson(Map<String, dynamic> json) {
-    return TaskGroup(
-      id: json['id'] as String,
-      name: json['name'] as String,
-      icon: json['icon'] as String?,
-      color: json['color'] as String?,
-      aiCreated: json['ai_created'] as bool? ?? false,
-      createdAt: DateTime.parse(json['created_at'] as String),
-      updatedAt: DateTime.parse(json['updated_at'] as String),
-    );
-  }
-
-  @override
-  List<Object?> get props => [id, name];
 }

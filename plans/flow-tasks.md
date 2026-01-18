@@ -11,7 +11,8 @@ Flow Tasks is the **simple, fast task capture app**. It bridges Google Tasks sim
 
 **Data Architecture:**
 - Personal tasks stored in `tasks_db` (owned by tasks-service)
-- "Assigned to Me" tasks read from `projects_db` via API call
+- "Assigned to Me" tasks read from projects-service API (external API for Flutter app)
+- Cross-domain data (users, subscriptions, plans) accessed via `shared/repository` (Go imports, not HTTP)
 - When promoting to project: task is COPIED, user chooses to keep/delete personal version
 
 **Design Inspiration:** [Bear App](https://bear.app/) - Apple Design Award winner known for its polished, minimal interface, beautiful typography, and distraction-free writing experience.

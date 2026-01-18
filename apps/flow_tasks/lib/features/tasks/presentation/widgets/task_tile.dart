@@ -187,28 +187,6 @@ class TaskTile extends StatelessWidget {
       ));
     }
 
-    // Group name
-    if (task.groupName != null) {
-      parts.add(Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            Icons.folder_outlined,
-            size: 12,
-            color: colors.textTertiary,
-          ),
-          const SizedBox(width: 4),
-          Text(
-            task.groupName!,
-            style: TextStyle(
-              fontSize: 12,
-              color: colors.textTertiary,
-            ),
-          ),
-        ],
-      ));
-    }
-
     return Wrap(
       spacing: 12,
       children: parts,

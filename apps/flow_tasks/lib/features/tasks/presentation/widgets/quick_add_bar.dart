@@ -52,6 +52,7 @@ class _QuickAddBarState extends ConsumerState<QuickAddBar> {
 
       // Open the task detail panel for the new task
       ref.read(selectedTaskIdProvider.notifier).state = newTask.id;
+      ref.read(isNewlyCreatedTaskProvider.notifier).state = true;
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -100,9 +101,9 @@ class _QuickAddBarState extends ConsumerState<QuickAddBar> {
             child: HashtagTextField(
               controller: _controller,
               focusNode: _focusNode,
-              hintText: 'Add a task... (use # for lists)',
+              hintText: 'Add a task...',
               decoration: InputDecoration(
-                hintText: 'Add a task... (use # for lists)',
+                hintText: 'Add a task...',
                 hintStyle: TextStyle(color: colors.textPlaceholder),
                 border: InputBorder.none,
                 enabledBorder: InputBorder.none,

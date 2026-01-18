@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/csaptu/flow/pkg/httputil"
 	"github.com/csaptu/flow/pkg/middleware"
+	"github.com/csaptu/flow/shared/repository"
 )
 
 // SubscriptionHandler handles subscription endpoints
@@ -41,90 +42,77 @@ type PlanResponse struct {
 	IsPopular    bool     `json:"is_popular,omitempty"`
 }
 
-// GetPlans returns available subscription plans
+// GetPlans returns available subscription plans (from shared repository)
 func (h *SubscriptionHandler) GetPlans(c *fiber.Ctx) error {
-	rows, err := h.db.Query(c.Context(), `
-		SELECT id, name, tier, price_monthly, currency, features
-		FROM subscription_plans
-		WHERE is_active = true
-		ORDER BY price_monthly ASC
-	`)
+	// Get plans from shared repository
+	plans, err := repository.ListPlans(c.Context())
 	if err != nil {
-		return httputil.InternalError(c, "database error")
+		return httputil.InternalError(c, "failed to list plans")
 	}
-	defer rows.Close()
 
-	plans := make([]PlanResponse, 0)
-	for rows.Next() {
-		var p PlanResponse
-		var features []byte
-
-		if err := rows.Scan(&p.ID, &p.Name, &p.Tier, &p.PriceMonthly, &p.Currency, &features); err != nil {
+	result := make([]PlanResponse, 0, len(plans))
+	for _, p := range plans {
+		if !p.IsActive {
 			continue
 		}
-
-		json.Unmarshal(features, &p.Features)
-		p.IsPopular = p.Tier == "light" // Mark Light as popular
-
-		plans = append(plans, p)
+		response := PlanResponse{
+			ID:           p.ID,
+			Name:         p.Name,
+			Tier:         p.Tier,
+			PriceMonthly: float64(p.PriceMonthly) / 100.0,
+			Currency:     p.Currency,
+			Features:     p.Features,
+			IsPopular:    p.Tier == "light",
+		}
+		result = append(result, response)
 	}
 
-	return httputil.Success(c, plans)
+	return httputil.Success(c, result)
 }
 
 // =====================================================
 // User Subscription Endpoints
 // =====================================================
 
-// GetMySubscription returns current user's subscription info
+// GetMySubscription returns current user's subscription info (from shared repository)
 func (h *SubscriptionHandler) GetMySubscription(c *fiber.Ctx) error {
 	userID, err := middleware.GetUserID(c)
 	if err != nil {
 		return httputil.Unauthorized(c, "")
 	}
 
-	var tier, planID string
-	var startedAt, expiresAt *time.Time
-	var provider *string
-
-	err = h.db.QueryRow(c.Context(), `
-		SELECT COALESCE(tier, 'free'), plan_id, started_at, expires_at, provider
-		FROM user_subscriptions
-		WHERE user_id = $1
-	`, userID).Scan(&tier, &planID, &startedAt, &expiresAt, &provider)
-
+	// Get subscription from shared repository
+	sub, err := repository.GetUserSubscription(c.Context(), userID)
 	if err != nil {
-		// No subscription record, default to free
-		tier = "free"
+		return httputil.InternalError(c, "failed to get subscription")
 	}
 
-	// Get usage stats
+	// Get usage stats (still uses local AI usage table)
 	aiService := &AIService{db: h.db}
 	usageStats, _ := aiService.GetUsageStats(c.Context(), userID)
 
 	response := map[string]interface{}{
-		"tier":    tier,
-		"plan_id": planID,
-		"usage":   usageStats,
+		"tier":  sub.Tier,
+		"usage": usageStats,
 	}
 
-	if startedAt != nil {
-		response["started_at"] = startedAt.Format(time.RFC3339)
+	if sub.CurrentPeriodStart != nil {
+		response["started_at"] = sub.CurrentPeriodStart.Format(time.RFC3339)
 	}
-	if expiresAt != nil {
-		response["expires_at"] = expiresAt.Format(time.RFC3339)
-		response["is_active"] = expiresAt.After(time.Now())
-	} else if tier != "free" {
-		response["is_active"] = true
+	if sub.CurrentPeriodEnd != nil {
+		response["expires_at"] = sub.CurrentPeriodEnd.Format(time.RFC3339)
+		response["is_active"] = sub.CurrentPeriodEnd.After(time.Now())
+	} else if sub.Tier != "free" {
+		response["is_active"] = sub.Status == "active"
 	}
-	if provider != nil {
-		response["provider"] = *provider
+	if sub.Provider != nil {
+		response["provider"] = *sub.Provider
 	}
 
 	return httputil.Success(c, response)
 }
 
-// CreateCheckout initiates a subscription checkout with Paddle
+// CreateCheckout initiates a subscription checkout with Paddle (via shared repository)
 func (h *SubscriptionHandler) CreateCheckout(c *fiber.Ctx) error {
 	userID, err := middleware.GetUserID(c)
 	if err != nil {
@@ -139,45 +127,40 @@ func (h *SubscriptionHandler) CreateCheckout(c *fiber.Ctx) error {
 		return httputil.BadRequest(c, "invalid request body")
 	}
 
-	// Get plan details
-	var paddlePriceID *string
-	var price float64
-	var tier string
-
-	err = h.db.QueryRow(c.Context(), `
-		SELECT paddle_price_id, price_monthly, tier
-		FROM subscription_plans
-		WHERE id = $1 AND is_active = true
-	`, req.PlanID).Scan(&paddlePriceID, &price, &tier)
-
+	// Get plan details from shared repository
+	plan, err := repository.GetPlan(c.Context(), req.PlanID)
 	if err != nil {
+		return httputil.InternalError(c, "failed to get plan")
+	}
+	if plan == nil || !plan.IsActive {
 		return httputil.NotFound(c, "plan")
 	}
 
-	if paddlePriceID == nil || *paddlePriceID == "" {
+	if plan.PaddlePriceID == nil || *plan.PaddlePriceID == "" {
 		return httputil.BadRequest(c, "plan not available for online purchase")
 	}
 
-	// Create pending order
-	orderID := uuid.New()
-	_, err = h.db.Exec(c.Context(), `
-		INSERT INTO orders (id, user_id, plan_id, provider, amount, currency, status)
-		VALUES ($1, $2, $3, 'paddle', $4, 'USD', 'pending')
-	`, orderID, userID, req.PlanID, price)
+	// Create pending order via shared repository
+	order := &repository.Order{
+		UserID:      userID,
+		PlanID:      req.PlanID,
+		Provider:    "paddle",
+		AmountCents: plan.PriceMonthly,
+		Currency:    plan.Currency,
+		Status:      "pending",
+	}
 
-	if err != nil {
+	if err := repository.CreateOrder(c.Context(), order); err != nil {
 		return httputil.InternalError(c, "failed to create order")
 	}
 
 	// Return Paddle checkout info
-	// In production, you might call Paddle API to create a checkout session
-	// For now, return the price ID for client-side Paddle.js
 	return httputil.Success(c, map[string]interface{}{
-		"order_id":        orderID.String(),
-		"paddle_price_id": *paddlePriceID,
-		"amount":          price,
-		"currency":        "USD",
-		"tier":            tier,
+		"order_id":        order.ID.String(),
+		"paddle_price_id": *plan.PaddlePriceID,
+		"amount":          float64(plan.PriceMonthly) / 100.0,
+		"currency":        plan.Currency,
+		"tier":            plan.Tier,
 		"return_url":      req.ReturnURL,
 	})
 }
@@ -259,52 +242,47 @@ func (h *SubscriptionHandler) handleSubscriptionCreated(c *fiber.Ctx, data json.
 		return httputil.BadRequest(c, "invalid user_id")
 	}
 
-	// Find plan by paddle price ID
-	var planID, tier string
+	// Find plan by paddle price ID via shared repository
+	var tier string
 	if len(sub.Items) > 0 {
-		h.db.QueryRow(c.Context(),
-			"SELECT id, tier FROM subscription_plans WHERE paddle_price_id = $1",
-			sub.Items[0].Price.ID,
-		).Scan(&planID, &tier)
+		plan, err := repository.GetPlanByPaddlePrice(c.Context(), sub.Items[0].Price.ID)
+		if err == nil && plan != nil {
+			tier = plan.Tier
+		}
+	}
+	if tier == "" {
+		tier = "free"
 	}
 
 	// Parse expiry date
-	var expiresAt *time.Time
+	var periodEnd *time.Time
 	if sub.CurrentBillingPeriod.EndsAt != "" {
 		t, _ := time.Parse(time.RFC3339, sub.CurrentBillingPeriod.EndsAt)
-		expiresAt = &t
+		periodEnd = &t
 	}
 
 	now := time.Now()
+	provider := "paddle"
 
-	// Update/create subscription
-	_, err = h.db.Exec(c.Context(), `
-		INSERT INTO user_subscriptions (user_id, tier, plan_id, provider, provider_subscription_id, started_at, expires_at, created_at, updated_at)
-		VALUES ($1, $2, $3, 'paddle', $4, $5, $6, $5, $5)
-		ON CONFLICT (user_id) DO UPDATE SET
-			tier = $2,
-			plan_id = $3,
-			provider = 'paddle',
-			provider_subscription_id = $4,
-			started_at = COALESCE(user_subscriptions.started_at, $5),
-			expires_at = $6,
-			updated_at = $5
-	`, userID, tier, planID, sub.ID, now, expiresAt)
+	// Update/create subscription via shared repository
+	subscription := &repository.Subscription{
+		UserID:                 userID,
+		Tier:                   tier,
+		Status:                 "active",
+		Provider:               &provider,
+		ProviderSubscriptionID: &sub.ID,
+		CurrentPeriodStart:     &now,
+		CurrentPeriodEnd:       periodEnd,
+	}
 
-	if err != nil {
+	if err := repository.UpsertSubscription(c.Context(), subscription); err != nil {
 		fmt.Printf("Error updating subscription: %v\n", err)
 	}
 
 	// Update order if exists
 	if sub.CustomData.OrderID != "" {
 		orderID, _ := uuid.Parse(sub.CustomData.OrderID)
-		h.db.Exec(c.Context(), `
-			UPDATE orders SET
-				status = 'completed',
-				provider_subscription_id = $1,
-				completed_at = $2
-			WHERE id = $3
-		`, sub.ID, now, orderID)
+		_ = repository.UpdateOrderStatus(c.Context(), orderID, "completed", &sub.ID)
 	}
 
 	return httputil.Success(c, map[string]string{"status": "processed"})
@@ -327,20 +305,14 @@ func (h *SubscriptionHandler) handleSubscriptionUpdated(c *fiber.Ctx, data json.
 	}
 
 	// Parse expiry date
-	var expiresAt *time.Time
+	var periodEnd *time.Time
 	if sub.CurrentBillingPeriod.EndsAt != "" {
 		t, _ := time.Parse(time.RFC3339, sub.CurrentBillingPeriod.EndsAt)
-		expiresAt = &t
+		periodEnd = &t
 	}
 
-	_, err := h.db.Exec(c.Context(), `
-		UPDATE user_subscriptions SET
-			expires_at = $1,
-			updated_at = NOW()
-		WHERE provider_subscription_id = $2
-	`, expiresAt, sub.ID)
-
-	if err != nil {
+	// Update subscription period via shared repository
+	if err := repository.UpdateSubscriptionPeriod(c.Context(), sub.ID, periodEnd); err != nil {
 		fmt.Printf("Error updating subscription: %v\n", err)
 	}
 
@@ -360,17 +332,8 @@ func (h *SubscriptionHandler) handleSubscriptionCanceled(c *fiber.Ctx, data json
 		return httputil.BadRequest(c, "invalid subscription data")
 	}
 
-	now := time.Now()
-
-	// Mark subscription as cancelled (will expire at end of period)
-	_, err := h.db.Exec(c.Context(), `
-		UPDATE user_subscriptions SET
-			cancelled_at = $1,
-			updated_at = $1
-		WHERE provider_subscription_id = $2
-	`, now, sub.ID)
-
-	if err != nil {
+	// Cancel subscription via shared repository
+	if err := repository.CancelSubscriptionByProviderID(c.Context(), sub.ID); err != nil {
 		fmt.Printf("Error canceling subscription: %v\n", err)
 	}
 
@@ -398,63 +361,37 @@ func (h *SubscriptionHandler) handleTransactionCompleted(c *fiber.Ctx, data json
 		return httputil.BadRequest(c, "invalid transaction data")
 	}
 
-	now := time.Now()
-
-	// Update order if exists
+	// Update order if exists via shared repository
 	if txn.CustomData.OrderID != "" {
 		orderID, _ := uuid.Parse(txn.CustomData.OrderID)
-		h.db.Exec(c.Context(), `
-			UPDATE orders SET
-				status = 'completed',
-				provider_order_id = $1,
-				provider_subscription_id = $2,
-				completed_at = $3
-			WHERE id = $4
-		`, txn.ID, txn.SubscriptionID, now, orderID)
+		_ = repository.UpdateOrderStatus(c.Context(), orderID, "completed", &txn.SubscriptionID)
 	}
 
 	return httputil.Success(c, map[string]string{"status": "processed"})
 }
 
-// CancelSubscription cancels the current user's subscription
+// CancelSubscription cancels the current user's subscription (via shared repository)
 func (h *SubscriptionHandler) CancelSubscription(c *fiber.Ctx) error {
 	userID, err := middleware.GetUserID(c)
 	if err != nil {
 		return httputil.Unauthorized(c, "")
 	}
 
-	var req struct {
-		Reason string `json:"reason,omitempty"`
-	}
-	_ = c.BodyParser(&req)
-
-	now := time.Now()
-
-	// Get subscription info
-	var providerSubID *string
-	var provider *string
-	err = h.db.QueryRow(c.Context(),
-		"SELECT provider_subscription_id, provider FROM user_subscriptions WHERE user_id = $1",
-		userID,
-	).Scan(&providerSubID, &provider)
-
+	// Check if user has a subscription via shared repository
+	sub, err := repository.GetUserSubscription(c.Context(), userID)
 	if err != nil {
+		return httputil.InternalError(c, "failed to get subscription")
+	}
+	if sub.Tier == "free" {
 		return httputil.NotFound(c, "subscription")
 	}
 
 	// TODO: Call Paddle API to cancel subscription
 	// For now, just mark as cancelled in database
-	// In production: paddle.Subscriptions.Cancel(providerSubID)
+	// In production: paddle.Subscriptions.Cancel(sub.ProviderSubscriptionID)
 
-	_, err = h.db.Exec(c.Context(), `
-		UPDATE user_subscriptions SET
-			cancelled_at = $1,
-			cancel_reason = $2,
-			updated_at = $1
-		WHERE user_id = $3
-	`, now, req.Reason, userID)
-
-	if err != nil {
+	// Cancel via shared repository
+	if err := repository.CancelSubscription(c.Context(), userID); err != nil {
 		return httputil.InternalError(c, "failed to cancel subscription")
 	}
 

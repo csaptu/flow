@@ -197,10 +197,11 @@ class LocalTaskStore extends StateNotifier<LocalTaskState> {
       },
     );
 
-    // Update state
+    // Update state - increment version to ensure state change is detected
     state = state.copyWith(
       optimisticTasks: {...state.optimisticTasks, taskId: updated},
       pendingOperations: [...state.pendingOperations, operation],
+      incrementVersion: true,
     );
 
     await _persist();
@@ -386,12 +387,14 @@ class LocalTaskState {
   final Map<String, Task> optimisticTasks;
   final Set<String> deletedTaskIds;
   final List<SyncOperation> pendingOperations;
+  final int version; // Version counter to force state change detection
 
   const LocalTaskState({
     this.serverTasks = const {},
     this.optimisticTasks = const {},
     this.deletedTaskIds = const {},
     this.pendingOperations = const [],
+    this.version = 0,
   });
 
   LocalTaskState copyWith({
@@ -399,12 +402,14 @@ class LocalTaskState {
     Map<String, Task>? optimisticTasks,
     Set<String>? deletedTaskIds,
     List<SyncOperation>? pendingOperations,
+    bool incrementVersion = false,
   }) {
     return LocalTaskState(
       serverTasks: serverTasks ?? this.serverTasks,
       optimisticTasks: optimisticTasks ?? this.optimisticTasks,
       deletedTaskIds: deletedTaskIds ?? this.deletedTaskIds,
       pendingOperations: pendingOperations ?? this.pendingOperations,
+      version: incrementVersion ? version + 1 : version,
     );
   }
 

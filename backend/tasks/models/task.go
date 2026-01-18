@@ -40,10 +40,6 @@ type Task struct {
 	// Entities extracted by AI
 	Entities []TaskEntity `json:"entities,omitempty" db:"entities"`
 
-	// Grouping (for auto-group feature)
-	GroupID   *uuid.UUID `json:"group_id,omitempty" db:"group_id"`
-	GroupName *string    `json:"group_name,omitempty" db:"group_name"`
-
 	// Project promotion tracking
 	PromotedToProject *uuid.UUID `json:"promoted_to_project,omitempty" db:"promoted_to_project"`
 
@@ -58,61 +54,6 @@ type TaskEntity struct {
 	Type  string `json:"type"`  // person, place, organization, event
 	Value string `json:"value"` // The extracted value
 	ID    string `json:"id,omitempty"` // Optional reference ID
-}
-
-// TaskGroup represents a group of related tasks (also used as Lists)
-type TaskGroup struct {
-	ID        uuid.UUID  `json:"id" db:"id"`
-	UserID    uuid.UUID  `json:"user_id" db:"user_id"`
-	Name      string     `json:"name" db:"name"`
-	Icon      *string    `json:"icon,omitempty" db:"icon"`
-	Color     *string    `json:"color,omitempty" db:"color"`
-	AICreated bool       `json:"ai_created" db:"ai_created"`
-	CreatedAt time.Time  `json:"created_at" db:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at" db:"updated_at"`
-	DeletedAt *time.Time `json:"deleted_at,omitempty" db:"deleted_at"`
-
-	// List hierarchy (Bear-style #List/Sublist)
-	ParentID  *uuid.UUID `json:"parent_id,omitempty" db:"parent_id"`
-	Depth     int        `json:"depth" db:"depth"`       // 0 = root list, 1 = sublist (max)
-	TaskCount int        `json:"task_count" db:"task_count"`
-}
-
-// TaskList is an alias for TaskGroup with additional tree fields
-type TaskList struct {
-	TaskGroup
-	Children  []TaskList `json:"children,omitempty"`
-	FullPath  string     `json:"full_path"` // e.g., "Work/Projects"
-}
-
-// NewTaskGroup creates a new task group/list with default values
-func NewTaskGroup(userID uuid.UUID, name string) *TaskGroup {
-	now := time.Now()
-	return &TaskGroup{
-		ID:        uuid.New(),
-		UserID:    userID,
-		Name:      name,
-		Depth:     0,
-		TaskCount: 0,
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-}
-
-// SetParentGroup sets the parent group and updates depth
-func (g *TaskGroup) SetParentGroup(parentID uuid.UUID, parentDepth int) error {
-	if parentDepth >= 1 {
-		return ErrMaxListDepthExceeded
-	}
-	g.ParentID = &parentID
-	g.Depth = parentDepth + 1
-	return nil
-}
-
-// ErrMaxListDepthExceeded is returned when trying to create a list too deep
-var ErrMaxListDepthExceeded = &TaskError{
-	Code:    "MAX_LIST_DEPTH_EXCEEDED",
-	Message: "List depth cannot exceed 1 (maximum 2 levels: List/Sublist).",
 }
 
 // NewTask creates a new task with default values

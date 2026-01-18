@@ -16,6 +16,7 @@ import (
 	"github.com/csaptu/flow/pkg/config"
 	"github.com/csaptu/flow/pkg/llm"
 	"github.com/csaptu/flow/pkg/middleware"
+	"github.com/csaptu/flow/shared/repository"
 )
 
 // Server represents the tasks service server
@@ -33,6 +34,11 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	db, err := initDatabase(cfg.Databases.Tasks)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
+
+	// Initialize shared repository (for cross-domain calls)
+	if err := repository.Init(cfg); err != nil {
+		return nil, fmt.Errorf("failed to initialize shared repository: %w", err)
 	}
 
 	// Initialize Redis client
@@ -121,6 +127,10 @@ func (s *Server) registerRoutes() {
 	// API v1
 	v1 := s.app.Group("/api/v1")
 
+	// Dev login (no auth required) - for local development
+	authHandler := NewAuthHandler(s.db, s.config)
+	v1.Post("/auth/dev-login", authHandler.DevLogin)
+
 	// All routes require authentication
 	v1.Use(middleware.Auth(middleware.AuthConfig{
 		JWTSecret: s.config.Auth.JWTSecret,
@@ -163,25 +173,6 @@ func (s *Server) registerRoutes() {
 	// Sync endpoint
 	v1.Post("/sync", taskHandler.Sync)
 
-	// Group routes (legacy)
-	groups := v1.Group("/groups")
-	groups.Post("", taskHandler.CreateGroup)
-	groups.Get("", taskHandler.ListGroups)
-	groups.Put("/:id", taskHandler.UpdateGroup)
-	groups.Delete("/:id", taskHandler.DeleteGroup)
-
-	// List routes (Bear-style #List/Sublist)
-	lists := v1.Group("/lists")
-	lists.Get("", taskHandler.ListLists)
-	lists.Get("/tree", taskHandler.ListTree)
-	lists.Post("", taskHandler.CreateList)
-	lists.Post("/search", taskHandler.SearchLists)
-	lists.Post("/cleanup-empty", taskHandler.CleanupEmptyLists)
-	lists.Get("/:id/tasks", taskHandler.GetListTasks)
-	lists.Post("/:id/archive", taskHandler.ArchiveList)
-	lists.Post("/:id/unarchive", taskHandler.UnarchiveList)
-	lists.Delete("/:id", taskHandler.DeleteList)
-
 	// Attachment routes
 	tasks.Post("/:id/attachments", taskHandler.CreateAttachment)
 	tasks.Get("/:id/attachments", taskHandler.GetAttachments)
@@ -218,6 +209,10 @@ func (s *Server) registerRoutes() {
 	// Admin plan management
 	admin.Get("/plans", adminHandler.ListPlans)
 	admin.Put("/plans/:id", adminHandler.UpdatePlan)
+
+	// Admin AI config management
+	admin.Get("/ai-configs", adminHandler.ListAIConfigs)
+	admin.Put("/ai-configs/:key", adminHandler.UpdateAIConfig)
 }
 
 func (s *Server) healthCheck(c *fiber.Ctx) error {

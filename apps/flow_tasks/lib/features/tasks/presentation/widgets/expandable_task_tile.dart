@@ -6,6 +6,7 @@ import 'package:flow_tasks/core/constants/app_spacing.dart';
 import 'package:flow_tasks/core/providers/providers.dart';
 import 'package:flow_tasks/core/theme/flow_theme.dart';
 import 'package:flow_tasks/features/tasks/presentation/widgets/hashtag_text.dart';
+import 'package:flow_tasks/features/tasks/presentation/widgets/rich_description_text.dart';
 import 'package:intl/intl.dart';
 
 /// Task tile that opens side panel on click (like TickTick)
@@ -113,6 +114,7 @@ class _ExpandableTaskTileState extends ConsumerState<ExpandableTaskTile>
             color: Colors.transparent,
             child: InkWell(
               onTap: () {
+                ref.read(isNewlyCreatedTaskProvider.notifier).state = false;
                 ref.read(selectedTaskIdProvider.notifier).state = task.id;
               },
               borderRadius: BorderRadius.circular(FlowSpacing.radiusSm),
@@ -213,7 +215,7 @@ class _ExpandableTaskTileState extends ConsumerState<ExpandableTaskTile>
   }
 
   bool get _hasMetadata =>
-      widget.task.groupName != null || (widget.task.description != null && widget.task.description!.isNotEmpty);
+      widget.task.description != null && widget.task.description!.isNotEmpty;
 
   Widget _buildMetadataRow(FlowColorScheme colors) {
     final task = widget.task;
@@ -222,8 +224,8 @@ class _ExpandableTaskTileState extends ConsumerState<ExpandableTaskTile>
     if (task.description != null && task.description!.isNotEmpty) {
       final descriptionPreview = _getDescriptionPreview(task.description!);
       if (descriptionPreview.isNotEmpty) {
-        widgets.add(Text(
-          descriptionPreview,
+        widgets.add(RichDescriptionText(
+          text: descriptionPreview,
           style: TextStyle(
             fontSize: 13,
             color: colors.textSecondary,
@@ -233,23 +235,6 @@ class _ExpandableTaskTileState extends ConsumerState<ExpandableTaskTile>
           overflow: TextOverflow.ellipsis,
         ));
       }
-    }
-
-    if (task.groupName != null) {
-      widgets.add(Padding(
-        padding: EdgeInsets.only(top: widgets.isNotEmpty ? 4 : 0),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.tag, size: 12, color: colors.textTertiary),
-            const SizedBox(width: 4),
-            Text(
-              task.groupName!,
-              style: TextStyle(fontSize: 12, color: colors.textTertiary),
-            ),
-          ],
-        ),
-      ));
     }
 
     return Column(

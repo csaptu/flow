@@ -34,6 +34,7 @@ class HashtagTextField extends ConsumerStatefulWidget {
 class _HashtagTextFieldState extends ConsumerState<HashtagTextField> {
   late FocusNode _focusNode;
   bool _showSuggestions = false;
+  bool _autocompleteActivated = false; // Tracks if dropdown was ever triggered
   int? _hashtagStartIndex;
   final LayerLink _layerLink = LayerLink();
   OverlayEntry? _overlayEntry;
@@ -85,6 +86,18 @@ class _HashtagTextFieldState extends ConsumerState<HashtagTextField> {
     // Extract the query (text after #)
     final query = textAfterHash;
 
+    // Activation logic: require at least one char after # to initially trigger
+    // But once triggered, keep showing even if backspaced to just #
+    if (!_autocompleteActivated && query.isEmpty) {
+      // Not yet activated and no query - don't show
+      return;
+    }
+
+    // Activate on first character after #
+    if (query.isNotEmpty && !_autocompleteActivated) {
+      _autocompleteActivated = true;
+    }
+
     // Update the provider
     ref.read(hashtagQueryProvider.notifier).state = query;
     _hashtagStartIndex = lastHashIndex;
@@ -104,6 +117,7 @@ class _HashtagTextFieldState extends ConsumerState<HashtagTextField> {
     _removeOverlay();
     ref.read(hashtagQueryProvider.notifier).state = '';
     _hashtagStartIndex = null;
+    _autocompleteActivated = false; // Reset activation state
   }
 
   void _showOverlay() {
@@ -222,18 +236,11 @@ class _HashtagSuggestionsOverlayState
     final query = ref.watch(hashtagQueryProvider);
     final colors = context.flowColors;
 
-    // Always show dropdown when query exists (to show Create option)
-    // If query is empty and no suggestions, show nothing
-    if (query.isEmpty && suggestions.isEmpty) {
+    // Only show dropdown when there are matching suggestions
+    // New lists are auto-created by the backend when the task is saved
+    if (suggestions.isEmpty) {
       return const SizedBox.shrink();
     }
-
-    // Show "Create list" option when query doesn't match existing lists
-    final hasExactMatch = suggestions.any(
-      (l) => l.name.toLowerCase() == query.toLowerCase() ||
-             l.fullPath.toLowerCase() == query.toLowerCase()
-    );
-    final showCreateOption = query.isNotEmpty && !hasExactMatch;
 
     return Stack(
       children: [
@@ -305,52 +312,19 @@ class _HashtagSuggestionsOverlayState
                               ),
                             ),
                           ),
-                        // Scrollable list
-                        Flexible(
-                          child: ListView(
-                            shrinkWrap: true,
-                            padding: const EdgeInsets.symmetric(vertical: 6),
-                            children: [
-                              // Show "Create list" option when query doesn't match existing
-                              if (showCreateOption)
-                                _CreateListTile(
-                                  listName: query,
-                                  onTap: () {
-                                    final now = DateTime.now();
-                                    final newList = TaskList(
-                                      id: '',
-                                      name: query,
-                                      fullPath: query,
-                                      depth: 0,
-                                      taskCount: 0,
-                                      children: [],
-                                      createdAt: now,
-                                      updatedAt: now,
-                                    );
-                                    widget.onSelect(newList);
-                                  },
-                                ),
-                              // Show matching lists
-                              ...suggestions.map((list) => _SuggestionTile(
-                                    list: list,
-                                    onTap: () => widget.onSelect(list),
-                                  )),
-                              // Empty state when no query and no lists
-                              if (suggestions.isEmpty && !showCreateOption)
-                                Padding(
-                                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 20),
-                                  child: Text(
-                                    'Type a list name after #',
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      color: colors.textTertiary,
-                                    ),
-                                    textAlign: TextAlign.center,
-                                  ),
-                                ),
-                            ],
+                        // Scrollable list - only show existing lists as suggestions
+                        // New lists are auto-created by the backend when the task is saved
+                        if (suggestions.isNotEmpty)
+                          Flexible(
+                            child: ListView(
+                              shrinkWrap: true,
+                              padding: const EdgeInsets.symmetric(vertical: 6),
+                              children: suggestions.map((list) => _SuggestionTile(
+                                list: list,
+                                onTap: () => widget.onSelect(list),
+                              )).toList(),
+                            ),
                           ),
-                        ),
                       ],
                     ),
                   ),
@@ -360,51 +334,6 @@ class _HashtagSuggestionsOverlayState
           ),
         ),
       ],
-    );
-  }
-}
-
-class _CreateListTile extends StatelessWidget {
-  final String listName;
-  final VoidCallback onTap;
-
-  const _CreateListTile({
-    required this.listName,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = context.flowColors;
-
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        child: Row(
-          children: [
-            Icon(
-              Icons.add_rounded,
-              size: 16,
-              color: colors.primary,
-            ),
-            const SizedBox(width: 8),
-            Text(
-              'Create ',
-              style: TextStyle(
-                color: colors.textSecondary,
-              ),
-            ),
-            Text(
-              '#$listName',
-              style: TextStyle(
-                color: colors.primary,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

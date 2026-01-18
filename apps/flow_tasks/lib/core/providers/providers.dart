@@ -370,12 +370,17 @@ final tasksProvider = Provider<List<Task>>((ref) {
   // Trigger server fetch
   ref.watch(_tasksFetchProvider);
 
-  // Watch state to rebuild when it changes
-  ref.watch(localTaskStoreProvider);
-  final localStore = ref.read(localTaskStoreProvider.notifier);
+  // Watch state to rebuild when it changes - use the state value directly
+  final localState = ref.watch(localTaskStoreProvider);
 
-  // Get merged tasks (server + optimistic - deleted)
-  return localStore.getMergedTasks();
+  // Get merged tasks from state (server + optimistic - deleted)
+  final merged = <String, Task>{};
+  merged.addAll(localState.serverTasks);
+  merged.addAll(localState.optimisticTasks);
+  for (final id in localState.deletedTaskIds) {
+    merged.remove(id);
+  }
+  return merged.values.toList();
 });
 
 /// All tasks (non-completed, sorted by createdAt descending)
@@ -394,7 +399,7 @@ final inboxTasksProvider = Provider<List<Task>>((ref) {
   return ref.watch(allTasksProvider);
 });
 
-/// Today's tasks (includes overdue)
+/// Today's tasks (includes overdue + tasks with no date)
 final todayTasksProvider = Provider<List<Task>>((ref) {
   final tasks = ref.watch(tasksProvider);
   final now = DateTime.now();
@@ -402,17 +407,24 @@ final todayTasksProvider = Provider<List<Task>>((ref) {
   final tomorrow = today.add(const Duration(days: 1));
 
   final filtered = tasks.where((t) {
-    if (t.dueDate == null || t.status == TaskStatus.completed) return false;
+    if (t.status == TaskStatus.completed || t.status == TaskStatus.cancelled) return false;
+    // Include tasks with no due date
+    if (t.dueDate == null) return true;
     final dueDate = DateTime(t.dueDate!.year, t.dueDate!.month, t.dueDate!.day);
     // Include overdue (before today) OR due today
     return dueDate.isBefore(tomorrow);
   }).toList();
-  // Sort by due date ascending (overdue first, then today)
-  filtered.sort((a, b) => a.dueDate!.compareTo(b.dueDate!));
+  // Sort: dated tasks by due date, then no-date tasks at end
+  filtered.sort((a, b) {
+    if (a.dueDate == null && b.dueDate == null) return 0;
+    if (a.dueDate == null) return 1;
+    if (b.dueDate == null) return -1;
+    return a.dueDate!.compareTo(b.dueDate!);
+  });
   return filtered;
 });
 
-/// Next 7 days tasks (includes overdue + next 7 days)
+/// Next 7 days tasks (includes overdue + next 7 days + tasks with no date)
 final next7DaysTasksProvider = Provider<List<Task>>((ref) {
   final tasks = ref.watch(tasksProvider);
   final now = DateTime.now();
@@ -420,13 +432,20 @@ final next7DaysTasksProvider = Provider<List<Task>>((ref) {
   final in7Days = today.add(const Duration(days: 7));
 
   final filtered = tasks.where((t) {
-    if (t.dueDate == null || t.status == TaskStatus.completed || t.status == TaskStatus.cancelled) return false;
+    if (t.status == TaskStatus.completed || t.status == TaskStatus.cancelled) return false;
+    // Include tasks with no due date
+    if (t.dueDate == null) return true;
     final dueDate = DateTime(t.dueDate!.year, t.dueDate!.month, t.dueDate!.day);
     // Include overdue (before today) OR within next 7 days
     return dueDate.isBefore(in7Days);
   }).toList();
-  // Sort by due date ascending (overdue first)
-  filtered.sort((a, b) => a.dueDate!.compareTo(b.dueDate!));
+  // Sort: dated tasks by due date, then no-date tasks at end
+  filtered.sort((a, b) {
+    if (a.dueDate == null && b.dueDate == null) return 0;
+    if (a.dueDate == null) return 1;
+    if (b.dueDate == null) return -1;
+    return a.dueDate!.compareTo(b.dueDate!);
+  });
   return filtered;
 });
 
@@ -475,20 +494,8 @@ class TaskActions {
       tags: tags,
     );
 
-    // Trigger background sync
+    // Sync in background - lists are derived from tasks dynamically
     _syncEngine.syncNow();
-
-    // If task contains hashtags, refresh lists after sync completes
-    // The backend auto-creates lists from hashtags
-    if (title.contains('#')) {
-      // Refresh lists immediately and after a short delay to catch backend processing
-      _ref.invalidate(_listsFetchProvider);
-      _ref.invalidate(_listTreeFetchProvider);
-      Future.delayed(const Duration(milliseconds: 800), () {
-        _ref.invalidate(_listsFetchProvider);
-        _ref.invalidate(_listTreeFetchProvider);
-      });
-    }
 
     return task;
   }
@@ -515,20 +522,8 @@ class TaskActions {
       skipAutoCleanup: skipAutoCleanup,
     );
 
+    // Sync in background - lists are now derived from tasks dynamically
     _syncEngine.syncNow();
-
-    // If title or description contains hashtags, refresh lists after sync
-    final hasHashtags = (title?.contains('#') ?? false) ||
-        (description?.contains('#') ?? false);
-    if (hasHashtags) {
-      // Refresh lists immediately and after a short delay to catch backend processing
-      _ref.invalidate(_listsFetchProvider);
-      _ref.invalidate(_listTreeFetchProvider);
-      Future.delayed(const Duration(milliseconds: 800), () {
-        _ref.invalidate(_listsFetchProvider);
-        _ref.invalidate(_listTreeFetchProvider);
-      });
-    }
 
     return task;
   }
@@ -564,6 +559,48 @@ final selectedSidebarIndexProvider = StateProvider<int>((ref) => 1);
 // Group by date toggle (default to true for all views)
 final groupByDateProvider = StateProvider<bool>((ref) => true);
 
+// Lists section expanded state (collapsed by default)
+final listsExpandedProvider = StateProvider<bool>((ref) => false);
+
+// List search query
+final listSearchQueryProvider = StateProvider<String>((ref) => '');
+
+// Global task search query
+final globalSearchQueryProvider = StateProvider<String>((ref) => '');
+
+// Global task search active state
+final globalSearchActiveProvider = StateProvider<bool>((ref) => false);
+
+/// Filtered lists based on search query
+final filteredListsProvider = Provider<List<TaskList>>((ref) {
+  final lists = ref.watch(listTreeProvider);
+  final query = ref.watch(listSearchQueryProvider).toLowerCase().trim();
+
+  if (query.isEmpty) return lists;
+
+  return lists.where((list) =>
+    list.name.toLowerCase().contains(query) ||
+    list.fullPath.toLowerCase().contains(query)
+  ).toList();
+});
+
+/// Global search results - searches across all tasks
+final globalSearchResultsProvider = Provider<List<Task>>((ref) {
+  final query = ref.watch(globalSearchQueryProvider).toLowerCase().trim();
+  if (query.isEmpty) return [];
+
+  final tasks = ref.watch(tasksProvider);
+  return tasks.where((task) {
+    final title = task.title.toLowerCase();
+    final description = (task.description ?? '').toLowerCase();
+    final aiSummary = (task.aiSummary ?? '').toLowerCase();
+
+    return title.contains(query) ||
+           description.contains(query) ||
+           aiSummary.contains(query);
+  }).toList();
+});
+
 /// Get overdue tasks
 final overdueTasksProvider = Provider<List<Task>>((ref) {
   final tasks = ref.watch(tasksProvider);
@@ -578,6 +615,9 @@ final overdueTasksProvider = Provider<List<Task>>((ref) {
 // Selected task for detail panel
 final selectedTaskIdProvider = StateProvider<String?>((ref) => null);
 
+// Track if task detail was opened for a newly created task (shows "Done" button)
+final isNewlyCreatedTaskProvider = StateProvider<bool>((ref) => false);
+
 /// Get the selected task from the local store
 final selectedTaskProvider = Provider<Task?>((ref) {
   final taskId = ref.watch(selectedTaskIdProvider);
@@ -591,235 +631,137 @@ final selectedTaskProvider = Provider<Task?>((ref) {
 // List Providers (Bear-style #List/Sublist)
 // =====================================================
 
-/// Fetches lists from server
-final _listsFetchProvider = FutureProvider.autoDispose<List<TaskList>>((ref) async {
-  final authState = ref.watch(authStateProvider);
-  if (authState.status != AuthStatus.authenticated) return [];
-
-  final client = ref.watch(apiClientProvider);
-  if (!client.isAuthenticated) return [];
-
-  final service = ref.watch(tasksServiceProvider);
-  return await service.getLists();
-});
-
-/// All lists (flat)
+/// All lists (flat) - delegates to dynamic listTreeProvider
 final listsProvider = Provider<List<TaskList>>((ref) {
-  final asyncValue = ref.watch(_listsFetchProvider);
-  return asyncValue.when(
-    data: (lists) => lists,
-    loading: () => [],
-    error: (_, __) => [],
-  );
+  return ref.watch(listTreeProvider);
 });
 
-/// Fetches list tree from server (active lists)
-final _listTreeFetchProvider = FutureProvider.autoDispose<List<TaskList>>((ref) async {
-  final authState = ref.watch(authStateProvider);
-  if (authState.status != AuthStatus.authenticated) return [];
+/// Regex for extracting hashtags (supports nested like #parent/child)
+final _hashtagRegex = RegExp(r'#([A-Za-z0-9_]+(?:/[A-Za-z0-9_]+)?)');
 
-  final client = ref.watch(apiClientProvider);
-  if (!client.isAuthenticated) return [];
-
-  final service = ref.watch(tasksServiceProvider);
-  return await service.getListTree(archived: false);
-});
-
-/// Lists as hierarchical tree (active only)
+/// Dynamic lists derived from task descriptions - always in sync!
+/// This extracts hashtags from all tasks and builds the list dynamically.
+/// Handles hierarchy: #parent/child creates both "parent" and "child" under it.
 final listTreeProvider = Provider<List<TaskList>>((ref) {
-  final asyncValue = ref.watch(_listTreeFetchProvider);
-  return asyncValue.when(
-    data: (lists) => lists,
-    loading: () => [],
-    error: (_, __) => [],
-  );
-});
+  final tasks = ref.watch(tasksProvider);
 
-/// Fetches archived list tree from server
-final _archivedListTreeFetchProvider = FutureProvider.autoDispose<List<TaskList>>((ref) async {
-  final authState = ref.watch(authStateProvider);
-  if (authState.status != AuthStatus.authenticated) return [];
+  // Extract all hashtags from titles and descriptions
+  // hashtagCounts: fullPath -> count of tasks with this EXACT hashtag
+  final hashtagCounts = <String, int>{};
 
-  final client = ref.watch(apiClientProvider);
-  if (!client.isAuthenticated) return [];
+  for (final task in tasks) {
+    if (task.status == TaskStatus.completed || task.status == TaskStatus.cancelled) continue;
 
-  final service = ref.watch(tasksServiceProvider);
-  return await service.getListTree(archived: true);
-});
+    final text = '${task.title} ${task.description ?? ''}';
+    final matches = _hashtagRegex.allMatches(text);
 
-/// Archived lists as hierarchical tree
-final archivedListTreeProvider = Provider<List<TaskList>>((ref) {
-  final asyncValue = ref.watch(_archivedListTreeFetchProvider);
-  return asyncValue.when(
-    data: (lists) => lists,
-    loading: () => [],
-    error: (_, __) => [],
-  );
-});
-
-/// Search lists by query
-final listSearchProvider = FutureProvider.autoDispose.family<List<TaskList>, String>((ref, query) async {
-  if (query.isEmpty) {
-    return ref.watch(listsProvider);
+    for (final match in matches) {
+      final hashtag = match.group(1)!; // The captured group without #
+      hashtagCounts[hashtag] = (hashtagCounts[hashtag] ?? 0) + 1;
+    }
   }
 
-  final authState = ref.watch(authStateProvider);
-  if (authState.status != AuthStatus.authenticated) return [];
+  // Build tree structure
+  // For #parent/child, we need to:
+  // 1. Ensure "parent" exists (even if no task has just #parent)
+  // 2. Show "child" indented under "parent"
+  final parentCounts = <String, int>{}; // parent name -> total count of children
+  final childrenByParent = <String, Map<String, int>>{}; // parent -> {child: count}
 
-  final service = ref.watch(tasksServiceProvider);
-  return await service.searchLists(query);
+  for (final entry in hashtagCounts.entries) {
+    final hashtag = entry.key;
+    final count = entry.value;
+    final parts = hashtag.split('/');
+
+    if (parts.length > 1) {
+      // Nested: #parent/child
+      final parent = parts[0];
+      final child = parts[1];
+      childrenByParent.putIfAbsent(parent, () => {});
+      childrenByParent[parent]![child] = count;
+      parentCounts[parent] = (parentCounts[parent] ?? 0) + count;
+    } else {
+      // Root level: #tag
+      // Might also be a parent if we have #tag/subtag elsewhere
+      parentCounts.putIfAbsent(hashtag, () => 0);
+      parentCounts[hashtag] = parentCounts[hashtag]! + count;
+    }
+  }
+
+  // Build flat list with proper ordering (parent, then its children, then next parent)
+  final lists = <TaskList>[];
+  final now = DateTime.now();
+  final sortedParents = parentCounts.keys.toList()..sort();
+
+  for (final parent in sortedParents) {
+    final children = childrenByParent[parent];
+    final hasChildren = children != null && children.isNotEmpty;
+
+    // Add parent
+    lists.add(TaskList(
+      id: 'dynamic_$parent',
+      name: parent,
+      fullPath: parent,
+      depth: 0,
+      taskCount: parentCounts[parent]!,
+      parentId: null,
+      createdAt: now,
+      updatedAt: now,
+    ));
+
+    // Add children (indented)
+    if (hasChildren) {
+      final sortedChildren = children.keys.toList()..sort();
+      for (final child in sortedChildren) {
+        lists.add(TaskList(
+          id: 'dynamic_$parent/$child',
+          name: child,
+          fullPath: '$parent/$child',
+          depth: 1,
+          taskCount: children[child]!,
+          parentId: 'dynamic_$parent',
+          createdAt: now,
+          updatedAt: now,
+        ));
+      }
+    }
+  }
+
+  return lists;
+});
+
+/// Search lists by query (local filtering)
+final listSearchProvider = Provider.family<List<TaskList>, String>((ref, query) {
+  final lists = ref.watch(listsProvider);
+  if (query.isEmpty) return lists;
+
+  final queryLower = query.toLowerCase();
+  return lists.where((list) {
+    return list.name.toLowerCase().contains(queryLower) ||
+           list.fullPath.toLowerCase().contains(queryLower);
+  }).toList();
 });
 
 /// Currently selected list for viewing
 final selectedListIdProvider = StateProvider<String?>((ref) => null);
 
-/// Get tasks in selected list
-final selectedListTasksProvider = FutureProvider.autoDispose<List<Task>>((ref) async {
+/// Get tasks in selected list (local filtering by hashtag)
+final selectedListTasksProvider = Provider<List<Task>>((ref) {
   final listId = ref.watch(selectedListIdProvider);
   if (listId == null) return [];
 
-  final service = ref.watch(tasksServiceProvider);
-  return await service.getListTasks(listId, includeSublists: true);
-});
+  // Extract hashtag from list ID (format: "dynamic_hashtag")
+  if (!listId.startsWith('dynamic_')) return [];
+  final hashtag = listId.substring('dynamic_'.length);
 
-// =====================================================
-// List Actions (CRUD + Cleanup)
-// =====================================================
+  final tasks = ref.watch(tasksProvider);
+  final pattern = RegExp(r'#' + RegExp.escape(hashtag) + r'(?:\b|$)', caseSensitive: false);
 
-/// List actions for creating, deleting, archiving, and cleaning up lists
-class ListActions {
-  final Ref _ref;
-
-  ListActions(this._ref);
-
-  TasksService get _service => _ref.read(tasksServiceProvider);
-
-  /// Create a new list
-  Future<TaskList> create({
-    required String name,
-    String? icon,
-    String? color,
-    String? parentId,
-  }) async {
-    final list = await _service.createList(
-      name: name,
-      icon: icon,
-      color: color,
-      parentId: parentId,
-    );
-
-    // Trigger cleanup after creating a list
-    cleanupEmptyLists();
-
-    // Refresh list providers
-    _refreshListProviders();
-
-    return list;
-  }
-
-  /// Delete a list
-  Future<void> delete(String listId) async {
-    await _service.deleteList(listId);
-    _refreshListProviders();
-  }
-
-  /// Archive a list (move to archived lists)
-  Future<void> archive(String listId) async {
-    await _service.archiveList(listId);
-    _refreshListProviders();
-  }
-
-  /// Unarchive a list (restore from archived lists)
-  Future<void> unarchive(String listId) async {
-    await _service.unarchiveList(listId);
-    _refreshListProviders();
-  }
-
-  /// Cleanup empty lists (runs automatically)
-  Future<int> cleanupEmptyLists() async {
-    try {
-      final result = await _service.cleanupEmptyLists();
-      final totalDeleted = result['total_deleted'] as int? ?? 0;
-
-      if (totalDeleted > 0) {
-        _refreshListProviders();
-      }
-
-      return totalDeleted;
-    } catch (e) {
-      // Silently fail - cleanup is a background operation
-      return 0;
-    }
-  }
-
-  void _refreshListProviders() {
-    _ref.invalidate(_listsFetchProvider);
-    _ref.invalidate(_listTreeFetchProvider);
-    _ref.invalidate(_archivedListTreeFetchProvider);
-  }
-}
-
-final listActionsProvider = Provider<ListActions>((ref) {
-  return ListActions(ref);
-});
-
-/// Cleanup service state
-class ListCleanupState {
-  final bool isRunning;
-  final DateTime? lastRun;
-  final int? lastDeletedCount;
-
-  const ListCleanupState({
-    this.isRunning = false,
-    this.lastRun,
-    this.lastDeletedCount,
-  });
-
-  ListCleanupState copyWith({
-    bool? isRunning,
-    DateTime? lastRun,
-    int? lastDeletedCount,
-  }) {
-    return ListCleanupState(
-      isRunning: isRunning ?? this.isRunning,
-      lastRun: lastRun ?? this.lastRun,
-      lastDeletedCount: lastDeletedCount ?? this.lastDeletedCount,
-    );
-  }
-}
-
-/// Cleanup service notifier for periodic cleanup
-class ListCleanupNotifier extends StateNotifier<ListCleanupState> {
-  final Ref _ref;
-
-  ListCleanupNotifier(this._ref) : super(const ListCleanupState());
-
-  /// Run cleanup now
-  Future<int> runCleanup() async {
-    if (state.isRunning) return 0;
-
-    state = state.copyWith(isRunning: true);
-
-    try {
-      final listActions = _ref.read(listActionsProvider);
-      final deleted = await listActions.cleanupEmptyLists();
-
-      state = state.copyWith(
-        isRunning: false,
-        lastRun: DateTime.now(),
-        lastDeletedCount: deleted,
-      );
-
-      return deleted;
-    } catch (e) {
-      state = state.copyWith(isRunning: false);
-      return 0;
-    }
-  }
-}
-
-final listCleanupProvider = StateNotifierProvider<ListCleanupNotifier, ListCleanupState>((ref) {
-  return ListCleanupNotifier(ref);
+  return tasks.where((task) {
+    if (task.status == TaskStatus.completed || task.status == TaskStatus.cancelled) return false;
+    final text = '${task.title} ${task.description ?? ''}';
+    return pattern.hasMatch(text);
+  }).toList();
 });
 
 // =====================================================
@@ -837,6 +779,7 @@ final expandedTaskIdProvider = StateProvider<String?>((ref) => null);
 final hashtagQueryProvider = StateProvider<String>((ref) => '');
 
 /// Hashtag suggestions based on current query
+/// Searches both name and fullPath to include sublists (Bear-style)
 final hashtagSuggestionsProvider = Provider<List<TaskList>>((ref) {
   final query = ref.watch(hashtagQueryProvider);
   final lists = ref.watch(listsProvider);
@@ -845,6 +788,8 @@ final hashtagSuggestionsProvider = Provider<List<TaskList>>((ref) {
     // Return all lists when just # is typed
     return lists;
   }
+
+  final queryLower = query.toLowerCase();
 
   // Handle nested list search (e.g., "Work/")
   if (query.contains('/')) {
@@ -868,10 +813,15 @@ final hashtagSuggestionsProvider = Provider<List<TaskList>>((ref) {
     return [];
   }
 
-  // Simple prefix search
-  return lists
-      .where((l) => l.name.toLowerCase().startsWith(query.toLowerCase()))
-      .toList();
+  // Search lists where name OR any part of fullPath matches the query (Bear-style)
+  // This includes sublists like "Personal/finance" when searching "f"
+  return lists.where((l) {
+    // Match if list name starts with query
+    if (l.name.toLowerCase().startsWith(queryLower)) return true;
+    // Match if any part of the path contains a segment starting with query
+    final pathParts = l.fullPath.toLowerCase().split('/');
+    return pathParts.any((part) => part.startsWith(queryLower));
+  }).toList();
 });
 
 // =====================================================
@@ -1306,4 +1256,43 @@ class AdminActions {
 
 final adminActionsProvider = Provider<AdminActions>((ref) {
   return AdminActions(ref);
+});
+
+// =====================================================
+// AI Config Providers
+// =====================================================
+
+/// Fetches AI prompt configurations (admin only)
+final aiConfigsProvider = FutureProvider.autoDispose<List<AIPromptConfig>>((ref) async {
+  final authState = ref.watch(authStateProvider);
+  if (authState.status != AuthStatus.authenticated) return [];
+
+  final client = ref.watch(apiClientProvider);
+  if (!client.isAuthenticated) return [];
+
+  try {
+    final service = ref.watch(tasksServiceProvider);
+    return await service.getAIConfigs();
+  } catch (e) {
+    return [];
+  }
+});
+
+/// AI config actions
+class AIConfigActions {
+  final Ref _ref;
+
+  AIConfigActions(this._ref);
+
+  TasksService get _service => _ref.read(tasksServiceProvider);
+
+  /// Update an AI config
+  Future<void> update(String key, String value) async {
+    await _service.updateAIConfig(key, value);
+    _ref.invalidate(aiConfigsProvider);
+  }
+}
+
+final aiConfigActionsProvider = Provider<AIConfigActions>((ref) {
+  return AIConfigActions(ref);
 });

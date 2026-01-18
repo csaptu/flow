@@ -4,7 +4,6 @@ import 'package:flow_models/flow_models.dart';
 import 'package:flow_tasks/core/providers/providers.dart';
 import 'package:flow_tasks/core/theme/flow_theme.dart';
 import 'package:flow_tasks/features/subscription/presentation/subscription_screen.dart';
-import 'package:flow_tasks/features/admin/presentation/admin_screen.dart';
 import 'package:intl/intl.dart';
 
 /// Settings screen with TickTick-style layout
@@ -21,7 +20,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final colors = context.flowColors;
-    final isAdmin = ref.watch(isAdminProvider);
     final screenWidth = MediaQuery.of(context).size.width;
     final isNarrow = screenWidth < 600;
 
@@ -39,12 +37,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             )
           : null,
       body: isNarrow
-          ? _buildNarrowLayout(colors, isAdmin)
-          : _buildWideLayout(colors, isAdmin),
+          ? _buildNarrowLayout(colors)
+          : _buildWideLayout(colors),
     );
   }
 
-  Widget _buildWideLayout(FlowColorScheme colors, AsyncValue<bool> isAdmin) {
+  Widget _buildWideLayout(FlowColorScheme colors) {
     return Row(
       children: [
         // Sidebar
@@ -103,19 +101,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 isSelected: _selectedSection == 'ai',
                 onTap: () => setState(() => _selectedSection = 'ai'),
               ),
-              // Admin section
-              isAdmin.when(
-                data: (admin) => admin
-                    ? _SidebarItem(
-                        icon: Icons.admin_panel_settings_outlined,
-                        label: 'Admin',
-                        isSelected: _selectedSection == 'admin',
-                        onTap: () => setState(() => _selectedSection = 'admin'),
-                      )
-                    : const SizedBox.shrink(),
-                loading: () => const SizedBox.shrink(),
-                error: (_, __) => const SizedBox.shrink(),
-              ),
               const Spacer(),
               _SidebarItem(
                 icon: Icons.info_outline,
@@ -135,19 +120,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
-  Widget _buildNarrowLayout(FlowColorScheme colors, AsyncValue<bool> isAdmin) {
+  Widget _buildNarrowLayout(FlowColorScheme colors) {
     // For narrow screens, show a simple list
     return ListView(
       children: [
         const SizedBox(height: 24),
         _AccountCard(),
         const SizedBox(height: 24),
-        _buildMenuSection(colors, isAdmin),
+        _buildMenuSection(colors),
       ],
     );
   }
 
-  Widget _buildMenuSection(FlowColorScheme colors, AsyncValue<bool> isAdmin) {
+  Widget _buildMenuSection(FlowColorScheme colors) {
     final themeMode = ref.watch(themeModeProvider);
 
     return Column(
@@ -173,19 +158,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             MaterialPageRoute(builder: (_) => const _AISettingsPage()),
           ),
         ),
-        isAdmin.when(
-          data: (admin) => admin
-              ? _MenuTile(
-                  icon: Icons.admin_panel_settings_outlined,
-                  label: 'Admin Dashboard',
-                  onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const AdminScreen()),
-                  ),
-                )
-              : const SizedBox.shrink(),
-          loading: () => const SizedBox.shrink(),
-          error: (_, __) => const SizedBox.shrink(),
-        ),
         _MenuTile(
           icon: Icons.info_outline,
           label: 'About',
@@ -206,8 +178,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         return _AppearanceContent();
       case 'ai':
         return _AISettingsContent();
-      case 'admin':
-        return const AdminScreen();
       case 'about':
         return _AboutContent();
       default:

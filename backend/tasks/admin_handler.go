@@ -1,16 +1,14 @@
 package tasks
 
 import (
-	"context"
-	"encoding/json"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/csaptu/flow/pkg/httputil"
 	"github.com/csaptu/flow/pkg/middleware"
+	"github.com/csaptu/flow/shared/repository"
 )
 
 // AdminHandler handles admin endpoints
@@ -23,52 +21,28 @@ func NewAdminHandler(db *pgxpool.Pool) *AdminHandler {
 	return &AdminHandler{db: db}
 }
 
-// AdminOnly middleware checks if user is an admin
+// AdminOnly middleware checks if user is an admin using the shared repository
 func (h *AdminHandler) AdminOnly() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		userID, err := middleware.GetUserID(c)
+		_, err := middleware.GetUserID(c)
 		if err != nil {
 			return httputil.Unauthorized(c, "")
 		}
 
 		// Get user email from JWT claims (stored by auth middleware)
 		email := middleware.GetEmail(c)
-		if email != "" {
-			// Check if email is in admin_users table
-			isAdmin, _ := h.IsAdmin(c.Context(), email)
-			if isAdmin {
-				return c.Next()
-			}
+		if email == "" {
+			return httputil.Forbidden(c, "admin access required")
 		}
 
-		// Fallback: check by user_id lookup in admin_users
-		isAdmin := h.isAdminByUserID(c.Context(), userID)
-		if !isAdmin {
+		// Check if email is in admin_users table via shared repository
+		isAdmin, err := repository.IsAdmin(c.Context(), email)
+		if err != nil || !isAdmin {
 			return httputil.Forbidden(c, "admin access required")
 		}
 
 		return c.Next()
 	}
-}
-
-// IsAdmin checks if an email is an admin
-func (h *AdminHandler) IsAdmin(ctx context.Context, email string) (bool, error) {
-	var exists bool
-	err := h.db.QueryRow(ctx,
-		"SELECT EXISTS(SELECT 1 FROM admin_users WHERE email = $1)",
-		email,
-	).Scan(&exists)
-	return exists, err
-}
-
-// isAdminByUserID checks admin status by user ID
-// This is a fallback when email is not available from JWT
-func (h *AdminHandler) isAdminByUserID(ctx context.Context, userID uuid.UUID) bool {
-	// Since the tasks service doesn't have direct access to user emails,
-	// we rely on the email being included in the JWT token.
-	// If we reach this point, we cannot determine admin status by user_id alone.
-	// The user should have their email in the JWT token which will be checked first.
-	return false
 }
 
 // CheckAdmin endpoint to verify admin status
@@ -94,132 +68,107 @@ type UserListResponse struct {
 	CreatedAt    string  `json:"created_at"`
 }
 
-// ListUsers returns all users with subscription info
+// ListUsers returns all users with subscription info (from shared repository)
 func (h *AdminHandler) ListUsers(c *fiber.Ctx) error {
 	tier := c.Query("tier", "")
 	page := c.QueryInt("page", 1)
 	pageSize := c.QueryInt("page_size", 50)
 	offset := (page - 1) * pageSize
 
-	// Build query
-	query := `
-		SELECT
-			u.user_id,
-			COALESCE(u.stripe_customer_id, u.user_id::text) as email,
-			COALESCE(u.tier, 'free') as tier,
-			u.plan_id,
-			u.started_at,
-			u.expires_at,
-			(SELECT COUNT(*) FROM tasks t WHERE t.user_id = u.user_id AND t.deleted_at IS NULL) as task_count,
-			u.created_at
-		FROM user_subscriptions u
-		WHERE 1=1
-	`
-	args := []interface{}{}
-	argNum := 1
-
-	if tier != "" {
-		query += ` AND u.tier = $` + string(rune('0'+argNum))
-		args = append(args, tier)
-		argNum++
-	}
-
-	query += ` ORDER BY u.created_at DESC LIMIT $` + string(rune('0'+argNum)) + ` OFFSET $` + string(rune('0'+argNum+1))
-	args = append(args, pageSize, offset)
-
-	rows, err := h.db.Query(c.Context(), query, args...)
+	// Get users with subscriptions from shared repository
+	usersWithSubs, total, err := repository.ListUsersWithSubscriptions(c.Context(), tier, pageSize, offset)
 	if err != nil {
-		return httputil.InternalError(c, "database error")
-	}
-	defer rows.Close()
-
-	users := make([]UserListResponse, 0)
-	for rows.Next() {
-		var u UserListResponse
-		var userID uuid.UUID
-		var startedAt, expiresAt, createdAt *time.Time
-
-		if err := rows.Scan(&userID, &u.Email, &u.Tier, &u.PlanID, &startedAt, &expiresAt, &u.TaskCount, &createdAt); err != nil {
-			continue
-		}
-
-		u.ID = userID.String()
-		if startedAt != nil {
-			s := startedAt.Format(time.RFC3339)
-			u.SubscribedAt = &s
-		}
-		if expiresAt != nil {
-			s := expiresAt.Format(time.RFC3339)
-			u.ExpiresAt = &s
-		}
-		if createdAt != nil {
-			u.CreatedAt = createdAt.Format(time.RFC3339)
-		}
-
-		users = append(users, u)
+		return httputil.InternalError(c, "failed to list users")
 	}
 
-	// Get total count
-	var total int64
-	countQuery := "SELECT COUNT(*) FROM user_subscriptions"
-	if tier != "" {
-		countQuery += " WHERE tier = $1"
-		h.db.QueryRow(c.Context(), countQuery, tier).Scan(&total)
-	} else {
-		h.db.QueryRow(c.Context(), countQuery).Scan(&total)
+	users := make([]UserListResponse, 0, len(usersWithSubs))
+	for _, u := range usersWithSubs {
+		// Get task count from local tasks table
+		var taskCount int
+		h.db.QueryRow(c.Context(),
+			"SELECT COUNT(*) FROM tasks WHERE user_id = $1 AND deleted_at IS NULL",
+			u.UserID,
+		).Scan(&taskCount)
+
+		response := UserListResponse{
+			ID:        u.UserID.String(),
+			Email:     u.Email,
+			Tier:      u.Tier,
+			TaskCount: taskCount,
+			CreatedAt: u.UserCreatedAt.Format(time.RFC3339),
+		}
+
+		if u.Name != nil {
+			response.Name = *u.Name
+		}
+		if u.PeriodStart != nil {
+			s := u.PeriodStart.Format(time.RFC3339)
+			response.SubscribedAt = &s
+		}
+		if u.PeriodEnd != nil {
+			s := u.PeriodEnd.Format(time.RFC3339)
+			response.ExpiresAt = &s
+		}
+
+		users = append(users, response)
 	}
 
-	return httputil.SuccessWithMeta(c, users, httputil.BuildMeta(page, pageSize, total))
+	return httputil.SuccessWithMeta(c, users, httputil.BuildMeta(page, pageSize, int64(total)))
 }
 
-// GetUser returns a single user's details
+// GetUser returns a single user's details (from shared repository)
 func (h *AdminHandler) GetUser(c *fiber.Ctx) error {
 	userID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		return httputil.BadRequest(c, "invalid user ID")
 	}
 
-	var u UserListResponse
-	var startedAt, expiresAt, createdAt *time.Time
-
-	err = h.db.QueryRow(c.Context(), `
-		SELECT
-			u.user_id,
-			COALESCE(u.stripe_customer_id, u.user_id::text) as email,
-			COALESCE(u.tier, 'free') as tier,
-			u.plan_id,
-			u.started_at,
-			u.expires_at,
-			(SELECT COUNT(*) FROM tasks t WHERE t.user_id = u.user_id AND t.deleted_at IS NULL) as task_count,
-			u.created_at
-		FROM user_subscriptions u
-		WHERE u.user_id = $1
-	`, userID).Scan(&userID, &u.Email, &u.Tier, &u.PlanID, &startedAt, &expiresAt, &u.TaskCount, &createdAt)
-
-	if err == pgx.ErrNoRows {
+	// Get user from shared repository
+	user, err := repository.GetUserByID(c.Context(), userID)
+	if err != nil {
+		return httputil.InternalError(c, "failed to get user")
+	}
+	if user == nil {
 		return httputil.NotFound(c, "user")
 	}
+
+	// Get subscription from shared repository
+	sub, err := repository.GetUserSubscription(c.Context(), userID)
 	if err != nil {
-		return httputil.InternalError(c, "database error")
+		return httputil.InternalError(c, "failed to get subscription")
 	}
 
-	u.ID = userID.String()
-	if startedAt != nil {
-		s := startedAt.Format(time.RFC3339)
-		u.SubscribedAt = &s
-	}
-	if expiresAt != nil {
-		s := expiresAt.Format(time.RFC3339)
-		u.ExpiresAt = &s
-	}
-	if createdAt != nil {
-		u.CreatedAt = createdAt.Format(time.RFC3339)
+	// Get task count from local tasks table
+	var taskCount int
+	h.db.QueryRow(c.Context(),
+		"SELECT COUNT(*) FROM tasks WHERE user_id = $1 AND deleted_at IS NULL",
+		userID,
+	).Scan(&taskCount)
+
+	response := UserListResponse{
+		ID:        user.ID.String(),
+		Email:     user.Email,
+		Tier:      sub.Tier,
+		TaskCount: taskCount,
+		CreatedAt: user.CreatedAt.Format(time.RFC3339),
 	}
 
-	return httputil.Success(c, u)
+	if user.Name != nil {
+		response.Name = *user.Name
+	}
+	if sub.CurrentPeriodStart != nil {
+		s := sub.CurrentPeriodStart.Format(time.RFC3339)
+		response.SubscribedAt = &s
+	}
+	if sub.CurrentPeriodEnd != nil {
+		s := sub.CurrentPeriodEnd.Format(time.RFC3339)
+		response.ExpiresAt = &s
+	}
+
+	return httputil.Success(c, response)
 }
 
-// UpdateUserSubscription updates a user's subscription (admin override)
+// UpdateUserSubscription updates a user's subscription (admin override) via shared repository
 func (h *AdminHandler) UpdateUserSubscription(c *fiber.Ctx) error {
 	userID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
@@ -228,7 +177,7 @@ func (h *AdminHandler) UpdateUserSubscription(c *fiber.Ctx) error {
 
 	var req struct {
 		Tier      string  `json:"tier"`
-		PlanID    *string `json:"plan_id,omitempty"`
+		StartsAt  *string `json:"starts_at,omitempty"`
 		ExpiresAt *string `json:"expires_at,omitempty"`
 	}
 	if err := c.BodyParser(&req); err != nil {
@@ -240,38 +189,52 @@ func (h *AdminHandler) UpdateUserSubscription(c *fiber.Ctx) error {
 		return httputil.BadRequest(c, "invalid tier")
 	}
 
-	var expiresAt *time.Time
+	var periodStart *time.Time
+	if req.StartsAt != nil {
+		t, err := time.Parse(time.RFC3339, *req.StartsAt)
+		if err != nil {
+			return httputil.BadRequest(c, "invalid starts_at format")
+		}
+		periodStart = &t
+	} else {
+		now := time.Now()
+		periodStart = &now
+	}
+
+	var periodEnd *time.Time
 	if req.ExpiresAt != nil {
 		t, err := time.Parse(time.RFC3339, *req.ExpiresAt)
 		if err != nil {
 			return httputil.BadRequest(c, "invalid expires_at format")
 		}
-		expiresAt = &t
+		periodEnd = &t
 	}
 
-	now := time.Now()
+	// Use shared repository to update subscription
+	sub := &repository.Subscription{
+		UserID:             userID,
+		Tier:               req.Tier,
+		Status:             "active",
+		CurrentPeriodStart: periodStart,
+		CurrentPeriodEnd:   periodEnd,
+	}
 
-	// Upsert subscription
-	_, err = h.db.Exec(c.Context(), `
-		INSERT INTO user_subscriptions (user_id, tier, plan_id, started_at, expires_at, provider, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, 'manual', $4, $4)
-		ON CONFLICT (user_id) DO UPDATE SET
-			tier = $2,
-			plan_id = $3,
-			expires_at = $5,
-			provider = 'manual',
-			updated_at = $4
-	`, userID, req.Tier, req.PlanID, now, expiresAt)
-
-	if err != nil {
+	if err := repository.UpsertSubscription(c.Context(), sub); err != nil {
 		return httputil.InternalError(c, "failed to update subscription")
 	}
 
-	// Create an order record for the manual change
-	_, _ = h.db.Exec(c.Context(), `
-		INSERT INTO orders (user_id, plan_id, provider, amount, currency, status, completed_at, metadata)
-		VALUES ($1, COALESCE($2, 'free'), 'manual', 0, 'USD', 'completed', $3, '{"admin_override": true}')
-	`, userID, req.PlanID, now)
+	// Record payment history for admin override
+	payment := &repository.PaymentHistory{
+		UserID:      userID,
+		Provider:    "manual",
+		AmountCents: 0,
+		Currency:    "USD",
+		Tier:        req.Tier,
+		PeriodStart: periodStart,
+		PeriodEnd:   periodEnd,
+		Status:      "completed",
+	}
+	_ = repository.CreatePaymentHistory(c.Context(), payment)
 
 	return httputil.Success(c, map[string]string{"message": "subscription updated"})
 }
@@ -297,7 +260,7 @@ type OrderResponse struct {
 	CompletedAt            *string `json:"completed_at,omitempty"`
 }
 
-// ListOrders returns all orders
+// ListOrders returns all orders (from shared repository)
 func (h *AdminHandler) ListOrders(c *fiber.Ctx) error {
 	status := c.Query("status", "")
 	provider := c.Query("provider", "")
@@ -306,180 +269,110 @@ func (h *AdminHandler) ListOrders(c *fiber.Ctx) error {
 	pageSize := c.QueryInt("page_size", 50)
 	offset := (page - 1) * pageSize
 
-	// Build query
-	query := `
-		SELECT
-			o.id, o.user_id,
-			COALESCE(us.stripe_customer_id, o.user_id::text) as user_email,
-			o.plan_id, sp.name as plan_name, o.provider,
-			o.provider_order_id, o.provider_subscription_id,
-			o.amount, o.currency, o.status, o.created_at, o.completed_at
-		FROM orders o
-		LEFT JOIN user_subscriptions us ON o.user_id = us.user_id
-		LEFT JOIN subscription_plans sp ON o.plan_id = sp.id
-		WHERE 1=1
-	`
-	args := []interface{}{}
-	argNum := 1
-
-	if status != "" {
-		query += " AND o.status = $" + itoa(argNum)
-		args = append(args, status)
-		argNum++
-	}
-	if provider != "" {
-		query += " AND o.provider = $" + itoa(argNum)
-		args = append(args, provider)
-		argNum++
-	}
-	if tier != "" {
-		query += " AND sp.tier = $" + itoa(argNum)
-		args = append(args, tier)
-		argNum++
-	}
-
-	query += " ORDER BY o.created_at DESC LIMIT $" + itoa(argNum) + " OFFSET $" + itoa(argNum+1)
-	args = append(args, pageSize, offset)
-
-	rows, err := h.db.Query(c.Context(), query, args...)
+	// Get orders from shared repository
+	ordersWithDetails, total, err := repository.ListOrders(c.Context(), status, provider, tier, pageSize, offset)
 	if err != nil {
-		return httputil.InternalError(c, "database error")
-	}
-	defer rows.Close()
-
-	orders := make([]OrderResponse, 0)
-	for rows.Next() {
-		var o OrderResponse
-		var orderID, userID uuid.UUID
-		var createdAt time.Time
-		var completedAt *time.Time
-
-		if err := rows.Scan(&orderID, &userID, &o.UserEmail, &o.PlanID, &o.PlanName,
-			&o.Provider, &o.ProviderOrderID, &o.ProviderSubscriptionID,
-			&o.Amount, &o.Currency, &o.Status, &createdAt, &completedAt); err != nil {
-			continue
-		}
-
-		o.ID = orderID.String()
-		o.UserID = userID.String()
-		o.CreatedAt = createdAt.Format(time.RFC3339)
-		if completedAt != nil {
-			s := completedAt.Format(time.RFC3339)
-			o.CompletedAt = &s
-		}
-
-		orders = append(orders, o)
+		return httputil.InternalError(c, "failed to list orders")
 	}
 
-	// Get total count
-	var total int64
-	h.db.QueryRow(c.Context(), "SELECT COUNT(*) FROM orders").Scan(&total)
+	orders := make([]OrderResponse, 0, len(ordersWithDetails))
+	for _, o := range ordersWithDetails {
+		response := OrderResponse{
+			ID:                     o.ID.String(),
+			UserID:                 o.UserID.String(),
+			UserEmail:              o.UserEmail,
+			PlanID:                 o.PlanID,
+			PlanName:               o.PlanName,
+			Provider:               o.Provider,
+			ProviderOrderID:        o.ProviderOrderID,
+			ProviderSubscriptionID: o.ProviderSubscriptionID,
+			Amount:                 float64(o.AmountCents) / 100.0,
+			Currency:               o.Currency,
+			Status:                 o.Status,
+			CreatedAt:              o.CreatedAt.Format(time.RFC3339),
+		}
+		if o.CompletedAt != nil {
+			s := o.CompletedAt.Format(time.RFC3339)
+			response.CompletedAt = &s
+		}
+		orders = append(orders, response)
+	}
 
-	return httputil.SuccessWithMeta(c, orders, httputil.BuildMeta(page, pageSize, total))
+	return httputil.SuccessWithMeta(c, orders, httputil.BuildMeta(page, pageSize, int64(total)))
 }
 
-// GetOrder returns a single order
+// GetOrder returns a single order (from shared repository)
 func (h *AdminHandler) GetOrder(c *fiber.Ctx) error {
 	orderID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		return httputil.BadRequest(c, "invalid order ID")
 	}
 
-	var o OrderResponse
-	var userID uuid.UUID
-	var createdAt time.Time
-	var completedAt *time.Time
-
-	err = h.db.QueryRow(c.Context(), `
-		SELECT
-			o.id, o.user_id,
-			COALESCE(us.stripe_customer_id, o.user_id::text) as user_email,
-			o.plan_id, sp.name as plan_name, o.provider,
-			o.provider_order_id, o.provider_subscription_id,
-			o.amount, o.currency, o.status, o.created_at, o.completed_at
-		FROM orders o
-		LEFT JOIN user_subscriptions us ON o.user_id = us.user_id
-		LEFT JOIN subscription_plans sp ON o.plan_id = sp.id
-		WHERE o.id = $1
-	`, orderID).Scan(&orderID, &userID, &o.UserEmail, &o.PlanID, &o.PlanName,
-		&o.Provider, &o.ProviderOrderID, &o.ProviderSubscriptionID,
-		&o.Amount, &o.Currency, &o.Status, &createdAt, &completedAt)
-
-	if err == pgx.ErrNoRows {
+	// Get order from shared repository
+	order, err := repository.GetOrder(c.Context(), orderID)
+	if err != nil {
+		return httputil.InternalError(c, "failed to get order")
+	}
+	if order == nil {
 		return httputil.NotFound(c, "order")
 	}
-	if err != nil {
-		return httputil.InternalError(c, "database error")
+
+	response := OrderResponse{
+		ID:                     order.ID.String(),
+		UserID:                 order.UserID.String(),
+		UserEmail:              order.UserEmail,
+		PlanID:                 order.PlanID,
+		PlanName:               order.PlanName,
+		Provider:               order.Provider,
+		ProviderOrderID:        order.ProviderOrderID,
+		ProviderSubscriptionID: order.ProviderSubscriptionID,
+		Amount:                 float64(order.AmountCents) / 100.0,
+		Currency:               order.Currency,
+		Status:                 order.Status,
+		CreatedAt:              order.CreatedAt.Format(time.RFC3339),
+	}
+	if order.CompletedAt != nil {
+		s := order.CompletedAt.Format(time.RFC3339)
+		response.CompletedAt = &s
 	}
 
-	o.ID = orderID.String()
-	o.UserID = userID.String()
-	o.CreatedAt = createdAt.Format(time.RFC3339)
-	if completedAt != nil {
-		s := completedAt.Format(time.RFC3339)
-		o.CompletedAt = &s
-	}
-
-	return httputil.Success(c, o)
+	return httputil.Success(c, response)
 }
 
 // =====================================================
 // Plan Management
 // =====================================================
 
-// ListPlans returns all subscription plans
+// ListPlans returns all subscription plans (from shared repository)
 func (h *AdminHandler) ListPlans(c *fiber.Ctx) error {
-	rows, err := h.db.Query(c.Context(), `
-		SELECT id, name, tier, price_monthly, currency, paddle_price_id,
-			   apple_product_id, google_product_id, features, is_active, created_at
-		FROM subscription_plans
-		ORDER BY price_monthly ASC
-	`)
+	// Get plans from shared repository
+	plans, err := repository.ListPlans(c.Context())
 	if err != nil {
-		return httputil.InternalError(c, "database error")
+		return httputil.InternalError(c, "failed to list plans")
 	}
-	defer rows.Close()
 
-	plans := make([]map[string]interface{}, 0)
-	for rows.Next() {
-		var id, name, tier, currency string
-		var price float64
-		var paddleID, appleID, googleID *string
-		var features []byte
-		var isActive bool
-		var createdAt time.Time
-
-		if err := rows.Scan(&id, &name, &tier, &price, &currency, &paddleID,
-			&appleID, &googleID, &features, &isActive, &createdAt); err != nil {
-			continue
-		}
-
+	result := make([]map[string]interface{}, 0, len(plans))
+	for _, p := range plans {
 		plan := map[string]interface{}{
-			"id":                id,
-			"name":              name,
-			"tier":              tier,
-			"price_monthly":     price,
-			"currency":          currency,
-			"paddle_price_id":   paddleID,
-			"apple_product_id":  appleID,
-			"google_product_id": googleID,
-			"is_active":         isActive,
-			"created_at":        createdAt.Format(time.RFC3339),
+			"id":                p.ID,
+			"name":              p.Name,
+			"tier":              p.Tier,
+			"price_monthly":     float64(p.PriceMonthly) / 100.0,
+			"currency":          p.Currency,
+			"paddle_price_id":   p.PaddlePriceID,
+			"apple_product_id":  p.AppleProductID,
+			"google_product_id": p.GoogleProductID,
+			"is_active":         p.IsActive,
+			"features":          p.Features,
+			"created_at":        p.CreatedAt.Format(time.RFC3339),
 		}
-
-		// Parse features JSON
-		var featuresArr []string
-		if json.Unmarshal(features, &featuresArr) == nil {
-			plan["features"] = featuresArr
-		}
-
-		plans = append(plans, plan)
+		result = append(result, plan)
 	}
 
-	return httputil.Success(c, plans)
+	return httputil.Success(c, result)
 }
 
-// UpdatePlan updates a subscription plan
+// UpdatePlan updates a subscription plan (via shared repository)
 func (h *AdminHandler) UpdatePlan(c *fiber.Ctx) error {
 	planID := c.Params("id")
 
@@ -493,16 +386,8 @@ func (h *AdminHandler) UpdatePlan(c *fiber.Ctx) error {
 		return httputil.BadRequest(c, "invalid request body")
 	}
 
-	_, err := h.db.Exec(c.Context(), `
-		UPDATE subscription_plans SET
-			paddle_price_id = COALESCE($1, paddle_price_id),
-			apple_product_id = COALESCE($2, apple_product_id),
-			google_product_id = COALESCE($3, google_product_id),
-			is_active = COALESCE($4, is_active),
-			updated_at = NOW()
-		WHERE id = $5
-	`, req.PaddlePriceID, req.AppleProductID, req.GoogleProductID, req.IsActive, planID)
-
+	// Use shared repository to update plan fields
+	err := repository.UpdatePlanFields(c.Context(), planID, req.PaddlePriceID, req.AppleProductID, req.GoogleProductID, req.IsActive)
 	if err != nil {
 		return httputil.InternalError(c, "failed to update plan")
 	}
@@ -510,7 +395,66 @@ func (h *AdminHandler) UpdatePlan(c *fiber.Ctx) error {
 	return httputil.Success(c, map[string]string{"message": "plan updated"})
 }
 
-// Helper function
-func itoa(i int) string {
-	return string(rune('0' + i))
+// =====================================================
+// AI Configuration Management
+// =====================================================
+
+// AIConfigResponse represents an AI config in admin list
+type AIConfigResponse struct {
+	Key         string  `json:"key"`
+	Value       string  `json:"value"`
+	Description *string `json:"description,omitempty"`
+	UpdatedAt   string  `json:"updated_at"`
+	UpdatedBy   *string `json:"updated_by,omitempty"`
 }
+
+// ListAIConfigs returns all AI prompt configurations
+func (h *AdminHandler) ListAIConfigs(c *fiber.Ctx) error {
+	configs, err := repository.ListAIPromptConfigs(c.Context())
+	if err != nil {
+		return httputil.InternalError(c, "failed to list AI configs")
+	}
+
+	result := make([]AIConfigResponse, 0, len(configs))
+	for _, cfg := range configs {
+		result = append(result, AIConfigResponse{
+			Key:         cfg.Key,
+			Value:       cfg.Value,
+			Description: cfg.Description,
+			UpdatedAt:   cfg.UpdatedAt.Format(time.RFC3339),
+			UpdatedBy:   cfg.UpdatedBy,
+		})
+	}
+
+	return httputil.Success(c, result)
+}
+
+// UpdateAIConfig updates a single AI prompt configuration
+func (h *AdminHandler) UpdateAIConfig(c *fiber.Ctx) error {
+	key := c.Params("key")
+	if key == "" {
+		return httputil.BadRequest(c, "config key is required")
+	}
+
+	var req struct {
+		Value string `json:"value"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return httputil.BadRequest(c, "invalid request body")
+	}
+
+	if req.Value == "" {
+		return httputil.BadRequest(c, "value cannot be empty")
+	}
+
+	// Get admin email for audit trail
+	email := middleware.GetEmail(c)
+
+	err := repository.UpdateAIPromptConfig(c.Context(), key, req.Value, email)
+	if err != nil {
+		return httputil.InternalError(c, "failed to update AI config")
+	}
+
+	return httputil.Success(c, map[string]string{"message": "config updated"})
+}
+

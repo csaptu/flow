@@ -15,6 +15,7 @@ import (
 	"github.com/csaptu/flow/common/dto"
 	"github.com/csaptu/flow/pkg/config"
 	"github.com/csaptu/flow/pkg/middleware"
+	"github.com/csaptu/flow/shared/repository"
 )
 
 // Server represents the projects service server
@@ -31,6 +32,11 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	db, err := initDatabase(cfg.Databases.Projects)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
+
+	// Initialize shared repository (for cross-domain calls)
+	if err := repository.Init(cfg); err != nil {
+		return nil, fmt.Errorf("failed to initialize shared repository: %w", err)
 	}
 
 	// Initialize Redis client

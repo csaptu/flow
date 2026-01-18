@@ -7,7 +7,7 @@ import 'package:flow_tasks/core/theme/flow_theme.dart';
 import 'package:intl/intl.dart';
 
 /// Admin section type
-enum AdminSection { users, orders }
+enum AdminSection { users, orders, aiServices }
 
 /// Admin dashboard screen - Bear-style with collapsible sections
 class AdminScreen extends ConsumerStatefulWidget {
@@ -21,6 +21,7 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
   String _tierFilter = 'all';
   bool _usersExpanded = true;
   bool _ordersExpanded = true;
+  bool _aiServicesExpanded = true;
   int _usersPage = 1;
   int _ordersPage = 1;
 
@@ -68,46 +69,71 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
   }
 
   Widget _buildWideLayout(FlowColorScheme colors) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Users section
-        Expanded(
-          child: _buildSection(
-            colors: colors,
-            title: 'Users',
-            icon: Icons.people_outline,
-            isExpanded: _usersExpanded,
-            onToggle: () => setState(() => _usersExpanded = !_usersExpanded),
-            content: _UsersContent(
-              tierFilter: _tierFilter,
-              page: _usersPage,
-              onPageChanged: (page) => setState(() => _usersPage = page),
-              onEditUser: (user) => _showEditUserDialog(context, ref, user),
+    return SingleChildScrollView(
+      child: Column(
+        children: [
+          // Users and Orders side by side
+          IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Users section
+                Expanded(
+                  child: _buildSection(
+                    colors: colors,
+                    title: 'Users',
+                    icon: Icons.people_outline,
+                    isExpanded: _usersExpanded,
+                    onToggle: () => setState(() => _usersExpanded = !_usersExpanded),
+                    content: _UsersContent(
+                      tierFilter: _tierFilter,
+                      page: _usersPage,
+                      onPageChanged: (page) => setState(() => _usersPage = page),
+                      onEditUser: (user) => _showEditUserDialog(context, ref, user),
+                    ),
+                  ),
+                ),
+                // Divider
+                Container(
+                  width: 1,
+                  color: colors.divider,
+                ),
+                // Orders section
+                Expanded(
+                  child: _buildSection(
+                    colors: colors,
+                    title: 'Orders',
+                    icon: Icons.receipt_long_outlined,
+                    isExpanded: _ordersExpanded,
+                    onToggle: () => setState(() => _ordersExpanded = !_ordersExpanded),
+                    content: _OrdersContent(
+                      tierFilter: _tierFilter,
+                      page: _ordersPage,
+                      onPageChanged: (page) => setState(() => _ordersPage = page),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
-        ),
-        // Divider
-        Container(
-          width: 1,
-          color: colors.divider,
-        ),
-        // Orders section
-        Expanded(
-          child: _buildSection(
-            colors: colors,
-            title: 'Orders',
-            icon: Icons.receipt_long_outlined,
-            isExpanded: _ordersExpanded,
-            onToggle: () => setState(() => _ordersExpanded = !_ordersExpanded),
-            content: _OrdersContent(
-              tierFilter: _tierFilter,
-              page: _ordersPage,
-              onPageChanged: (page) => setState(() => _ordersPage = page),
+          // AI Services section (full width below)
+          Container(
+            decoration: BoxDecoration(
+              border: Border(top: BorderSide(color: colors.divider, width: 0.5)),
+            ),
+            child: _buildSection(
+              colors: colors,
+              title: 'AI Services',
+              icon: Icons.psychology_outlined,
+              isExpanded: _aiServicesExpanded,
+              onToggle: () => setState(() => _aiServicesExpanded = !_aiServicesExpanded),
+              content: _AIServicesContent(
+                onEditConfig: (config) => _showEditAIConfigDialog(context, ref, config),
+              ),
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -140,6 +166,17 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
               tierFilter: _tierFilter,
               page: _ordersPage,
               onPageChanged: (page) => setState(() => _ordersPage = page),
+            ),
+          ),
+          // AI Services section
+          _buildSection(
+            colors: colors,
+            title: 'AI Services',
+            icon: Icons.psychology_outlined,
+            isExpanded: _aiServicesExpanded,
+            onToggle: () => setState(() => _aiServicesExpanded = !_aiServicesExpanded),
+            content: _AIServicesContent(
+              onEditConfig: (config) => _showEditAIConfigDialog(context, ref, config),
             ),
           ),
         ],
@@ -206,6 +243,17 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
     ).then((updated) {
       if (updated == true) {
         ref.invalidate(adminUsersProvider);
+      }
+    });
+  }
+
+  void _showEditAIConfigDialog(BuildContext context, WidgetRef ref, AIPromptConfig config) {
+    showDialog(
+      context: context,
+      builder: (context) => _EditAIConfigDialog(config: config),
+    ).then((updated) {
+      if (updated == true) {
+        ref.invalidate(aiConfigsProvider);
       }
     });
   }
@@ -824,16 +872,47 @@ class _EditUserDialog extends ConsumerStatefulWidget {
 class _EditUserDialogState extends ConsumerState<_EditUserDialog> {
   late String _selectedTier;
   String? _selectedPlanId;
+  DateTime? _startsAt;
   DateTime? _expiresAt;
   bool _isLoading = false;
   String? _error;
+  String _billingPeriod = 'monthly'; // 'monthly' or 'yearly'
 
   @override
   void initState() {
     super.initState();
     _selectedTier = widget.user.tier;
     _selectedPlanId = widget.user.planId;
+    _startsAt = widget.user.subscribedAt ?? DateTime.now();
     _expiresAt = widget.user.expiresAt;
+
+    // Infer billing period from existing dates
+    if (_startsAt != null && _expiresAt != null) {
+      final diff = _expiresAt!.difference(_startsAt!).inDays;
+      _billingPeriod = diff > 60 ? 'yearly' : 'monthly';
+    }
+  }
+
+  void _updateExpiryFromStart() {
+    if (_startsAt == null || _selectedPlanId == null) return;
+    setState(() {
+      if (_billingPeriod == 'yearly') {
+        _expiresAt = DateTime(_startsAt!.year + 1, _startsAt!.month, _startsAt!.day);
+      } else {
+        _expiresAt = DateTime(_startsAt!.year, _startsAt!.month + 1, _startsAt!.day);
+      }
+    });
+  }
+
+  void _updateStartFromExpiry() {
+    if (_expiresAt == null || _selectedPlanId == null) return;
+    setState(() {
+      if (_billingPeriod == 'yearly') {
+        _startsAt = DateTime(_expiresAt!.year - 1, _expiresAt!.month, _expiresAt!.day);
+      } else {
+        _startsAt = DateTime(_expiresAt!.year, _expiresAt!.month - 1, _expiresAt!.day);
+      }
+    });
   }
 
   @override
@@ -931,9 +1010,14 @@ class _EditUserDialogState extends ConsumerState<_EditUserDialog> {
                         _selectedPlanId = value;
                         if (value == null) {
                           _selectedTier = 'free';
+                          _startsAt = null;
+                          _expiresAt = null;
                         } else {
                           final plan = planList.firstWhere((p) => p.id == value);
                           _selectedTier = plan.tier;
+                          // Auto-set dates when plan is selected
+                          _startsAt ??= DateTime.now();
+                          _updateExpiryFromStart();
                         }
                       });
                     },
@@ -944,8 +1028,112 @@ class _EditUserDialogState extends ConsumerState<_EditUserDialog> {
               error: (_, __) => Text('Failed to load plans', style: TextStyle(color: colors.error)),
             ),
 
-            // Expiration date
+            // Billing period selector
             if (_selectedPlanId != null) ...[
+              const SizedBox(height: 16),
+              Text(
+                'Billing Period',
+                style: TextStyle(color: colors.textSecondary, fontSize: 12, fontWeight: FontWeight.w500),
+              ),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Expanded(
+                    child: InkWell(
+                      onTap: () {
+                        setState(() => _billingPeriod = 'monthly');
+                        _updateExpiryFromStart();
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        decoration: BoxDecoration(
+                          color: _billingPeriod == 'monthly'
+                              ? colors.primary.withValues(alpha: 0.1)
+                              : colors.background,
+                          border: Border.all(
+                            color: _billingPeriod == 'monthly' ? colors.primary : colors.border,
+                          ),
+                          borderRadius: const BorderRadius.horizontal(left: Radius.circular(8)),
+                        ),
+                        child: Center(
+                          child: Text(
+                            'Monthly',
+                            style: TextStyle(
+                              color: _billingPeriod == 'monthly' ? colors.primary : colors.textSecondary,
+                              fontWeight: _billingPeriod == 'monthly' ? FontWeight.w600 : FontWeight.normal,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: InkWell(
+                      onTap: () {
+                        setState(() => _billingPeriod = 'yearly');
+                        _updateExpiryFromStart();
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        decoration: BoxDecoration(
+                          color: _billingPeriod == 'yearly'
+                              ? colors.primary.withValues(alpha: 0.1)
+                              : colors.background,
+                          border: Border.all(
+                            color: _billingPeriod == 'yearly' ? colors.primary : colors.border,
+                          ),
+                          borderRadius: const BorderRadius.horizontal(right: Radius.circular(8)),
+                        ),
+                        child: Center(
+                          child: Text(
+                            'Yearly',
+                            style: TextStyle(
+                              color: _billingPeriod == 'yearly' ? colors.primary : colors.textSecondary,
+                              fontWeight: _billingPeriod == 'yearly' ? FontWeight.w600 : FontWeight.normal,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+
+              // Start date
+              const SizedBox(height: 16),
+              Text(
+                'Starts',
+                style: TextStyle(color: colors.textSecondary, fontSize: 12, fontWeight: FontWeight.w500),
+              ),
+              const SizedBox(height: 6),
+              InkWell(
+                onTap: _selectStartDate,
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: colors.border),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.play_arrow, size: 16, color: colors.textSecondary),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _startsAt != null
+                              ? DateFormat('MMM d, yyyy').format(_startsAt!)
+                              : 'Today',
+                          style: TextStyle(color: colors.textPrimary, fontSize: 14),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+              // Expiration date
               const SizedBox(height: 16),
               Text(
                 'Expires',
@@ -1001,6 +1189,19 @@ class _EditUserDialogState extends ConsumerState<_EditUserDialog> {
     );
   }
 
+  Future<void> _selectStartDate() async {
+    final date = await showDatePicker(
+      context: context,
+      initialDate: _startsAt ?? DateTime.now(),
+      firstDate: DateTime.now().subtract(const Duration(days: 365)),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+    );
+    if (date != null) {
+      setState(() => _startsAt = date);
+      _updateExpiryFromStart(); // Auto-update expiry
+    }
+  }
+
   Future<void> _selectExpirationDate() async {
     final date = await showDatePicker(
       context: context,
@@ -1010,6 +1211,7 @@ class _EditUserDialogState extends ConsumerState<_EditUserDialog> {
     );
     if (date != null) {
       setState(() => _expiresAt = date);
+      _updateStartFromExpiry(); // Auto-update start
     }
   }
 
@@ -1025,8 +1227,583 @@ class _EditUserDialogState extends ConsumerState<_EditUserDialog> {
         widget.user.id,
         tier: _selectedTier,
         planId: _selectedPlanId,
+        startsAt: _startsAt,
         expiresAt: _expiresAt,
       );
+
+      if (mounted) {
+        Navigator.of(context).pop(true);
+      }
+    } catch (e) {
+      setState(() {
+        _error = e.toString();
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+}
+
+// =====================================================
+// AI Services Section
+// =====================================================
+
+/// AI Services content section
+class _AIServicesContent extends ConsumerStatefulWidget {
+  final Function(AIPromptConfig) onEditConfig;
+
+  const _AIServicesContent({
+    required this.onEditConfig,
+  });
+
+  @override
+  ConsumerState<_AIServicesContent> createState() => _AIServicesContentState();
+}
+
+class _AIServicesContentState extends ConsumerState<_AIServicesContent> {
+  bool _showHelp = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.flowColors;
+    final configsAsync = ref.watch(aiConfigsProvider);
+
+    return configsAsync.when(
+      data: (configs) => _buildConfigsList(context, colors, configs),
+      loading: () => Container(
+        height: 200,
+        alignment: Alignment.center,
+        child: const CircularProgressIndicator(),
+      ),
+      error: (err, _) => _buildErrorState(colors, 'AI configs', err.toString()),
+    );
+  }
+
+  Widget _buildConfigsList(
+    BuildContext context,
+    FlowColorScheme colors,
+    List<AIPromptConfig> configs,
+  ) {
+    if (configs.isEmpty) {
+      return _buildEmptyState(colors, 'No AI configurations found');
+    }
+
+    return Column(
+      children: [
+        // Help toggle button
+        _buildHelpToggle(colors),
+        // Collapsible help section
+        if (_showHelp) _buildHelpSection(colors),
+        // Config list
+        ...configs.map((config) => _AIConfigItem(
+          config: config,
+          onTap: () => widget.onEditConfig(config),
+        )),
+      ],
+    );
+  }
+
+  Widget _buildHelpToggle(FlowColorScheme colors) {
+    return InkWell(
+      onTap: () => setState(() => _showHelp = !_showHelp),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        decoration: BoxDecoration(
+          color: colors.primary.withValues(alpha: 0.05),
+          border: Border(
+            bottom: BorderSide(color: colors.divider.withValues(alpha: 0.5), width: 0.5),
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              _showHelp ? Icons.help : Icons.help_outline,
+              size: 16,
+              color: colors.primary,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              'Formatting Guidelines',
+              style: TextStyle(
+                color: colors.primary,
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const Spacer(),
+            Icon(
+              _showHelp ? Icons.expand_less : Icons.expand_more,
+              size: 18,
+              color: colors.primary,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHelpSection(FlowColorScheme colors) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: colors.background,
+        border: Border(
+          bottom: BorderSide(color: colors.divider.withValues(alpha: 0.5), width: 0.5),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Safe to use
+          Row(
+            children: [
+              Icon(Icons.check_circle, size: 14, color: Colors.green.shade600),
+              const SizedBox(width: 6),
+              Text(
+                'Safe to use:',
+                style: TextStyle(
+                  color: colors.textPrimary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Padding(
+            padding: const EdgeInsets.only(left: 20),
+            child: Text(
+              "• Plain text and numbers\n"
+              "• Single quotes: 'example'\n"
+              "• Parentheses: (like this)\n"
+              "• Symbols: 1-10, max 20 words, etc.",
+              style: TextStyle(color: colors.textSecondary, fontSize: 12, height: 1.5),
+            ),
+          ),
+          const SizedBox(height: 12),
+          // Avoid if possible
+          Row(
+            children: [
+              Icon(Icons.warning_amber, size: 14, color: Colors.orange.shade700),
+              const SizedBox(width: 6),
+              Text(
+                'Avoid if possible (auto-escaped but may confuse AI):',
+                style: TextStyle(
+                  color: colors.textPrimary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Padding(
+            padding: const EdgeInsets.only(left: 20),
+            child: Text(
+              '• Double quotes: "\n'
+              '• Curly braces: { }\n'
+              '• Square brackets: [ ]',
+              style: TextStyle(color: colors.textSecondary, fontSize: 12, height: 1.5),
+            ),
+          ),
+          const SizedBox(height: 12),
+          // Note
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: colors.primary.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.info_outline, size: 14, color: colors.primary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Special characters are auto-escaped to protect JSON structure. '
+                    'Worst case is a confusing prompt, not a broken one. '
+                    'Use "Reset" to restore defaults.',
+                    style: TextStyle(color: colors.textSecondary, fontSize: 11, height: 1.4),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyState(FlowColorScheme colors, String message) {
+    return Container(
+      padding: const EdgeInsets.all(32),
+      alignment: Alignment.center,
+      child: Column(
+        children: [
+          Icon(Icons.psychology_outlined, size: 48, color: colors.textTertiary),
+          const SizedBox(height: 12),
+          Text(message, style: TextStyle(color: colors.textSecondary)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildErrorState(FlowColorScheme colors, String type, String error) {
+    if (error.contains('null') || error.contains('empty') || error.contains('404')) {
+      return _buildEmptyState(colors, 'No $type yet');
+    }
+    return Container(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        children: [
+          Icon(Icons.error_outline, size: 40, color: colors.error),
+          const SizedBox(height: 12),
+          Text(
+            'Failed to load $type',
+            style: TextStyle(color: colors.textPrimary, fontWeight: FontWeight.w500),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            error,
+            style: TextStyle(color: colors.textTertiary, fontSize: 12),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// AI Config item (Bear-style)
+class _AIConfigItem extends StatelessWidget {
+  final AIPromptConfig config;
+  final VoidCallback onTap;
+
+  const _AIConfigItem({required this.config, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.flowColors;
+
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: BorderSide(color: colors.divider.withValues(alpha: 0.5), width: 0.5),
+          ),
+        ),
+        child: Row(
+          children: [
+            // Icon
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: Colors.purple.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: const Icon(Icons.tune, size: 16, color: Colors.purple),
+            ),
+            const SizedBox(width: 12),
+
+            // Info
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    config.displayName,
+                    style: TextStyle(
+                      color: colors.textPrimary,
+                      fontWeight: FontWeight.w500,
+                      fontSize: 14,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    config.value.length > 60
+                        ? '${config.value.substring(0, 60)}...'
+                        : config.value,
+                    style: TextStyle(color: colors.textTertiary, fontSize: 12),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (config.description != null) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      config.description!,
+                      style: TextStyle(color: colors.textTertiary.withValues(alpha: 0.7), fontSize: 11),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+
+            // Edit indicator
+            Icon(Icons.chevron_right, size: 20, color: colors.textTertiary),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Edit AI config dialog
+class _EditAIConfigDialog extends ConsumerStatefulWidget {
+  final AIPromptConfig config;
+
+  const _EditAIConfigDialog({required this.config});
+
+  @override
+  ConsumerState<_EditAIConfigDialog> createState() => _EditAIConfigDialogState();
+}
+
+class _EditAIConfigDialogState extends ConsumerState<_EditAIConfigDialog> {
+  late TextEditingController _valueController;
+  bool _isLoading = false;
+  String? _error;
+  bool _hasWarning = false;
+
+  // Default values for reset functionality
+  static const Map<String, String> _defaults = {
+    'clean_title_instruction': 'Concise, action-oriented title (max 10 words)',
+    'summary_instruction': 'Brief summary if description is long (max 20 words)',
+    'complexity_instruction': "1-10 scale (1=trivial like 'buy milk', 10=complex multi-step project)",
+    'due_date_instruction': "ISO 8601 date if mentioned (e.g., 'tomorrow' = next day, 'next week' = next Monday)",
+    'reminder_instruction': "ISO 8601 datetime if 'remind me' or similar phrase found",
+    'entities_instruction': 'person|place|organization',
+    'recurrence_instruction': "RRULE string if recurring pattern detected (e.g., 'every Monday')",
+    'suggested_group_instruction': "Category suggestion based on content (e.g., 'Work', 'Shopping', 'Health')",
+    'decompose_step_count': '2-5',
+    'decompose_rules': 'Each step should be a single, concrete action\nSteps should be in logical order\nUse action verbs (Call, Send, Research, Write, etc.)\nKeep each step under 10 words',
+  };
+
+  @override
+  void initState() {
+    super.initState();
+    _valueController = TextEditingController(text: widget.config.value);
+    _valueController.addListener(_checkForWarnings);
+  }
+
+  @override
+  void dispose() {
+    _valueController.removeListener(_checkForWarnings);
+    _valueController.dispose();
+    super.dispose();
+  }
+
+  void _checkForWarnings() {
+    final value = _valueController.text;
+    // Warn if value contains characters that might cause issues
+    final hasProblematicChars = value.contains('"') ||
+                                 value.contains('{') ||
+                                 value.contains('}') ||
+                                 value.contains('[') ||
+                                 value.contains(']');
+    if (hasProblematicChars != _hasWarning) {
+      setState(() => _hasWarning = hasProblematicChars);
+    }
+  }
+
+  void _resetToDefault() {
+    final defaultValue = _defaults[widget.config.key];
+    if (defaultValue != null) {
+      _valueController.text = defaultValue;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.flowColors;
+
+    return AlertDialog(
+      backgroundColor: colors.surface,
+      title: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: Colors.purple.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: const Icon(Icons.psychology, size: 20, color: Colors.purple),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              widget.config.displayName,
+              style: TextStyle(color: colors.textPrimary, fontSize: 18),
+            ),
+          ),
+        ],
+      ),
+      content: SizedBox(
+        width: 480,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Description
+            if (widget.config.description != null) ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: colors.background,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline, size: 16, color: colors.textTertiary),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        widget.config.description!,
+                        style: TextStyle(color: colors.textSecondary, fontSize: 13),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+
+            // Error message
+            if (_error != null) ...[
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: colors.error.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(_error!, style: TextStyle(color: colors.error, fontSize: 12)),
+              ),
+              const SizedBox(height: 12),
+            ],
+
+            // Warning about special characters
+            if (_hasWarning) ...[
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.warning_amber_rounded, size: 16, color: Colors.orange),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Special characters (" { } [ ]) are auto-escaped, but may affect prompt clarity.',
+                        style: TextStyle(color: Colors.orange.shade800, fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
+
+            // Value input with reset button
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Value',
+                    style: TextStyle(color: colors.textSecondary, fontSize: 12, fontWeight: FontWeight.w500),
+                  ),
+                ),
+                if (_defaults.containsKey(widget.config.key))
+                  TextButton.icon(
+                    onPressed: _resetToDefault,
+                    icon: Icon(Icons.restore, size: 14, color: colors.primary),
+                    label: Text('Reset', style: TextStyle(fontSize: 12, color: colors.primary)),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            TextField(
+              controller: _valueController,
+              maxLines: widget.config.key.contains('rules') ? 6 : 3,
+              style: TextStyle(color: colors.textPrimary, fontSize: 14),
+              decoration: InputDecoration(
+                hintText: 'Enter value...',
+                hintStyle: TextStyle(color: colors.textTertiary),
+                filled: true,
+                fillColor: colors.background,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide(color: colors.border),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide(color: colors.border),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide(color: colors.primary),
+                ),
+                contentPadding: const EdgeInsets.all(12),
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            // Last updated info
+            if (widget.config.updatedBy != null)
+              Text(
+                'Last updated by ${widget.config.updatedBy} on ${DateFormat('MMM d, yyyy').format(widget.config.updatedAt)}',
+                style: TextStyle(color: colors.textTertiary, fontSize: 11),
+              ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: Text('Cancel', style: TextStyle(color: colors.textSecondary)),
+        ),
+        FilledButton(
+          onPressed: _isLoading ? null : _saveChanges,
+          style: FilledButton.styleFrom(backgroundColor: colors.primary),
+          child: _isLoading
+              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+              : const Text('Save'),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _saveChanges() async {
+    final value = _valueController.text.trim();
+    if (value.isEmpty) {
+      setState(() => _error = 'Value cannot be empty');
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    try {
+      final aiConfigActions = ref.read(aiConfigActionsProvider);
+      await aiConfigActions.update(widget.config.key, value);
 
       if (mounted) {
         Navigator.of(context).pop(true);
