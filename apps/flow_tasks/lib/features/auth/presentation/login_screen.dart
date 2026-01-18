@@ -1,9 +1,17 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flow_tasks/core/constants/app_colors.dart';
 import 'package:flow_tasks/core/constants/app_spacing.dart';
 import 'package:flow_tasks/core/providers/providers.dart';
+
+// Dev accounts for quick login (only shown in debug mode)
+const _devAccounts = [
+  ('tupham@prepedu.com', 'Tu Pham'),
+  ('alice@prepedu.com', 'Alice'),
+];
+const _devPassword = 'devpass123';
 
 class LoginScreen extends ConsumerStatefulWidget {
   final bool isRegister;
@@ -61,6 +69,27 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           _passwordController.text,
         );
       }
+      if (mounted) {
+        context.go('/');
+      }
+    } catch (e) {
+      setState(() => _error = e.toString());
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  Future<void> _devLogin(String email) async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    try {
+      final authNotifier = ref.read(authStateProvider.notifier);
+      await authNotifier.login(email, _devPassword);
       if (mounted) {
         context.go('/');
       }
@@ -301,6 +330,32 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             : "Don't have an account? Create one",
                       ),
                     ),
+
+                    // Dev login buttons (debug only)
+                    if (kDebugMode) ...[
+                      const SizedBox(height: FlowSpacing.lg),
+                      const Divider(),
+                      const SizedBox(height: FlowSpacing.sm),
+                      Text(
+                        'Dev Login',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: FlowColors.lightTextSecondary,
+                            ),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: FlowSpacing.sm),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          for (final account in _devAccounts) ...[
+                            TextButton(
+                              onPressed: _isLoading ? null : () => _devLogin(account.$1),
+                              child: Text(account.$2),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ],
                     const SizedBox(height: FlowSpacing.xxl),
                     // Version info
                     Text(

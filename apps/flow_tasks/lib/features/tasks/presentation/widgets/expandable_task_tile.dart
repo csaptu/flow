@@ -286,9 +286,8 @@ class _ExpandableTaskTileState extends ConsumerState<ExpandableTaskTile>
       return 'Tomorrow';
     } else if (dateOnly == today.subtract(const Duration(days: 1))) {
       return 'Yesterday';
-    } else if (dateOnly.difference(today).inDays.abs() < 7) {
-      return DateFormat('EEEE').format(date);
     } else {
+      // All other dates: "Jan 15" format
       return DateFormat('MMM d').format(date);
     }
   }

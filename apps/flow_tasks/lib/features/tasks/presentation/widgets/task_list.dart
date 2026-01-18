@@ -157,17 +157,16 @@ class TaskList extends ConsumerWidget {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final dateOnly = DateTime(date.year, date.month, date.day);
-    final daysFromToday = dateOnly.difference(today).inDays;
 
-    if (daysFromToday < 7) {
-      // Within this week - show weekday name
-      return DateFormat('EEEE').format(date);
-    } else if (daysFromToday < 14) {
-      // Next week
-      return 'Next ${DateFormat('EEEE').format(date)}';
+    if (dateOnly == today) {
+      return 'Today';
+    } else if (dateOnly == today.subtract(const Duration(days: 1))) {
+      return 'Yesterday';
+    } else if (dateOnly == today.add(const Duration(days: 1))) {
+      return 'Tomorrow';
     } else {
-      // Further out - show full date
-      return DateFormat('EEEE, MMM d').format(date);
+      // All other dates: "Jan 15" format
+      return DateFormat('MMM d').format(date);
     }
   }
 
