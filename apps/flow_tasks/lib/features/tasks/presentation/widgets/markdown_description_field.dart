@@ -335,7 +335,11 @@ class _MarkdownDescriptionFieldState extends State<MarkdownDescriptionField> {
     // Rendered markdown view
     return GestureDetector(
       onTap: () {
-        _focusNode.requestFocus();
+        // First switch to edit mode, then request focus after build
+        setState(() => _isEditing = true);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _focusNode.requestFocus();
+        });
       },
       child: ConstrainedBox(
         constraints: const BoxConstraints(minHeight: 48),
