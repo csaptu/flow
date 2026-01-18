@@ -375,21 +375,25 @@ final inboxTasksProvider = Provider<List<Task>>((ref) {
   return ref.watch(allTasksProvider);
 });
 
-/// Today's tasks
+/// Today's tasks (includes overdue)
 final todayTasksProvider = Provider<List<Task>>((ref) {
   final tasks = ref.watch(tasksProvider);
   final now = DateTime.now();
   final today = DateTime(now.year, now.month, now.day);
   final tomorrow = today.add(const Duration(days: 1));
 
-  return tasks.where((t) {
+  final filtered = tasks.where((t) {
     if (t.dueDate == null || t.status == TaskStatus.completed) return false;
-    return t.dueDate!.isAfter(today.subtract(const Duration(seconds: 1))) &&
-        t.dueDate!.isBefore(tomorrow);
+    final dueDate = DateTime(t.dueDate!.year, t.dueDate!.month, t.dueDate!.day);
+    // Include overdue (before today) OR due today
+    return dueDate.isBefore(tomorrow);
   }).toList();
+  // Sort by due date ascending (overdue first, then today)
+  filtered.sort((a, b) => a.dueDate!.compareTo(b.dueDate!));
+  return filtered;
 });
 
-/// Next 7 days tasks (due within the next 7 days, including today)
+/// Next 7 days tasks (includes overdue + next 7 days)
 final next7DaysTasksProvider = Provider<List<Task>>((ref) {
   final tasks = ref.watch(tasksProvider);
   final now = DateTime.now();
@@ -399,10 +403,10 @@ final next7DaysTasksProvider = Provider<List<Task>>((ref) {
   final filtered = tasks.where((t) {
     if (t.dueDate == null || t.status == TaskStatus.completed || t.status == TaskStatus.cancelled) return false;
     final dueDate = DateTime(t.dueDate!.year, t.dueDate!.month, t.dueDate!.day);
-    return dueDate.isAfter(today.subtract(const Duration(days: 1))) &&
-        dueDate.isBefore(in7Days);
+    // Include overdue (before today) OR within next 7 days
+    return dueDate.isBefore(in7Days);
   }).toList();
-  // Sort by due date ascending
+  // Sort by due date ascending (overdue first)
   filtered.sort((a, b) => a.dueDate!.compareTo(b.dueDate!));
   return filtered;
 });

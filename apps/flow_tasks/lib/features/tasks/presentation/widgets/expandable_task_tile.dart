@@ -9,7 +9,7 @@ import 'package:flow_tasks/features/tasks/presentation/widgets/hashtag_text.dart
 import 'package:intl/intl.dart';
 
 /// Task tile that opens side panel on click (like TickTick)
-class ExpandableTaskTile extends ConsumerWidget {
+class ExpandableTaskTile extends ConsumerStatefulWidget {
   final Task task;
   final VoidCallback onComplete;
   final VoidCallback onUncomplete;
@@ -24,57 +24,132 @@ class ExpandableTaskTile extends ConsumerWidget {
   });
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<ExpandableTaskTile> createState() => _ExpandableTaskTileState();
+}
+
+class _ExpandableTaskTileState extends ConsumerState<ExpandableTaskTile>
+    with TickerProviderStateMixin {
+  // Animation controllers
+  late AnimationController _strikethroughController;
+  late AnimationController _flyAwayController;
+
+  // Animations
+  late Animation<double> _strikethroughAnimation;
+  late Animation<Offset> _flyAwayAnimation;
+  late Animation<double> _fadeAnimation;
+
+  bool _isAnimatingCompletion = false;
+
+  @override
+  void initState() {
+    super.initState();
+
+    // Strikethrough: 0.5s
+    _strikethroughController = AnimationController(
+      duration: const Duration(milliseconds: 500),
+      vsync: this,
+    );
+    _strikethroughAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _strikethroughController, curve: Curves.easeInOut),
+    );
+
+    // Fly away: 0.5s
+    _flyAwayController = AnimationController(
+      duration: const Duration(milliseconds: 500),
+      vsync: this,
+    );
+    _flyAwayAnimation = Tween<Offset>(
+      begin: Offset.zero,
+      end: const Offset(0, 2), // Fly down 2x the widget height
+    ).animate(CurvedAnimation(parent: _flyAwayController, curve: Curves.easeInCubic));
+    _fadeAnimation = Tween<double>(begin: 1.0, end: 0.0).animate(
+      CurvedAnimation(parent: _flyAwayController, curve: Curves.easeIn),
+    );
+  }
+
+  @override
+  void dispose() {
+    _strikethroughController.dispose();
+    _flyAwayController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _handleComplete() async {
+    if (_isAnimatingCompletion) return;
+
+    setState(() => _isAnimatingCompletion = true);
+
+    // 1. Strikethrough animation (0.5s)
+    await _strikethroughController.forward();
+
+    // 2. Wait (0.5s)
+    await Future.delayed(const Duration(milliseconds: 500));
+
+    // 3. Fly away animation (0.5s)
+    await _flyAwayController.forward();
+
+    // 4. Actually complete the task
+    widget.onComplete();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final colors = context.flowColors;
+    final task = widget.task;
     final isCompleted = task.isCompleted;
     final isSelected = ref.watch(selectedTaskIdProvider) == task.id;
 
-    Widget tile = Container(
-      margin: const EdgeInsets.only(bottom: 2),
-      decoration: BoxDecoration(
-        color: isSelected ? colors.sidebarSelected : Colors.transparent,
-        borderRadius: BorderRadius.circular(FlowSpacing.radiusSm),
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: () {
-            // Open side panel
-            ref.read(selectedTaskIdProvider.notifier).state = task.id;
-          },
-          borderRadius: BorderRadius.circular(FlowSpacing.radiusSm),
-          child: Padding(
-            padding: FlowSpacing.listItemPadding,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                // Checkbox
-                _BearCheckbox(
-                  isChecked: isCompleted,
-                  onTap: isCompleted ? onUncomplete : onComplete,
-                  priority: task.priority.value,
-                ),
-                const SizedBox(width: 12),
-
-                // Content
-                Expanded(
-                  child: _buildContent(colors, isCompleted),
-                ),
-
-                // Date on the right
-                if (task.dueDate != null)
-                  Padding(
-                    padding: const EdgeInsets.only(left: 8),
-                    child: Text(
-                      _formatDate(task.dueDate!),
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: _isToday(task.dueDate!) ? FontWeight.w600 : FontWeight.w400,
-                        color: task.isOverdue ? colors.error : colors.textTertiary,
-                      ),
+    Widget tile = SlideTransition(
+      position: _flyAwayAnimation,
+      child: FadeTransition(
+        opacity: _fadeAnimation,
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 2),
+          decoration: BoxDecoration(
+            color: isSelected ? colors.sidebarSelected : Colors.transparent,
+            borderRadius: BorderRadius.circular(FlowSpacing.radiusSm),
+          ),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: () {
+                ref.read(selectedTaskIdProvider.notifier).state = task.id;
+              },
+              borderRadius: BorderRadius.circular(FlowSpacing.radiusSm),
+              child: Padding(
+                padding: FlowSpacing.listItemPadding,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    // Checkbox
+                    _BearCheckbox(
+                      isChecked: isCompleted || _isAnimatingCompletion,
+                      onTap: isCompleted ? widget.onUncomplete : _handleComplete,
+                      priority: task.priority.value,
                     ),
-                  ),
-              ],
+                    const SizedBox(width: 12),
+
+                    // Content with animated strikethrough
+                    Expanded(
+                      child: _buildContent(colors, isCompleted),
+                    ),
+
+                    // Date on the right
+                    if (task.dueDate != null)
+                      Padding(
+                        padding: const EdgeInsets.only(left: 8),
+                        child: Text(
+                          _formatDate(task.dueDate!),
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: _isToday(task.dueDate!) ? FontWeight.w600 : FontWeight.w400,
+                            color: task.isOverdue ? colors.error : colors.textTertiary,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
             ),
           ),
         ),
@@ -82,11 +157,11 @@ class ExpandableTaskTile extends ConsumerWidget {
     );
 
     // Wrap with Dismissible for swipe-to-trash
-    if (onDelete != null) {
+    if (widget.onDelete != null && !_isAnimatingCompletion) {
       tile = Dismissible(
         key: Key('task_${task.id}'),
         direction: DismissDirection.endToStart,
-        onDismissed: (_) => onDelete!(),
+        onDismissed: (_) => widget.onDelete!(),
         background: Container(
           alignment: Alignment.centerRight,
           padding: const EdgeInsets.only(right: 20),
@@ -104,24 +179,28 @@ class ExpandableTaskTile extends ConsumerWidget {
   }
 
   Widget _buildContent(FlowColorScheme colors, bool isCompleted) {
-    // Remove hashtags from display title
+    final task = widget.task;
     final displayTitle = removeHashtags(task.aiSummary ?? task.title);
+    final showStrikethrough = isCompleted || _isAnimatingCompletion;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Title without hashtags
-        Text(
-          displayTitle.isEmpty ? task.title : displayTitle,
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: isCompleted ? FontWeight.w400 : FontWeight.w500,
-            color: isCompleted ? colors.textTertiary : colors.textPrimary,
-            decoration: isCompleted ? TextDecoration.lineThrough : null,
-            decorationColor: colors.textTertiary,
-          ),
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
+        // Title with animated strikethrough
+        AnimatedBuilder(
+          animation: _strikethroughAnimation,
+          builder: (context, child) {
+            return _AnimatedStrikethroughText(
+              text: displayTitle.isEmpty ? task.title : displayTitle,
+              progress: _isAnimatingCompletion ? _strikethroughAnimation.value : (isCompleted ? 1.0 : 0.0),
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: showStrikethrough ? FontWeight.w400 : FontWeight.w500,
+                color: showStrikethrough ? colors.textTertiary : colors.textPrimary,
+              ),
+              strikeColor: colors.textTertiary,
+            );
+          },
         ),
 
         // Metadata row
@@ -134,12 +213,12 @@ class ExpandableTaskTile extends ConsumerWidget {
   }
 
   bool get _hasMetadata =>
-      task.groupName != null || (task.description != null && task.description!.isNotEmpty);
+      widget.task.groupName != null || (widget.task.description != null && widget.task.description!.isNotEmpty);
 
   Widget _buildMetadataRow(FlowColorScheme colors) {
+    final task = widget.task;
     final widgets = <Widget>[];
 
-    // Show first 2 lines of description (without hashtags)
     if (task.description != null && task.description!.isNotEmpty) {
       final descriptionPreview = _getDescriptionPreview(task.description!);
       if (descriptionPreview.isNotEmpty) {
@@ -156,25 +235,17 @@ class ExpandableTaskTile extends ConsumerWidget {
       }
     }
 
-    // List name (from hashtag) on separate line
     if (task.groupName != null) {
       widgets.add(Padding(
         padding: EdgeInsets.only(top: widgets.isNotEmpty ? 4 : 0),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              Icons.tag,
-              size: 12,
-              color: colors.textTertiary,
-            ),
+            Icon(Icons.tag, size: 12, color: colors.textTertiary),
             const SizedBox(width: 4),
             Text(
               task.groupName!,
-              style: TextStyle(
-                fontSize: 12,
-                color: colors.textTertiary,
-              ),
+              style: TextStyle(fontSize: 12, color: colors.textTertiary),
             ),
           ],
         ),
@@ -187,13 +258,9 @@ class ExpandableTaskTile extends ConsumerWidget {
     );
   }
 
-  /// Get first 2 lines of description, removing hashtags
   String _getDescriptionPreview(String description) {
-    // Remove hashtags from description
     final cleaned = removeHashtags(description).trim();
     if (cleaned.isEmpty) return '';
-
-    // Get first 2 lines (approximately 120 chars max)
     final lines = cleaned.split('\n').take(2).join(' ').trim();
     if (lines.length > 120) {
       return '${lines.substring(0, 117)}...';
@@ -224,6 +291,74 @@ class ExpandableTaskTile extends ConsumerWidget {
     } else {
       return DateFormat('MMM d').format(date);
     }
+  }
+}
+
+/// Custom widget that draws strikethrough progressively from left to right
+class _AnimatedStrikethroughText extends StatelessWidget {
+  final String text;
+  final double progress; // 0.0 to 1.0
+  final TextStyle style;
+  final Color strikeColor;
+
+  const _AnimatedStrikethroughText({
+    required this.text,
+    required this.progress,
+    required this.style,
+    required this.strikeColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      foregroundPainter: _StrikethroughPainter(
+        progress: progress,
+        color: strikeColor,
+        textStyle: style,
+        text: text,
+      ),
+      child: Text(
+        text,
+        style: style,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+  }
+}
+
+class _StrikethroughPainter extends CustomPainter {
+  final double progress;
+  final Color color;
+  final TextStyle textStyle;
+  final String text;
+
+  _StrikethroughPainter({
+    required this.progress,
+    required this.color,
+    required this.textStyle,
+    required this.text,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (progress <= 0) return;
+
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 1.5
+      ..style = PaintingStyle.stroke;
+
+    // Draw line from left to right based on progress
+    final y = size.height / 2;
+    final endX = size.width * progress;
+
+    canvas.drawLine(Offset(0, y), Offset(endX, y), paint);
+  }
+
+  @override
+  bool shouldRepaint(_StrikethroughPainter oldDelegate) {
+    return oldDelegate.progress != progress;
   }
 }
 
