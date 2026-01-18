@@ -1,4 +1,5 @@
 # Stage 1: Build Flutter web app
+# This Dockerfile is built when Railway root is set to repo root
 FROM ghcr.io/cirruslabs/flutter:3.24.3 AS builder
 
 WORKDIR /app

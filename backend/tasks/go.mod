@@ -5,6 +5,7 @@ go 1.22
 require (
 	github.com/csaptu/flow/common v0.0.0
 	github.com/csaptu/flow/pkg v0.0.0
+	github.com/csaptu/flow/shared v0.0.0
 	github.com/gofiber/fiber/v2 v2.52.5
 	github.com/golang-migrate/migrate/v4 v4.17.0
 	github.com/google/uuid v1.6.0
@@ -62,4 +63,5 @@ require (
 replace (
 	github.com/csaptu/flow/common => ../common
 	github.com/csaptu/flow/pkg => ../pkg
+	github.com/csaptu/flow/shared => ../shared
 )

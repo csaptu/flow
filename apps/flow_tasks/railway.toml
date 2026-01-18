@@ -1,6 +1,9 @@
+# NOTE: Railway "Root Directory" setting should be EMPTY (not "apps/flow_tasks")
+# so the build context includes the entire monorepo (packages/, apps/flow_tasks/)
 [build]
 builder = "DOCKERFILE"
-dockerfilePath = "Dockerfile"
+dockerfilePath = "apps/flow_tasks/Dockerfile"
+watchPatterns = ["apps/flow_tasks/**", "packages/**"]
 
 [deploy]
 healthcheckPath = "/"
