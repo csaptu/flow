@@ -74,7 +74,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       body: Row(
         children: [
           // Sidebar (hide on very narrow screens)
-          if (screenWidth >= 600)
+          if (screenWidth >= 450)
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -380,7 +380,7 @@ class _Header extends ConsumerWidget {
     final lists = ref.watch(listsProvider);
     final groupByDate = ref.watch(groupByDateProvider);
     final screenWidth = MediaQuery.of(context).size.width;
-    final isNarrowScreen = screenWidth < 600;
+    final isNarrowScreen = screenWidth < 450;
 
     // Find list name if a list is selected
     String title;

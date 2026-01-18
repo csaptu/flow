@@ -307,61 +307,64 @@ class _MarkdownDescriptionFieldState extends State<MarkdownDescriptionField> {
 
     // Show editor when editing or empty, show rendered markdown otherwise
     if (_isEditing || !hasContent || widget.readOnly) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          KeyboardListener(
-            focusNode: FocusNode(),
-            onKeyEvent: _handleKeyEvent,
-            child: TextField(
-              controller: _controller,
-              focusNode: _focusNode,
-              readOnly: widget.readOnly,
-              style: TextStyle(
-                fontSize: 15,
-                color: colors.textSecondary,
-                height: 1.5,
-              ),
-              decoration: InputDecoration(
-                border: InputBorder.none,
-                enabledBorder: InputBorder.none,
-                focusedBorder: InputBorder.none,
-                hintText: widget.hintText,
-                hintStyle: TextStyle(color: colors.textPlaceholder),
-                contentPadding: EdgeInsets.zero,
-                isDense: true,
-                filled: false,
-              ),
-              maxLines: null,
-              minLines: 2,
-              onChanged: widget.onChanged,
-              onTapOutside: (_) {
-                _focusNode.unfocus();
-              },
-            ),
-          ),
-          // Formatting toolbar - only show when editing and has focus
-          if (_isEditing)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Row(
-                children: [
-                  _FormatButton(
-                    icon: Icons.format_bold,
-                    tooltip: 'Bold (⌘B)',
-                    onTap: _toggleBold,
-                  ),
-                  const SizedBox(width: 4),
-                  _FormatButton(
-                    icon: Icons.format_italic,
-                    tooltip: 'Italic (⌘I)',
-                    onTap: _toggleItalic,
-                  ),
-                ],
+      return TapRegion(
+        onTapOutside: (_) {
+          // Only unfocus if tap is truly outside (not on toolbar)
+          _focusNode.unfocus();
+        },
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            KeyboardListener(
+              focusNode: FocusNode(),
+              onKeyEvent: _handleKeyEvent,
+              child: TextField(
+                controller: _controller,
+                focusNode: _focusNode,
+                readOnly: widget.readOnly,
+                style: TextStyle(
+                  fontSize: 15,
+                  color: colors.textSecondary,
+                  height: 1.5,
+                ),
+                decoration: InputDecoration(
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  hintText: widget.hintText,
+                  hintStyle: TextStyle(color: colors.textPlaceholder),
+                  contentPadding: EdgeInsets.zero,
+                  isDense: true,
+                  filled: false,
+                ),
+                maxLines: null,
+                minLines: 2,
+                onChanged: widget.onChanged,
               ),
             ),
-        ],
+            // Formatting toolbar - only show when editing and has focus
+            if (_isEditing)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Row(
+                  children: [
+                    _FormatButton(
+                      icon: Icons.format_bold,
+                      tooltip: 'Bold (⌘B)',
+                      onTap: _toggleBold,
+                    ),
+                    const SizedBox(width: 4),
+                    _FormatButton(
+                      icon: Icons.format_italic,
+                      tooltip: 'Italic (⌘I)',
+                      onTap: _toggleItalic,
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
       );
     }
 
