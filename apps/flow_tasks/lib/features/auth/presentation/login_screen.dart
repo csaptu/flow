@@ -11,7 +11,6 @@ const _devAccounts = [
   ('tupham@prepedu.com', 'Tu Pham'),
   ('alice@prepedu.com', 'Alice'),
 ];
-const _devPassword = 'devpass123';
 
 class LoginScreen extends ConsumerStatefulWidget {
   final bool isRegister;
@@ -89,7 +88,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
     try {
       final authNotifier = ref.read(authStateProvider.notifier);
-      await authNotifier.login(email, _devPassword);
+      await authNotifier.devLogin(email);
       if (mounted) {
         context.go('/');
       }

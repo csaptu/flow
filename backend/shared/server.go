@@ -129,6 +129,7 @@ func (s *Server) registerRoutes() {
 	authRoutes := v1.Group("/auth")
 	authRoutes.Post("/register", authHandler.Register)
 	authRoutes.Post("/login", authHandler.Login)
+	authRoutes.Post("/dev-login", authHandler.DevLogin) // Dev accounts only - no password
 	authRoutes.Post("/refresh", authHandler.Refresh)
 	authRoutes.Post("/logout", authHandler.Logout)
 	authRoutes.Post("/google", authHandler.GoogleOAuth)
@@ -141,6 +142,7 @@ func (s *Server) registerRoutes() {
 		JWTSecret: s.config.Auth.JWTSecret,
 		SkipPaths: []string{
 			"/api/v1/auth/login",
+			"/api/v1/auth/dev-login",
 			"/api/v1/auth/register",
 			"/api/v1/auth/refresh",
 			"/api/v1/auth/logout",

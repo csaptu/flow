@@ -139,7 +139,8 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
   @override
   Widget build(BuildContext context) {
     final colors = context.flowColors;
-    final task = widget.task;
+    // Watch the task from provider to get live updates (e.g., after date change)
+    final task = ref.watch(selectedTaskProvider) ?? widget.task;
 
     return Container(
       decoration: BoxDecoration(

@@ -100,10 +100,14 @@ class _MarkdownDescriptionFieldState extends State<MarkdownDescriptionField> {
 
   void _toggleBold() {
     _wrapSelection('**', '**');
+    // Re-focus after formatting
+    _focusNode.requestFocus();
   }
 
   void _toggleItalic() {
     _wrapSelection('*', '*');
+    // Re-focus after formatting
+    _focusNode.requestFocus();
   }
 
   void _wrapSelection(String before, String after) {
@@ -695,18 +699,23 @@ class _FormatButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = context.flowColors;
 
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(4),
-      child: Tooltip(
-        message: tooltip,
-        child: Container(
-          padding: const EdgeInsets.all(6),
-          decoration: BoxDecoration(
-            color: colors.surfaceVariant.withAlpha(100),
-            borderRadius: BorderRadius.circular(4),
+    return GestureDetector(
+      // Use onTapDown to trigger before focus changes
+      onTapDown: (_) => onTap(),
+      // Prevent the tap from stealing focus
+      behavior: HitTestBehavior.opaque,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: Tooltip(
+          message: tooltip,
+          child: Container(
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: colors.surfaceVariant.withAlpha(100),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Icon(icon, size: 16, color: colors.textSecondary),
           ),
-          child: Icon(icon, size: 16, color: colors.textSecondary),
         ),
       ),
     );

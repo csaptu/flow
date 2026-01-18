@@ -267,6 +267,25 @@ class AuthStateNotifier extends StateNotifier<AuthState> {
     }
   }
 
+  Future<void> devLogin(String email) async {
+    state = state.copyWith(status: AuthStatus.loading);
+
+    try {
+      final authService = _ref.read(authServiceProvider);
+      final response = await authService.devLogin(email: email);
+      state = state.copyWith(
+        status: AuthStatus.authenticated,
+        user: response.user,
+      );
+    } catch (e) {
+      state = state.copyWith(
+        status: AuthStatus.unauthenticated,
+        error: e.toString(),
+      );
+      rethrow;
+    }
+  }
+
   Future<void> loginWithGoogle() async {
     state = state.copyWith(status: AuthStatus.loading);
 

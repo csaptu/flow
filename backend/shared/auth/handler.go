@@ -555,6 +555,73 @@ func (h *Handler) MicrosoftOAuth(c *fiber.Ctx) error {
 	return httputil.ServiceUnavailable(c, "Microsoft OAuth not yet implemented")
 }
 
+// DevLoginRequest represents a dev login request
+type DevLoginRequest struct {
+	Email string `json:"email"`
+}
+
+// Dev accounts that can bypass password
+var devAccounts = map[string]string{
+	"tupham@prepedu.com": "Tu Pham",
+	"alice@prepedu.com":  "Alice",
+}
+
+// DevLogin handles passwordless login for dev accounts (dev/debug only)
+func (h *Handler) DevLogin(c *fiber.Ctx) error {
+	var req DevLoginRequest
+	if err := c.BodyParser(&req); err != nil {
+		return httputil.BadRequest(c, "invalid request body")
+	}
+
+	// Check if email is a dev account
+	name, ok := devAccounts[req.Email]
+	if !ok {
+		return httputil.Unauthorized(c, "not a dev account")
+	}
+
+	// Find or create user
+	var user models.User
+	err := h.db.QueryRow(c.Context(),
+		`SELECT id, email, email_verified, name, avatar_url, created_at, updated_at
+		 FROM users WHERE email = $1 AND deleted_at IS NULL`,
+		req.Email,
+	).Scan(&user.ID, &user.Email, &user.EmailVerified, &user.Name, &user.AvatarURL,
+		&user.CreatedAt, &user.UpdatedAt)
+
+	if err == pgx.ErrNoRows {
+		// Create user
+		userID := uuid.New()
+		now := time.Now()
+		_, err = h.db.Exec(c.Context(),
+			`INSERT INTO users (id, email, name, email_verified, created_at, updated_at)
+			 VALUES ($1, $2, $3, $4, $5, $6)`,
+			userID, req.Email, name, true, now, now,
+		)
+		if err != nil {
+			return httputil.InternalError(c, "failed to create dev user")
+		}
+		user = models.User{
+			ID:            userID,
+			Email:         req.Email,
+			Name:          name,
+			EmailVerified: true,
+			CreatedAt:     now,
+			UpdatedAt:     now,
+		}
+	} else if err != nil {
+		return httputil.InternalError(c, "database error")
+	}
+
+	// Update last login
+	_, _ = h.db.Exec(c.Context(),
+		"UPDATE users SET last_login_at = $1 WHERE id = $2",
+		time.Now(), user.ID,
+	)
+
+	// Issue tokens
+	return h.issueTokensAndRespond(c, user.ID, user.Email, user.Name)
+}
+
 // Helper methods
 
 func (h *Handler) issueTokensAndRespond(c *fiber.Ctx, userID uuid.UUID, email, name string) error {

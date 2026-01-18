@@ -60,6 +60,24 @@ class AuthService {
     throw ApiException.fromResponse(response.data);
   }
 
+  /// Dev login (no password required for whitelisted accounts)
+  Future<AuthResponse> devLogin({required String email}) async {
+    final response = await _dio.post('/auth/dev-login', data: {
+      'email': email,
+    });
+
+    if (response.data['success'] == true) {
+      final authResponse = AuthResponse.fromJson(response.data['data']);
+      await _client.setTokens(
+        authResponse.accessToken,
+        authResponse.refreshToken,
+      );
+      return authResponse;
+    }
+
+    throw ApiException.fromResponse(response.data);
+  }
+
   /// Get current user
   Future<User> getCurrentUser() async {
     final response = await _dio.get('/auth/me');
