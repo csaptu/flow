@@ -45,12 +45,13 @@ class _QuickAddBarState extends ConsumerState<QuickAddBar> {
       final now = DateTime.now();
       final today = DateTime(now.year, now.month, now.day);
       final actions = ref.read(taskActionsProvider);
-      await actions.create(title: text.trim(), dueDate: today);
+      final newTask = await actions.create(title: text.trim(), dueDate: today);
 
       _controller.clear();
       _focusNode.unfocus();
 
-      // No need to invalidate - local store auto-updates UI
+      // Open the task detail panel for the new task
+      ref.read(selectedTaskIdProvider.notifier).state = newTask.id;
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

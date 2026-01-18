@@ -41,13 +41,23 @@ class _MarkdownDescriptionFieldState extends State<MarkdownDescriptionField> {
   late TextEditingController _controller;
   late FocusNode _focusNode;
   bool _isEditing = false;
+  TextSelection? _lastSelection;
 
   @override
   void initState() {
     super.initState();
     _controller = TextEditingController(text: widget.initialValue ?? '');
+    _controller.addListener(_onSelectionChanged);
     _focusNode = FocusNode();
     _focusNode.addListener(_onFocusChanged);
+  }
+
+  void _onSelectionChanged() {
+    final selection = _controller.selection;
+    // Save selection if it has a range (text is selected)
+    if (selection.isValid && !selection.isCollapsed) {
+      _lastSelection = selection;
+    }
   }
 
   @override
@@ -61,6 +71,7 @@ class _MarkdownDescriptionFieldState extends State<MarkdownDescriptionField> {
   @override
   void dispose() {
     _focusNode.removeListener(_onFocusChanged);
+    _controller.removeListener(_onSelectionChanged);
     _focusNode.dispose();
     _controller.dispose();
     super.dispose();
@@ -100,21 +111,39 @@ class _MarkdownDescriptionFieldState extends State<MarkdownDescriptionField> {
 
   void _toggleBold() {
     _wrapSelection('**', '**');
+    _lastSelection = null; // Clear after use
     // Re-focus after formatting
-    _focusNode.requestFocus();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _focusNode.requestFocus();
+    });
   }
 
   void _toggleItalic() {
     _wrapSelection('*', '*');
+    _lastSelection = null; // Clear after use
     // Re-focus after formatting
-    _focusNode.requestFocus();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _focusNode.requestFocus();
+    });
   }
 
   void _wrapSelection(String before, String after) {
     final text = _controller.text;
-    final selection = _controller.selection;
+    var selection = _controller.selection;
 
-    if (!selection.isValid) return;
+    // Use last saved selection if current is collapsed (button click cleared it)
+    if (!selection.isValid || selection.isCollapsed) {
+      if (_lastSelection != null && _lastSelection!.isValid && !_lastSelection!.isCollapsed) {
+        // Validate the saved selection is still within text bounds
+        if (_lastSelection!.start <= text.length && _lastSelection!.end <= text.length) {
+          selection = _lastSelection!;
+        } else {
+          return; // Can't use invalid selection
+        }
+      } else {
+        return; // No valid selection to format
+      }
+    }
 
     final selectedText = selection.textInside(text);
 
