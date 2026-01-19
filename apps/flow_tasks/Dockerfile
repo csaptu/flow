@@ -16,11 +16,16 @@ RUN flutter create . --platforms=web --project-name=flow_tasks 2>/dev/null || tr
 # Get dependencies
 RUN flutter pub get
 
-# Build for web
-ARG API_BASE_URL=https://tasks-api-production.up.railway.app
-ENV API_BASE_URL=$API_BASE_URL
+# Build for web - API URLs for production
+# Each service has its own URL - shared handles auth, tasks handles tasks
+ARG TASKS_API_URL=https://tasks-api-production.up.railway.app/api/v1
+ARG SHARED_API_URL=https://shared-api-production.up.railway.app/api/v1
+ARG PROJECTS_API_URL=https://projects-api-production.up.railway.app/api/v1
 
-RUN flutter build web --release --dart-define=API_BASE_URL=$API_BASE_URL
+RUN flutter build web --release \
+    --dart-define=TASKS_API_URL=$TASKS_API_URL \
+    --dart-define=SHARED_API_URL=$SHARED_API_URL \
+    --dart-define=PROJECTS_API_URL=$PROJECTS_API_URL
 
 # Stage 2: Serve with nginx
 FROM nginx:alpine
