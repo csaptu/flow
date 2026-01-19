@@ -273,7 +273,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("Server.Port", 8080)
 	v.SetDefault("Server.ShutdownTimeout", 10*time.Second)
 	v.SetDefault("Server.Environment", "development")
-	v.SetDefault("Server.AllowedOrigins", "https://flow-tasks-web-production.up.railway.app,https://flow-projects-web-production.up.railway.app,https://flowapp.io,https://app.flowapp.io")
+	v.SetDefault("Server.AllowedOrigins", "https://flow-tasks-web-production.up.railway.app,https://flow-projects-web-production.up.railway.app,https://flowapp.io,https://app.flowapp.io,https://flowtasks.ai,https://www.flowtasks.ai")
 
 	// Database defaults
 	v.SetDefault("Databases.Shared.Host", "localhost")
