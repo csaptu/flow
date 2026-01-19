@@ -17,7 +17,7 @@ RUN flutter create . --platforms=web --project-name=flow_tasks 2>/dev/null || tr
 RUN flutter pub get
 
 # Build for web
-ARG API_BASE_URL=https://shared-api-production.up.railway.app
+ARG API_BASE_URL=https://tasks-api-production.up.railway.app
 ENV API_BASE_URL=$API_BASE_URL
 
 RUN flutter build web --release --dart-define=API_BASE_URL=$API_BASE_URL

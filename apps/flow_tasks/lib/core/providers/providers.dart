@@ -15,8 +15,18 @@ const _googleClientId = '868169256843-ke0firpbckajqd06adpdc2a1rgo14ejt.apps.goog
 
 // API Client
 final apiClientProvider = Provider<FlowApiClient>((ref) {
-  // Use development config for now
-  return FlowApiClient(config: ApiConfig.development());
+  const baseUrl = String.fromEnvironment(
+    'API_BASE_URL',
+    defaultValue: 'http://localhost:8080',
+  );
+
+  return FlowApiClient(
+    config: ApiConfig(
+      sharedServiceUrl: '$baseUrl/api/v1',
+      tasksServiceUrl: '$baseUrl/api/v1',
+      projectsServiceUrl: '$baseUrl/api/v1',
+    ),
+  );
 });
 
 // Services
@@ -510,6 +520,7 @@ class TaskActions {
     String? status,
     List<String>? tags,
     bool? skipAutoCleanup,
+    String? parentId, // Set to empty string to remove parent
   }) async {
     final task = await _store.updateTask(
       taskId,
@@ -520,6 +531,7 @@ class TaskActions {
       status: status,
       tags: tags,
       skipAutoCleanup: skipAutoCleanup,
+      parentId: parentId,
     );
 
     // Sync in background - lists are now derived from tasks dynamically
@@ -625,6 +637,15 @@ final selectedTaskProvider = Provider<Task?>((ref) {
 
   final tasks = ref.watch(tasksProvider);
   return tasks.where((t) => t.id == taskId).firstOrNull;
+});
+
+/// Fetches subtasks (children) for a specific task
+final subtasksProvider = FutureProvider.autoDispose.family<List<Task>, String>((ref, taskId) async {
+  final authState = ref.watch(authStateProvider);
+  if (authState.status != AuthStatus.authenticated) return [];
+
+  final service = ref.watch(tasksServiceProvider);
+  return await service.getChildren(taskId);
 });
 
 // =====================================================
@@ -901,11 +922,13 @@ class AIActions {
   TasksService get _service => _ref.read(tasksServiceProvider);
   LocalTaskStore get _store => _ref.read(localTaskStoreProvider.notifier);
 
-  /// AI: Decompose a task into steps
+  /// AI: Decompose a task into subtasks
   Future<Task> decompose(String taskId) async {
     final task = await _service.aiDecompose(taskId);
     // Update the local store with the new task data
     _store.updateTaskFromServer(task);
+    // Invalidate subtasks provider to refresh the list
+    _ref.invalidate(subtasksProvider(taskId));
     return task;
   }
 
