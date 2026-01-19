@@ -42,5 +42,5 @@ COPY --from=builder /app/tasks/database/migrations ./database/migrations
 
 EXPOSE 8081
 
-# Run migrations then start server
-CMD ["sh", "-c", "./migrate up && ./tasks-service"]
+# Run migrations then start server (continue even if migrations report no change)
+CMD ["sh", "-c", "./migrate up || true; ./tasks-service"]
