@@ -10,11 +10,13 @@ import 'package:flow_tasks/features/tasks/presentation/widgets/rich_description_
 import 'package:intl/intl.dart';
 
 /// Task tile that opens side panel on click (like TickTick)
+/// Supports drag-and-drop to make tasks into subtasks
 class ExpandableTaskTile extends ConsumerStatefulWidget {
   final Task task;
   final VoidCallback onComplete;
   final VoidCallback onUncomplete;
   final VoidCallback? onDelete;
+  final Function(Task draggedTask, Task targetTask)? onDropInto;
 
   const ExpandableTaskTile({
     super.key,
@@ -22,6 +24,7 @@ class ExpandableTaskTile extends ConsumerStatefulWidget {
     required this.onComplete,
     required this.onUncomplete,
     this.onDelete,
+    this.onDropInto,
   });
 
   @override
@@ -40,6 +43,7 @@ class _ExpandableTaskTileState extends ConsumerState<ExpandableTaskTile>
   late Animation<double> _fadeAnimation;
 
   bool _isAnimatingCompletion = false;
+  bool _isDragTarget = false; // Highlight when another task is dragged over
 
   @override
   void initState() {
@@ -104,56 +108,88 @@ class _ExpandableTaskTileState extends ConsumerState<ExpandableTaskTile>
       position: _flyAwayAnimation,
       child: FadeTransition(
         opacity: _fadeAnimation,
-        child: Container(
-          margin: const EdgeInsets.only(bottom: 2),
-          decoration: BoxDecoration(
-            color: isSelected ? colors.sidebarSelected : Colors.transparent,
-            borderRadius: BorderRadius.circular(FlowSpacing.radiusSm),
-          ),
-          child: Material(
-            color: Colors.transparent,
-            child: InkWell(
-              onTap: () {
-                ref.read(isNewlyCreatedTaskProvider.notifier).state = false;
-                ref.read(selectedTaskIdProvider.notifier).state = task.id;
-              },
-              borderRadius: BorderRadius.circular(FlowSpacing.radiusSm),
-              child: Padding(
-                padding: FlowSpacing.listItemPadding,
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    // Checkbox
-                    _BearCheckbox(
-                      isChecked: isCompleted || _isAnimatingCompletion,
-                      onTap: isCompleted ? widget.onUncomplete : _handleComplete,
-                      priority: task.priority.value,
+        child: DragTarget<Task>(
+          onWillAcceptWithDetails: (details) {
+            final draggedTask = details.data;
+            // Can accept if:
+            // - Not dropping on itself
+            // - This task is a root task (depth 0)
+            // - Dragged task has no children (can become a subtask)
+            // - This task has no children yet (for simplicity)
+            final canAccept = draggedTask.id != task.id &&
+                task.depth == 0 &&
+                draggedTask.childrenCount == 0;
+            if (canAccept && !_isDragTarget) {
+              setState(() => _isDragTarget = true);
+            }
+            return canAccept;
+          },
+          onLeave: (_) {
+            if (_isDragTarget) {
+              setState(() => _isDragTarget = false);
+            }
+          },
+          onAcceptWithDetails: (details) {
+            setState(() => _isDragTarget = false);
+            widget.onDropInto?.call(details.data, task);
+          },
+          builder: (context, candidateData, rejectedData) {
+            return Container(
+              margin: const EdgeInsets.only(bottom: 2),
+              decoration: BoxDecoration(
+                color: _isDragTarget
+                    ? colors.primary.withAlpha(40)
+                    : (isSelected ? colors.sidebarSelected : Colors.transparent),
+                borderRadius: BorderRadius.circular(FlowSpacing.radiusSm),
+                border: _isDragTarget
+                    ? Border.all(color: colors.primary, width: 2)
+                    : null,
+              ),
+              child: LongPressDraggable<Task>(
+                data: task,
+                delay: const Duration(milliseconds: 150),
+                feedback: Material(
+                  elevation: 8,
+                  shadowColor: Colors.black26,
+                  borderRadius: BorderRadius.circular(FlowSpacing.radiusSm),
+                  child: Container(
+                    width: 280,
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: colors.surface,
+                      borderRadius: BorderRadius.circular(FlowSpacing.radiusSm),
                     ),
-                    const SizedBox(width: 12),
-
-                    // Content with animated strikethrough
-                    Expanded(
-                      child: _buildContent(colors, isCompleted),
-                    ),
-
-                    // Date on the right
-                    if (task.dueDate != null)
-                      Padding(
-                        padding: const EdgeInsets.only(left: 8),
-                        child: Text(
-                          _formatDate(task.dueDate!),
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: _isToday(task.dueDate!) ? FontWeight.w600 : FontWeight.w400,
-                            color: task.isOverdue ? colors.error : colors.textTertiary,
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.drag_indicator,
+                          size: 16,
+                          color: colors.textTertiary,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            task.title,
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: colors.textPrimary,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                      ),
-                  ],
+                      ],
+                    ),
+                  ),
                 ),
+                childWhenDragging: Opacity(
+                  opacity: 0.4,
+                  child: _buildTileContent(colors, task, isCompleted, isSelected),
+                ),
+                child: _buildTileContent(colors, task, isCompleted, isSelected),
               ),
-            ),
-          ),
+            );
+          },
         ),
       ),
     );
@@ -178,6 +214,86 @@ class _ExpandableTaskTileState extends ConsumerState<ExpandableTaskTile>
     }
 
     return tile;
+  }
+
+  /// Build the main tile content (used in draggable and non-draggable states)
+  Widget _buildTileContent(FlowColorScheme colors, Task task, bool isCompleted, bool isSelected) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () {
+          ref.read(isNewlyCreatedTaskProvider.notifier).state = false;
+          ref.read(selectedTaskIdProvider.notifier).state = task.id;
+        },
+        borderRadius: BorderRadius.circular(FlowSpacing.radiusSm),
+        child: Padding(
+          padding: FlowSpacing.listItemPadding,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              // Drag handle (always visible at the start)
+              Icon(
+                Icons.drag_indicator,
+                size: 18,
+                color: colors.textTertiary.withValues(alpha: 0.5),
+              ),
+              const SizedBox(width: 4),
+
+              // Checkbox
+              _BearCheckbox(
+                isChecked: isCompleted || _isAnimatingCompletion,
+                onTap: isCompleted ? widget.onUncomplete : _handleComplete,
+                priority: task.priority.value,
+              ),
+              const SizedBox(width: 12),
+
+              // Content with animated strikethrough
+              Expanded(
+                child: _buildContent(colors, isCompleted),
+              ),
+
+              // Subtask count indicator
+              if (task.childrenCount > 0)
+                Padding(
+                  padding: const EdgeInsets.only(left: 8),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.checklist_rounded,
+                        size: 14,
+                        color: colors.textTertiary,
+                      ),
+                      const SizedBox(width: 2),
+                      Text(
+                        '${task.childrenCount}',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: colors.textTertiary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+              // Date on the right
+              if (task.dueDate != null)
+                Padding(
+                  padding: const EdgeInsets.only(left: 8),
+                  child: Text(
+                    _formatDate(task.dueDate!),
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: _isToday(task.dueDate!) ? FontWeight.w600 : FontWeight.w400,
+                      color: task.isOverdue ? colors.error : colors.textTertiary,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _buildContent(FlowColorScheme colors, bool isCompleted) {
