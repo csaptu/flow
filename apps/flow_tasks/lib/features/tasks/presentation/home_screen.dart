@@ -29,6 +29,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   static const _minSidebarWidth = 180.0;
   static const _maxSidebarWidth = 400.0;
   bool _isShowingSheet = false;
+  String? _sheetTaskId; // Track which task is shown in bottom sheet
 
   @override
   Widget build(BuildContext context) {
@@ -36,6 +37,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final selectedTask = ref.watch(selectedTaskProvider);
     final screenWidth = MediaQuery.of(context).size.width;
     final isWideScreen = screenWidth >= _wideScreenBreakpoint;
+
+    // When resizing from narrow to wide while bottom sheet is open,
+    // close the sheet and restore task selection for side panel
+    if (isWideScreen && _isShowingSheet && _sheetTaskId != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_isShowingSheet && mounted) {
+          final taskId = _sheetTaskId;
+          Navigator.of(context).pop(); // Close bottom sheet
+          // Restore selection so side panel shows
+          ref.read(selectedTaskIdProvider.notifier).state = taskId;
+        }
+      });
+    }
 
     // Show bottom sheet on narrow screens when task is selected
     if (!isWideScreen && selectedTask != null) {
@@ -140,6 +154,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       return;
     }
     _isShowingSheet = true;
+    _sheetTaskId = task.id; // Track which task is in the sheet
     debugPrint('[TaskSheet] Showing bottom sheet for task: ${task.id}');
 
     showModalBottomSheet(
@@ -153,9 +168,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     ).whenComplete(() {
       debugPrint('[TaskSheet] Bottom sheet completed/dismissed');
       _isShowingSheet = false;
-      // Clear selection when sheet is dismissed
+      _sheetTaskId = null;
+      // Clear selection when sheet is dismissed (unless transitioning to wide screen)
       if (mounted) {
-        ref.read(selectedTaskIdProvider.notifier).state = null;
+        final screenWidth = MediaQuery.of(context).size.width;
+        final isWideScreen = screenWidth >= _wideScreenBreakpoint;
+        if (!isWideScreen) {
+          ref.read(selectedTaskIdProvider.notifier).state = null;
+        }
       }
     });
 

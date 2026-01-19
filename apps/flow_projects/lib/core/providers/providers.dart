@@ -1,61 +1,36 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flow_api/flow_api.dart';
 import 'package:flow_models/flow_models.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 // ============================================================================
-// Storage & API Client
+// API Client
 // ============================================================================
 
-final secureStorageProvider = Provider<FlutterSecureStorage>((ref) {
-  return const FlutterSecureStorage();
-});
+final apiClientProvider = Provider<FlowApiClient>((ref) {
+  final baseUrl = const String.fromEnvironment(
+    'API_BASE_URL',
+    defaultValue: 'http://localhost:8080',
+  );
 
-final apiClientProvider = Provider<ApiClient>((ref) {
-  return ApiClient(
-    baseUrl: const String.fromEnvironment(
-      'API_URL',
-      defaultValue: 'http://localhost:8080',
+  return FlowApiClient(
+    config: ApiConfig(
+      sharedServiceUrl: '$baseUrl/api/v1',
+      tasksServiceUrl: '$baseUrl/api/v1',
+      projectsServiceUrl: '$baseUrl/api/v1',
     ),
-    tokenStorage: FlutterSecureTokenStorage(ref.read(secureStorageProvider)),
   );
 });
-
-/// Token storage implementation using flutter_secure_storage
-class FlutterSecureTokenStorage implements TokenStorage {
-  final FlutterSecureStorage _storage;
-
-  FlutterSecureTokenStorage(this._storage);
-
-  @override
-  Future<String?> getAccessToken() => _storage.read(key: 'access_token');
-
-  @override
-  Future<String?> getRefreshToken() => _storage.read(key: 'refresh_token');
-
-  @override
-  Future<void> saveTokens(String accessToken, String refreshToken) async {
-    await _storage.write(key: 'access_token', value: accessToken);
-    await _storage.write(key: 'refresh_token', value: refreshToken);
-  }
-
-  @override
-  Future<void> clearTokens() async {
-    await _storage.delete(key: 'access_token');
-    await _storage.delete(key: 'refresh_token');
-  }
-}
 
 // ============================================================================
 // Services
 // ============================================================================
 
 final authServiceProvider = Provider<AuthService>((ref) {
-  return ref.read(apiClientProvider).auth;
+  return AuthService(ref.read(apiClientProvider));
 });
 
 final projectsServiceProvider = Provider<ProjectsService>((ref) {
-  return ref.read(apiClientProvider).projects;
+  return ProjectsService(ref.read(apiClientProvider));
 });
 
 // ============================================================================
@@ -90,17 +65,19 @@ class AuthState {
 
 class AuthNotifier extends StateNotifier<AuthState> {
   final AuthService _authService;
+  final FlowApiClient _apiClient;
 
-  AuthNotifier(this._authService) : super(const AuthState());
+  AuthNotifier(this._authService, this._apiClient) : super(const AuthState());
 
   Future<void> checkAuth() async {
     try {
-      final user = await _authService.getCurrentUser();
-      if (user != null) {
-        state = AuthState(status: AuthStatus.authenticated, user: user);
-      } else {
+      await _apiClient.init();
+      if (!_apiClient.isAuthenticated) {
         state = const AuthState(status: AuthStatus.unauthenticated);
+        return;
       }
+      final user = await _authService.getCurrentUser();
+      state = AuthState(status: AuthStatus.authenticated, user: user);
     } catch (e) {
       state = const AuthState(status: AuthStatus.unauthenticated);
     }
@@ -108,7 +85,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   Future<void> login(String email, String password) async {
     try {
-      final response = await _authService.login(email, password);
+      final response = await _authService.login(email: email, password: password);
       state = AuthState(
         status: AuthStatus.authenticated,
         user: response.user,
@@ -124,7 +101,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   Future<void> register(String email, String password, String name) async {
     try {
-      final response = await _authService.register(email, password, name);
+      final response = await _authService.register(email: email, password: password, name: name);
       state = AuthState(
         status: AuthStatus.authenticated,
         user: response.user,
@@ -145,7 +122,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
 }
 
 final authStateProvider = StateNotifierProvider<AuthNotifier, AuthState>((ref) {
-  return AuthNotifier(ref.read(authServiceProvider));
+  return AuthNotifier(
+    ref.read(authServiceProvider),
+    ref.read(apiClientProvider),
+  );
 });
 
 // ============================================================================

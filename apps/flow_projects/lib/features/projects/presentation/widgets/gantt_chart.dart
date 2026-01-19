@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flow_models/flow_models.dart';
@@ -414,7 +416,7 @@ class _TimelineHeaderPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final monthFormat = DateFormat('MMM yyyy');
     final dayFormat = DateFormat('d');
-    final textPainter = TextPainter(textDirection: TextDirection.ltr);
+    final textPainter = TextPainter(textDirection: ui.TextDirection.ltr);
 
     // Draw month labels
     DateTime currentMonth = DateTime(startDate.year, startDate.month);

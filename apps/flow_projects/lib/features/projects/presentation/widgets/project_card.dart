@@ -159,10 +159,10 @@ class ProjectCard extends StatelessWidget {
 
   String _formatStatus(ProjectStatus status) {
     switch (status) {
-      case ProjectStatus.notStarted:
-        return 'Not Started';
-      case ProjectStatus.inProgress:
-        return 'In Progress';
+      case ProjectStatus.planning:
+        return 'Planning';
+      case ProjectStatus.active:
+        return 'Active';
       case ProjectStatus.completed:
         return 'Completed';
       case ProjectStatus.onHold:
