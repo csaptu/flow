@@ -86,6 +86,14 @@ func GetUserTier(ctx context.Context, userID uuid.UUID) (string, error) {
 func UpsertSubscription(ctx context.Context, sub *Subscription) error {
 	db := getPool()
 
+	// Handle zero UUID - pass nil to let PostgreSQL generate a new UUID
+	var idParam interface{}
+	if sub.ID == uuid.Nil {
+		idParam = nil
+	} else {
+		idParam = sub.ID
+	}
+
 	_, err := db.Exec(ctx, `
 		INSERT INTO subscriptions (
 			id, user_id, tier, status, provider, provider_subscription_id,
@@ -106,7 +114,7 @@ func UpsertSubscription(ctx context.Context, sub *Subscription) error {
 			cancel_at_period_end = EXCLUDED.cancel_at_period_end,
 			cancelled_at = EXCLUDED.cancelled_at,
 			updated_at = NOW()
-	`, sub.ID, sub.UserID, sub.Tier, sub.Status, sub.Provider,
+	`, idParam, sub.UserID, sub.Tier, sub.Status, sub.Provider,
 		sub.ProviderSubscriptionID, sub.ProviderCustomerID,
 		sub.CurrentPeriodStart, sub.CurrentPeriodEnd, sub.GracePeriodEnd,
 		sub.CancelAtPeriodEnd, sub.CancelledAt)

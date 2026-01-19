@@ -11,6 +11,9 @@ class TasksService {
 
   Dio get _dio => _client.tasksClient;
 
+  // AI operations use the shared service
+  Dio get _sharedDio => _client.sharedClient;
+
   /// Create a new task
   Future<Task> create({
     String? id, // Client-provided ID for offline-first sync
@@ -25,7 +28,7 @@ class TasksService {
       if (id != null) 'id': id,
       'title': title,
       'description': description,
-      'due_date': dueDate?.toIso8601String(),
+      'due_date': dueDate?.toUtc().toIso8601String(),
       'priority': priority,
       'tags': tags,
       'parent_id': parentId,
@@ -140,15 +143,17 @@ class TasksService {
     String? status,
     List<String>? tags,
     String? groupId,
+    String? parentId, // Set to empty string to remove parent
   }) async {
     final response = await _dio.put('/tasks/$id', data: {
       if (title != null) 'title': title,
       if (description != null) 'description': description,
-      if (dueDate != null) 'due_date': dueDate.toIso8601String(),
+      if (dueDate != null) 'due_date': dueDate.toUtc().toIso8601String(),
       if (priority != null) 'priority': priority,
       if (status != null) 'status': status,
       if (tags != null) 'tags': tags,
       if (groupId != null) 'group_id': groupId,
+      if (parentId != null) 'parent_id': parentId,
     });
 
     if (response.data['success'] == true) {
@@ -222,8 +227,39 @@ class TasksService {
   }
 
   /// AI: Decompose task into steps
-  Future<Task> aiDecompose(String id) async {
-    final response = await _dio.post('/tasks/$id/ai/decompose');
+  Future<AIDecomposeResult> aiDecompose(String id) async {
+    final response = await _sharedDio.post('/tasks/$id/ai/decompose');
+
+    if (response.data['success'] == true) {
+      final data = response.data['data'] as Map<String, dynamic>;
+
+      // Check if new format (task + subtasks) or old format (just task fields)
+      Task task;
+      List<Task> subtasks = [];
+
+      if (data.containsKey('task') && data['task'] != null) {
+        // New format: { task: {...}, subtasks: [...] }
+        task = Task.fromJson(data['task'] as Map<String, dynamic>);
+        final subtasksData = data['subtasks'] as List?;
+        if (subtasksData != null) {
+          subtasks = subtasksData
+              .map((e) => Task.fromJson(e as Map<String, dynamic>))
+              .toList();
+        }
+      } else {
+        // Old format: task fields directly in data
+        task = Task.fromJson(data);
+      }
+
+      return AIDecomposeResult(task: task, subtasks: subtasks);
+    }
+
+    throw ApiException.fromResponse(response.data);
+  }
+
+  /// AI: Clean task title and description
+  Future<Task> aiClean(String id) async {
+    final response = await _sharedDio.post('/tasks/$id/ai/clean');
 
     if (response.data['success'] == true) {
       return Task.fromJson(response.data['data']);
@@ -232,9 +268,9 @@ class TasksService {
     throw ApiException.fromResponse(response.data);
   }
 
-  /// AI: Clean task title and description
-  Future<Task> aiClean(String id) async {
-    final response = await _dio.post('/tasks/$id/ai/clean');
+  /// AI: Revert to original human-written title
+  Future<Task> aiRevert(String id) async {
+    final response = await _sharedDio.post('/tasks/$id/ai/revert');
 
     if (response.data['success'] == true) {
       return Task.fromJson(response.data['data']);
@@ -245,7 +281,7 @@ class TasksService {
 
   /// AI: Rate task complexity (1-10)
   Future<AIRateResult> aiRate(String id) async {
-    final response = await _dio.post('/tasks/$id/ai/rate');
+    final response = await _sharedDio.post('/tasks/$id/ai/rate');
 
     if (response.data['success'] == true) {
       return AIRateResult(
@@ -260,7 +296,7 @@ class TasksService {
 
   /// AI: Extract entities from task
   Future<AIExtractResult> aiExtract(String id) async {
-    final response = await _dio.post('/tasks/$id/ai/extract');
+    final response = await _sharedDio.post('/tasks/$id/ai/extract');
 
     if (response.data['success'] == true) {
       return AIExtractResult(
@@ -277,7 +313,7 @@ class TasksService {
 
   /// AI: Suggest reminder time for task
   Future<AIRemindResult> aiRemind(String id) async {
-    final response = await _dio.post('/tasks/$id/ai/remind');
+    final response = await _sharedDio.post('/tasks/$id/ai/remind');
 
     if (response.data['success'] == true) {
       return AIRemindResult(
@@ -292,7 +328,7 @@ class TasksService {
 
   /// AI: Draft email based on task
   Future<AIDraftResult> aiEmail(String id) async {
-    final response = await _dio.post('/tasks/$id/ai/email');
+    final response = await _sharedDio.post('/tasks/$id/ai/email');
 
     if (response.data['success'] == true) {
       return AIDraftResult(
@@ -306,7 +342,7 @@ class TasksService {
 
   /// AI: Draft calendar invite based on task
   Future<AIDraftResult> aiInvite(String id) async {
-    final response = await _dio.post('/tasks/$id/ai/invite');
+    final response = await _sharedDio.post('/tasks/$id/ai/invite');
 
     if (response.data['success'] == true) {
       return AIDraftResult(
@@ -415,7 +451,7 @@ class TasksService {
 
   /// Get AI usage statistics for current user
   Future<AIUsageStats> getAIUsage() async {
-    final response = await _dio.get('/ai/usage');
+    final response = await _sharedDio.get('/ai/usage');
 
     if (response.data['success'] == true) {
       return AIUsageStats.fromJson(response.data['data']);
@@ -426,7 +462,7 @@ class TasksService {
 
   /// Get user's subscription tier info
   Future<Map<String, dynamic>> getUserTier() async {
-    final response = await _dio.get('/ai/tier');
+    final response = await _sharedDio.get('/ai/tier');
 
     if (response.data['success'] == true) {
       return response.data['data'] as Map<String, dynamic>;
@@ -437,7 +473,7 @@ class TasksService {
 
   /// Get pending AI drafts
   Future<List<AIDraft>> getAIDrafts() async {
-    final response = await _dio.get('/ai/drafts');
+    final response = await _sharedDio.get('/ai/drafts');
 
     if (response.data['success'] == true) {
       return (response.data['data'] as List)
@@ -450,7 +486,7 @@ class TasksService {
 
   /// Approve a draft (and optionally send it)
   Future<void> approveDraft(String draftId, {bool send = false}) async {
-    final response = await _dio.post('/ai/drafts/$draftId/approve', data: {
+    final response = await _sharedDio.post('/ai/drafts/$draftId/approve', data: {
       'send': send,
     });
 
@@ -461,7 +497,7 @@ class TasksService {
 
   /// Delete/cancel a draft
   Future<void> deleteDraft(String draftId) async {
-    final response = await _dio.delete('/ai/drafts/$draftId');
+    final response = await _sharedDio.delete('/ai/drafts/$draftId');
 
     if (response.data['success'] != true && response.statusCode != 204) {
       throw ApiException.fromResponse(response.data);

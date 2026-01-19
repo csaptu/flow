@@ -95,3 +95,4 @@ docker-compose.override.yml
 *.key
 credentials.json
 service-account.json
+apps/flow_tasks/node_modules/

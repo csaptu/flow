@@ -61,9 +61,8 @@ class AuthService {
   }
 
   /// Dev login (no password required for whitelisted accounts)
-  /// Uses tasks service since that's often the only one running locally
   Future<AuthResponse> devLogin({required String email}) async {
-    final response = await _client.tasksClient.post('/auth/dev-login', data: {
+    final response = await _dio.post('/auth/dev-login', data: {
       'email': email,
     });
 

@@ -15,16 +15,26 @@ const _googleClientId = '868169256843-ke0firpbckajqd06adpdc2a1rgo14ejt.apps.goog
 
 // API Client
 final apiClientProvider = Provider<FlowApiClient>((ref) {
-  const baseUrl = String.fromEnvironment(
-    'API_BASE_URL',
-    defaultValue: 'http://localhost:8080',
+  // In development, use localhost with correct ports for each service
+  // In production, these would be environment variables or a single gateway URL
+  const sharedUrl = String.fromEnvironment(
+    'SHARED_API_URL',
+    defaultValue: 'http://localhost:8080/api/v1',
+  );
+  const tasksUrl = String.fromEnvironment(
+    'TASKS_API_URL',
+    defaultValue: 'http://localhost:8081/api/v1',
+  );
+  const projectsUrl = String.fromEnvironment(
+    'PROJECTS_API_URL',
+    defaultValue: 'http://localhost:8082/api/v1',
   );
 
   return FlowApiClient(
     config: ApiConfig(
-      sharedServiceUrl: '$baseUrl/api/v1',
-      tasksServiceUrl: '$baseUrl/api/v1',
-      projectsServiceUrl: '$baseUrl/api/v1',
+      sharedServiceUrl: sharedUrl,
+      tasksServiceUrl: tasksUrl,
+      projectsServiceUrl: projectsUrl,
     ),
   );
 });
@@ -370,8 +380,8 @@ final _tasksFetchProvider = FutureProvider.autoDispose<void>((ref) async {
   final service = ref.watch(tasksServiceProvider);
   final localStore = ref.watch(localTaskStoreProvider.notifier);
 
-  // Fetch and store
-  final response = await service.list();
+  // Fetch and store - get all tasks (large page size to avoid pagination issues)
+  final response = await service.list(pageSize: 1000);
   localStore.setServerTasks(response.items);
 });
 
@@ -393,11 +403,14 @@ final tasksProvider = Provider<List<Task>>((ref) {
   return merged.values.toList();
 });
 
-/// All tasks (non-completed, sorted by createdAt descending)
+/// All tasks (non-completed, root-level only, sorted by createdAt descending)
 final allTasksProvider = Provider<List<Task>>((ref) {
   final tasks = ref.watch(tasksProvider);
   final filtered = tasks
-      .where((t) => t.status != TaskStatus.completed && t.status != TaskStatus.cancelled)
+      .where((t) =>
+          t.status != TaskStatus.completed &&
+          t.status != TaskStatus.cancelled &&
+          t.parentId == null) // Exclude subtasks
       .toList();
   // Sort by createdAt descending (latest first)
   filtered.sort((a, b) => b.createdAt.compareTo(a.createdAt));
@@ -409,7 +422,7 @@ final inboxTasksProvider = Provider<List<Task>>((ref) {
   return ref.watch(allTasksProvider);
 });
 
-/// Today's tasks (includes overdue + tasks with no date)
+/// Today's tasks (includes overdue + tasks with no date, root-level only)
 final todayTasksProvider = Provider<List<Task>>((ref) {
   final tasks = ref.watch(tasksProvider);
   final now = DateTime.now();
@@ -418,6 +431,7 @@ final todayTasksProvider = Provider<List<Task>>((ref) {
 
   final filtered = tasks.where((t) {
     if (t.status == TaskStatus.completed || t.status == TaskStatus.cancelled) return false;
+    if (t.parentId != null) return false; // Exclude subtasks
     // Include tasks with no due date
     if (t.dueDate == null) return true;
     final dueDate = DateTime(t.dueDate!.year, t.dueDate!.month, t.dueDate!.day);
@@ -434,7 +448,7 @@ final todayTasksProvider = Provider<List<Task>>((ref) {
   return filtered;
 });
 
-/// Next 7 days tasks (includes overdue + next 7 days + tasks with no date)
+/// Next 7 days tasks (includes overdue + next 7 days + tasks with no date, root-level only)
 final next7DaysTasksProvider = Provider<List<Task>>((ref) {
   final tasks = ref.watch(tasksProvider);
   final now = DateTime.now();
@@ -443,6 +457,7 @@ final next7DaysTasksProvider = Provider<List<Task>>((ref) {
 
   final filtered = tasks.where((t) {
     if (t.status == TaskStatus.completed || t.status == TaskStatus.cancelled) return false;
+    if (t.parentId != null) return false; // Exclude subtasks
     // Include tasks with no due date
     if (t.dueDate == null) return true;
     final dueDate = DateTime(t.dueDate!.year, t.dueDate!.month, t.dueDate!.day);
@@ -464,16 +479,20 @@ final upcomingTasksProvider = Provider<List<Task>>((ref) {
   return ref.watch(next7DaysTasksProvider);
 });
 
-/// Completed tasks
+/// Completed tasks (root-level only)
 final completedTasksProvider = Provider<List<Task>>((ref) {
   final tasks = ref.watch(tasksProvider);
-  return tasks.where((t) => t.status == TaskStatus.completed).toList();
+  return tasks
+      .where((t) => t.status == TaskStatus.completed && t.parentId == null)
+      .toList();
 });
 
-/// Trash tasks (cancelled)
+/// Trash tasks (cancelled, root-level only)
 final trashTasksProvider = Provider<List<Task>>((ref) {
   final tasks = ref.watch(tasksProvider);
-  final filtered = tasks.where((t) => t.status == TaskStatus.cancelled).toList();
+  final filtered = tasks
+      .where((t) => t.status == TaskStatus.cancelled && t.parentId == null)
+      .toList();
   // Sort by updatedAt descending (most recently deleted first)
   filtered.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
   return filtered;
@@ -495,6 +514,7 @@ class TaskActions {
     DateTime? dueDate,
     int? priority,
     List<String>? tags,
+    String? parentId,
   }) async {
     final task = await _store.createTask(
       title: title,
@@ -502,6 +522,7 @@ class TaskActions {
       dueDate: dueDate,
       priority: priority,
       tags: tags,
+      parentId: parentId,
     );
 
     // Sync in background - lists are derived from tasks dynamically
@@ -516,6 +537,7 @@ class TaskActions {
     String? title,
     String? description,
     DateTime? dueDate,
+    bool clearDueDate = false, // Set to true to explicitly clear the date
     int? priority,
     String? status,
     List<String>? tags,
@@ -527,6 +549,7 @@ class TaskActions {
       title: title,
       description: description,
       dueDate: dueDate,
+      clearDueDate: clearDueDate,
       priority: priority,
       status: status,
       tags: tags,
@@ -613,11 +636,15 @@ final globalSearchResultsProvider = Provider<List<Task>>((ref) {
   }).toList();
 });
 
-/// Get overdue tasks
+/// Get overdue tasks (root-level only)
 final overdueTasksProvider = Provider<List<Task>>((ref) {
   final tasks = ref.watch(tasksProvider);
   final filtered = tasks
-      .where((t) => t.isOverdue && t.status != TaskStatus.completed && t.status != TaskStatus.cancelled)
+      .where((t) =>
+          t.isOverdue &&
+          t.status != TaskStatus.completed &&
+          t.status != TaskStatus.cancelled &&
+          t.parentId == null)
       .toList();
   // Sort by due date ascending (oldest first)
   filtered.sort((a, b) => (a.dueDate ?? DateTime.now()).compareTo(b.dueDate ?? DateTime.now()));
@@ -639,13 +666,32 @@ final selectedTaskProvider = Provider<Task?>((ref) {
   return tasks.where((t) => t.id == taskId).firstOrNull;
 });
 
-/// Fetches subtasks (children) for a specific task
-final subtasksProvider = FutureProvider.autoDispose.family<List<Task>, String>((ref, taskId) async {
-  final authState = ref.watch(authStateProvider);
-  if (authState.status != AuthStatus.authenticated) return [];
+/// Gets subtasks (children) for a specific task
+/// Derives from tasksProvider to include locally created (optimistic) subtasks
+/// Sorting: incomplete first (by createdAt), then completed at bottom
+/// (most recently completed first, earliest completed at very bottom)
+final subtasksProvider = Provider.family<List<Task>, String>((ref, taskId) {
+  final tasks = ref.watch(tasksProvider);
+  // Filter tasks that have this task as their parent
+  final subtasks = tasks.where((t) => t.parentId == taskId).toList();
 
-  final service = ref.watch(tasksServiceProvider);
-  return await service.getChildren(taskId);
+  // Separate into incomplete and completed
+  final incomplete = subtasks.where((t) => !t.isCompleted).toList();
+  final completed = subtasks.where((t) => t.isCompleted).toList();
+
+  // Sort incomplete by created date (oldest first)
+  incomplete.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+
+  // Sort completed by completedAt descending (most recently completed first,
+  // earliest completed at very bottom)
+  completed.sort((a, b) {
+    final aTime = a.completedAt ?? a.updatedAt;
+    final bTime = b.completedAt ?? b.updatedAt;
+    return bTime.compareTo(aTime); // descending
+  });
+
+  // Combine: incomplete first, then completed
+  return [...incomplete, ...completed];
 });
 
 // =====================================================
@@ -866,9 +912,20 @@ class AttachmentActions {
   AttachmentActions(this._ref, this.taskId);
 
   TasksService get _service => _ref.read(tasksServiceProvider);
+  LocalTaskStore get _store => _ref.read(localTaskStoreProvider.notifier);
+  SyncEngine get _syncEngine => _ref.read(syncEngineProvider);
+
+  /// Ensure task is synced to server before performing attachment operations
+  Future<void> _ensureTaskSynced() async {
+    if (_store.currentState.hasPendingCreate(taskId)) {
+      // Task hasn't been synced to server yet - wait for sync
+      await _syncEngine.awaitSync();
+    }
+  }
 
   /// Add a link attachment
   Future<Attachment> addLink(String url, {String? name}) async {
+    await _ensureTaskSynced();
     final attachment = await _service.createLinkAttachment(
       taskId,
       url: url,
@@ -885,6 +942,7 @@ class AttachmentActions {
     required String filename,
     required String mimeType,
   }) async {
+    await _ensureTaskSynced();
     final attachment = await _service.uploadFileAttachment(
       taskId,
       fileBytes: fileBytes,
@@ -898,6 +956,7 @@ class AttachmentActions {
 
   /// Delete an attachment
   Future<void> delete(String attachmentId) async {
+    await _ensureTaskSynced();
     await _service.deleteAttachment(taskId, attachmentId);
     // Invalidate to refetch attachments
     _ref.invalidate(taskAttachmentsProvider(taskId));
@@ -921,19 +980,39 @@ class AIActions {
 
   TasksService get _service => _ref.read(tasksServiceProvider);
   LocalTaskStore get _store => _ref.read(localTaskStoreProvider.notifier);
+  SyncEngine get _syncEngine => _ref.read(syncEngineProvider);
+
+  /// Ensure task is synced to server before performing AI operations
+  Future<void> _ensureTaskSynced(String taskId) async {
+    if (_store.currentState.hasPendingCreate(taskId)) {
+      // Task hasn't been synced to server yet - wait for sync
+      await _syncEngine.awaitSync();
+    }
+  }
 
   /// AI: Decompose a task into subtasks
   Future<Task> decompose(String taskId) async {
-    final task = await _service.aiDecompose(taskId);
-    // Update the local store with the new task data
-    _store.updateTaskFromServer(task);
-    // Invalidate subtasks provider to refresh the list
-    _ref.invalidate(subtasksProvider(taskId));
-    return task;
+    await _ensureTaskSynced(taskId);
+    final result = await _service.aiDecompose(taskId);
+
+    // Update local store with parent task and all created subtasks atomically
+    final allTasks = <Task>[
+      result.task as Task,
+      ...result.subtasks.cast<Task>(),
+    ];
+    _store.updateTasksFromServer(allTasks);
+
+    // Force refresh from server to ensure data consistency
+    // Wait for the refresh to complete so UI updates before returning
+    _ref.invalidate(_tasksFetchProvider);
+    await _ref.read(_tasksFetchProvider.future);
+
+    return result.task as Task;
   }
 
   /// AI: Clean up a task title and description
   Future<Task> clean(String taskId) async {
+    await _ensureTaskSynced(taskId);
     final task = await _service.aiClean(taskId);
     // Update the local store with the new task data
     _store.updateTaskFromServer(task);
@@ -942,6 +1021,7 @@ class AIActions {
 
   /// AI: Clean up just the task title
   Future<Task> cleanTitle(String taskId) async {
+    await _ensureTaskSynced(taskId);
     // Currently uses same endpoint - backend stores original before cleaning
     final task = await _service.aiClean(taskId);
     _store.updateTaskFromServer(task);
@@ -950,6 +1030,7 @@ class AIActions {
 
   /// AI: Clean up just the task description
   Future<Task> cleanDescription(String taskId) async {
+    await _ensureTaskSynced(taskId);
     // Currently uses same endpoint - backend stores original before cleaning
     final task = await _service.aiClean(taskId);
     _store.updateTaskFromServer(task);
@@ -958,6 +1039,7 @@ class AIActions {
 
   /// AI: Rate task complexity (1-10)
   Future<AIRateResult> rate(String taskId) async {
+    await _ensureTaskSynced(taskId);
     final result = await _service.aiRate(taskId);
     if (result.task is Task) {
       _store.updateTaskFromServer(result.task as Task);
@@ -967,6 +1049,7 @@ class AIActions {
 
   /// AI: Extract entities from task
   Future<AIExtractResult> extract(String taskId) async {
+    await _ensureTaskSynced(taskId);
     final result = await _service.aiExtract(taskId);
     if (result.task is Task) {
       _store.updateTaskFromServer(result.task as Task);
@@ -976,6 +1059,7 @@ class AIActions {
 
   /// AI: Suggest reminder time for task
   Future<AIRemindResult> remind(String taskId) async {
+    await _ensureTaskSynced(taskId);
     final result = await _service.aiRemind(taskId);
     if (result.task is Task) {
       _store.updateTaskFromServer(result.task as Task);
@@ -985,11 +1069,13 @@ class AIActions {
 
   /// AI: Draft email based on task
   Future<AIDraftResult> email(String taskId) async {
+    await _ensureTaskSynced(taskId);
     return await _service.aiEmail(taskId);
   }
 
   /// AI: Draft calendar invite based on task
   Future<AIDraftResult> invite(String taskId) async {
+    await _ensureTaskSynced(taskId);
     return await _service.aiInvite(taskId);
   }
 }

@@ -28,7 +28,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       appBar: isNarrow
           ? AppBar(
               backgroundColor: colors.surface,
-              title: Text('Settings', style: TextStyle(color: colors.textPrimary)),
+              title: Text('Profile', style: TextStyle(color: colors.textPrimary)),
               leading: IconButton(
                 icon: Icon(Icons.arrow_back, color: colors.textPrimary),
                 onPressed: () => Navigator.of(context).pop(),
@@ -66,7 +66,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      'Settings',
+                      'Profile',
                       style: TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.bold,
@@ -443,15 +443,6 @@ class _AccountCard extends ConsumerWidget {
               'Sign Out',
               style: TextStyle(color: colors.textPrimary),
             ),
-          ),
-        ),
-        const SizedBox(height: 16),
-        // Delete account link
-        TextButton(
-          onPressed: () => _showDeleteAccountDialog(context, ref),
-          child: const Text(
-            'Delete Account',
-            style: TextStyle(color: Colors.red),
           ),
         ),
       ],

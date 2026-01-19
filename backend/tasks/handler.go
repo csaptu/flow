@@ -54,27 +54,27 @@ type UpdateRequest struct {
 	Priority    *int     `json:"priority,omitempty"`
 	Status      *string  `json:"status,omitempty"`
 	Tags        []string `json:"tags,omitempty"`
+	ParentID    *string  `json:"parent_id,omitempty"` // Set to empty string to remove parent
 }
 
 // TaskResponse represents a task in API responses
 type TaskResponse struct {
-	ID              string                  `json:"id"`
-	Title           string                  `json:"title"`
-	Description     *string                 `json:"description,omitempty"`
-	AISummary       *string                 `json:"ai_summary,omitempty"`
-	AISteps         []commonModels.TaskStep `json:"ai_steps,omitempty"`
-	Status          string                  `json:"status"`
-	Priority        int                     `json:"priority"`
-	DueDate         *string                 `json:"due_date,omitempty"`
-	CompletedAt     *string                 `json:"completed_at,omitempty"`
-	Tags            []string                `json:"tags"`
-	ParentID        *string                 `json:"parent_id,omitempty"`
-	Depth           int                     `json:"depth"`
-	Complexity      int                     `json:"complexity"`
-	HasChildren     bool                    `json:"has_children"`
-	ChildrenCount   int                     `json:"children_count"`
-	CreatedAt       string                  `json:"created_at"`
-	UpdatedAt       string                  `json:"updated_at"`
+	ID            string   `json:"id"`
+	Title         string   `json:"title"`
+	Description   *string  `json:"description,omitempty"`
+	AISummary     *string  `json:"ai_summary,omitempty"`
+	Status        string   `json:"status"`
+	Priority      int      `json:"priority"`
+	DueDate       *string  `json:"due_date,omitempty"`
+	CompletedAt   *string  `json:"completed_at,omitempty"`
+	Tags          []string `json:"tags"`
+	ParentID      *string  `json:"parent_id,omitempty"`
+	Depth         int      `json:"depth"`
+	Complexity    int      `json:"complexity"`
+	HasChildren   bool     `json:"has_children"`
+	ChildrenCount int      `json:"children_count"`
+	CreatedAt     string   `json:"created_at"`
+	UpdatedAt     string   `json:"updated_at"`
 }
 
 // Create handles task creation
@@ -150,15 +150,14 @@ func (h *TaskHandler) Create(c *fiber.Ctx) error {
 	}
 
 	// Insert task
-	aiStepsJSON, _ := task.AIStepsJSON()
 	entitiesJSON, _ := json.Marshal(task.Entities)
 
 	_, err = h.db.Exec(c.Context(),
 		`INSERT INTO tasks (id, user_id, title, description, status, priority, due_date, tags,
-		 parent_id, depth, ai_steps, entities, version, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+		 parent_id, depth, entities, version, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
 		task.ID, task.UserID, task.Title, task.Description, task.Status, task.Priority,
-		task.DueDate, task.Tags, task.ParentID, task.Depth, aiStepsJSON, entitiesJSON,
+		task.DueDate, task.Tags, task.ParentID, task.Depth, entitiesJSON,
 		task.Version, task.CreatedAt, task.UpdatedAt,
 	)
 	if err != nil {
@@ -192,6 +191,7 @@ func (h *TaskHandler) GetByID(c *fiber.Ctx) error {
 }
 
 // List handles listing tasks with filters
+// Returns all tasks including subtasks so the client can build the tree
 func (h *TaskHandler) List(c *fiber.Ctx) error {
 	userID, err := middleware.GetUserID(c)
 	if err != nil {
@@ -200,14 +200,14 @@ func (h *TaskHandler) List(c *fiber.Ctx) error {
 
 	pagination := httputil.ParsePagination(c)
 
-	// Get tasks
+	// Get all tasks including subtasks (client filters by parent_id)
 	rows, err := h.db.Query(c.Context(),
-		`SELECT t.id, t.title, t.description, t.ai_summary, t.ai_steps, t.status, t.priority,
+		`SELECT t.id, t.title, t.description, t.ai_summary, t.status, t.priority,
 		 t.due_date, t.completed_at, t.tags, t.parent_id, t.depth, t.complexity,
 		 t.created_at, t.updated_at,
 		 (SELECT COUNT(*) FROM tasks WHERE parent_id = t.id AND deleted_at IS NULL) as children_count
 		 FROM tasks t
-		 WHERE t.user_id = $1 AND t.deleted_at IS NULL AND t.parent_id IS NULL
+		 WHERE t.user_id = $1 AND t.deleted_at IS NULL
 		 ORDER BY t.created_at DESC
 		 LIMIT $2 OFFSET $3`,
 		userID, pagination.PageSize, pagination.Offset(),
@@ -226,10 +226,10 @@ func (h *TaskHandler) List(c *fiber.Ctx) error {
 		tasks = append(tasks, toTaskResponse(task, childCount))
 	}
 
-	// Get total count
+	// Get total count (all tasks including subtasks)
 	var totalCount int64
 	_ = h.db.QueryRow(c.Context(),
-		"SELECT COUNT(*) FROM tasks WHERE user_id = $1 AND deleted_at IS NULL AND parent_id IS NULL",
+		"SELECT COUNT(*) FROM tasks WHERE user_id = $1 AND deleted_at IS NULL",
 		userID,
 	).Scan(&totalCount)
 
@@ -247,7 +247,7 @@ func (h *TaskHandler) Today(c *fiber.Ctx) error {
 	tomorrow := today.Add(24 * time.Hour)
 
 	rows, err := h.db.Query(c.Context(),
-		`SELECT t.id, t.title, t.description, t.ai_summary, t.ai_steps, t.status, t.priority,
+		`SELECT t.id, t.title, t.description, t.ai_summary, t.status, t.priority,
 		 t.due_date, t.completed_at, t.tags, t.parent_id, t.depth, t.complexity,
 		 t.created_at, t.updated_at,
 		 (SELECT COUNT(*) FROM tasks WHERE parent_id = t.id AND deleted_at IS NULL) as children_count
@@ -283,7 +283,7 @@ func (h *TaskHandler) Inbox(c *fiber.Ctx) error {
 	}
 
 	rows, err := h.db.Query(c.Context(),
-		`SELECT t.id, t.title, t.description, t.ai_summary, t.ai_steps, t.status, t.priority,
+		`SELECT t.id, t.title, t.description, t.ai_summary, t.status, t.priority,
 		 t.due_date, t.completed_at, t.tags, t.parent_id, t.depth, t.complexity,
 		 t.created_at, t.updated_at,
 		 (SELECT COUNT(*) FROM tasks WHERE parent_id = t.id AND deleted_at IS NULL) as children_count
@@ -320,7 +320,7 @@ func (h *TaskHandler) Upcoming(c *fiber.Ctx) error {
 	tomorrow := time.Now().Truncate(24*time.Hour).Add(24 * time.Hour)
 
 	rows, err := h.db.Query(c.Context(),
-		`SELECT t.id, t.title, t.description, t.ai_summary, t.ai_steps, t.status, t.priority,
+		`SELECT t.id, t.title, t.description, t.ai_summary, t.status, t.priority,
 		 t.due_date, t.completed_at, t.tags, t.parent_id, t.depth, t.complexity,
 		 t.created_at, t.updated_at,
 		 (SELECT COUNT(*) FROM tasks WHERE parent_id = t.id AND deleted_at IS NULL) as children_count
@@ -358,7 +358,7 @@ func (h *TaskHandler) Completed(c *fiber.Ctx) error {
 	pagination := httputil.ParsePagination(c)
 
 	rows, err := h.db.Query(c.Context(),
-		`SELECT t.id, t.title, t.description, t.ai_summary, t.ai_steps, t.status, t.priority,
+		`SELECT t.id, t.title, t.description, t.ai_summary, t.status, t.priority,
 		 t.due_date, t.completed_at, t.tags, t.parent_id, t.depth, t.complexity,
 		 t.created_at, t.updated_at,
 		 (SELECT COUNT(*) FROM tasks WHERE parent_id = t.id AND deleted_at IS NULL) as children_count
@@ -435,15 +435,64 @@ func (h *TaskHandler) Update(c *fiber.Ctx) error {
 	if req.Tags != nil {
 		task.Tags = req.Tags
 	}
+
+	// Handle parent_id update (for making a task a subtask of another)
+	if req.ParentID != nil {
+		if *req.ParentID == "" {
+			// Remove parent - make it a root task
+			task.ParentID = nil
+			task.Depth = 0
+		} else {
+			// Set new parent
+			parentID, err := uuid.Parse(*req.ParentID)
+			if err != nil {
+				return httputil.BadRequest(c, "invalid parent_id")
+			}
+
+			// Prevent setting self as parent
+			if parentID == taskID {
+				return httputil.BadRequest(c, "task cannot be its own parent")
+			}
+
+			// Get parent task to check depth
+			var parentDepth int
+			err = h.db.QueryRow(c.Context(),
+				"SELECT depth FROM tasks WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL",
+				parentID, userID,
+			).Scan(&parentDepth)
+			if err == pgx.ErrNoRows {
+				return httputil.NotFound(c, "parent task")
+			}
+			if err != nil {
+				return httputil.InternalError(c, "database error")
+			}
+
+			// Enforce 2-layer limit
+			if parentDepth >= 1 {
+				return httputil.BadRequest(c, "maximum nesting depth exceeded (max 2 layers)")
+			}
+
+			// Check if this task has children - if so, it can't become a subtask
+			if childCount > 0 {
+				return httputil.BadRequest(c, "task with subtasks cannot become a subtask")
+			}
+
+			task.ParentID = &parentID
+			task.Depth = parentDepth + 1
+		}
+	}
+
 	task.IncrementVersion()
 
 	// Update task
 	_, err = h.db.Exec(c.Context(),
 		`UPDATE tasks SET title = $1, description = $2, due_date = $3, priority = $4,
-		 status = $5, completed_at = $6, tags = $7, version = $8, updated_at = $9
-		 WHERE id = $10 AND user_id = $11`,
+		 status = $5, completed_at = $6, tags = $7, parent_id = $8, depth = $9,
+		 version = $10, updated_at = $11
+		 WHERE id = $12 AND user_id = $13`,
 		task.Title, task.Description, task.DueDate, task.Priority, task.Status,
-		task.CompletedAt, task.Tags, task.Version, task.UpdatedAt,
+		task.CompletedAt, task.Tags, task.ParentID, task.Depth,
+		task.Version, task.UpdatedAt,
 		taskID, userID,
 	)
 	if err != nil {
@@ -587,15 +636,14 @@ func (h *TaskHandler) CreateChild(c *fiber.Ctx) error {
 		task.Priority = commonModels.Priority(*req.Priority)
 	}
 
-	aiStepsJSON, _ := task.AIStepsJSON()
 	entitiesJSON, _ := json.Marshal(task.Entities)
 
 	_, err = h.db.Exec(c.Context(),
 		`INSERT INTO tasks (id, user_id, title, description, status, priority, due_date, tags,
-		 parent_id, depth, ai_steps, entities, version, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+		 parent_id, depth, entities, version, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
 		task.ID, task.UserID, task.Title, task.Description, task.Status, task.Priority,
-		task.DueDate, task.Tags, task.ParentID, task.Depth, aiStepsJSON, entitiesJSON,
+		task.DueDate, task.Tags, task.ParentID, task.Depth, entitiesJSON,
 		task.Version, task.CreatedAt, task.UpdatedAt,
 	)
 	if err != nil {
@@ -618,7 +666,7 @@ func (h *TaskHandler) GetChildren(c *fiber.Ctx) error {
 	}
 
 	rows, err := h.db.Query(c.Context(),
-		`SELECT t.id, t.title, t.description, t.ai_summary, t.ai_steps, t.status, t.priority,
+		`SELECT t.id, t.title, t.description, t.ai_summary, t.status, t.priority,
 		 t.due_date, t.completed_at, t.tags, t.parent_id, t.depth, t.complexity,
 		 t.created_at, t.updated_at,
 		 0 as children_count
@@ -644,7 +692,7 @@ func (h *TaskHandler) GetChildren(c *fiber.Ctx) error {
 	return httputil.Success(c, tasks)
 }
 
-// AIDecompose uses AI to break down a task into steps
+// AIDecompose uses AI to break down a task into subtasks
 func (h *TaskHandler) AIDecompose(c *fiber.Ctx) error {
 	if h.llm == nil {
 		return httputil.ServiceUnavailable(c, "AI service not available")
@@ -665,16 +713,23 @@ func (h *TaskHandler) AIDecompose(c *fiber.Ctx) error {
 		return err
 	}
 
-	// Call LLM to decompose task
-	prompt := fmt.Sprintf(`Break down this task into 2-5 actionable steps.
+	// Check if task can have children (only root tasks can)
+	if task.Depth > 0 {
+		return httputil.BadRequest(c, "subtasks cannot be further decomposed")
+	}
+
+	// Call LLM to decompose task into subtasks
+	prompt := fmt.Sprintf(`Break down this task into 2-5 actionable subtasks.
 Task: %s
 %s
 
-Return ONLY a JSON array of steps, like:
-[
-  {"step": 1, "action": "First action", "done": false},
-  {"step": 2, "action": "Second action", "done": false}
-]`, task.Title, func() string {
+Return ONLY a JSON array of subtask titles, like:
+["First subtask title", "Second subtask title", "Third subtask title"]
+
+Each subtask should be:
+- A single, concrete action
+- In logical order
+- Starting with an action verb`, task.Title, func() string {
 		if task.Description != nil {
 			return "Description: " + *task.Description
 		}
@@ -692,29 +747,60 @@ Return ONLY a JSON array of steps, like:
 		return httputil.ServiceUnavailable(c, "AI service error")
 	}
 
-	// Parse AI response
-	var steps []commonModels.TaskStep
-	if err := json.Unmarshal([]byte(resp.Content), &steps); err != nil {
-		// Try to extract JSON from response
+	// Parse AI response - expecting array of strings
+	var subtaskTitles []string
+	content := strings.TrimSpace(resp.Content)
+	// Handle markdown code blocks
+	if strings.HasPrefix(content, "```") {
+		lines := strings.Split(content, "\n")
+		var jsonLines []string
+		inBlock := false
+		for _, line := range lines {
+			if strings.HasPrefix(line, "```") {
+				inBlock = !inBlock
+				continue
+			}
+			if inBlock {
+				jsonLines = append(jsonLines, line)
+			}
+		}
+		content = strings.Join(jsonLines, "\n")
+	}
+
+	if err := json.Unmarshal([]byte(content), &subtaskTitles); err != nil {
 		return httputil.InternalError(c, "failed to parse AI response")
 	}
 
-	// Update task with AI steps
-	task.AISteps = steps
-	task.AIDecomposed = true
-	task.IncrementVersion()
+	// Create subtasks as real child tasks
+	now := time.Now()
+	createdCount := 0
+	for _, title := range subtaskTitles {
+		title = strings.TrimSpace(title)
+		if title == "" {
+			continue
+		}
 
-	aiStepsJSON, _ := task.AIStepsJSON()
-	_, err = h.db.Exec(c.Context(),
-		`UPDATE tasks SET ai_steps = $1, ai_decomposed = true, version = $2, updated_at = $3
-		 WHERE id = $4 AND user_id = $5`,
-		aiStepsJSON, task.Version, task.UpdatedAt, taskID, userID,
-	)
-	if err != nil {
-		return httputil.InternalError(c, "failed to update task")
+		subtask := models.NewTask(userID, title)
+		subtask.ParentID = &taskID
+		subtask.Depth = 1
+		subtask.CreatedAt = now.Add(time.Duration(createdCount) * time.Millisecond) // Ensure ordering
+		subtask.UpdatedAt = now
+
+		_, err = h.db.Exec(c.Context(),
+			`INSERT INTO tasks (id, user_id, title, status, priority, tags, parent_id, depth, entities, version, created_at, updated_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+			subtask.ID, subtask.UserID, subtask.Title, subtask.Status, subtask.Priority,
+			subtask.Tags, subtask.ParentID, subtask.Depth, []byte("[]"),
+			subtask.Version, subtask.CreatedAt, subtask.UpdatedAt,
+		)
+		if err != nil {
+			continue // Skip failed inserts
+		}
+		createdCount++
 	}
 
-	return httputil.Success(c, toTaskResponse(task, childCount))
+	// Return updated parent task with new children count
+	return httputil.Success(c, toTaskResponse(task, childCount+createdCount))
 }
 
 // AIClean uses AI to clean up a task title and description
@@ -1269,22 +1355,21 @@ func (h *TaskHandler) Sync(c *fiber.Ctx) error {
 func (h *TaskHandler) getTask(ctx context.Context, taskID, userID uuid.UUID) (*models.Task, int, error) {
 	var task models.Task
 	var childCount int
-	var aiStepsJSON []byte
 
 	err := h.db.QueryRow(ctx,
-		`SELECT t.id, t.user_id, t.title, t.description, t.ai_summary, t.ai_steps, t.status, t.priority,
+		`SELECT t.id, t.user_id, t.title, t.description, t.ai_summary, t.status, t.priority,
 		 t.due_date, t.completed_at, t.tags, t.parent_id, t.depth, COALESCE(t.complexity, 0),
-		 COALESCE(t.ai_cleaned_title, false), COALESCE(t.ai_extracted_due, false), COALESCE(t.ai_decomposed, false),
+		 COALESCE(t.ai_cleaned_title, false), COALESCE(t.ai_extracted_due, false),
 		 t.original_title, t.original_description, COALESCE(t.skip_auto_cleanup, false), t.version, t.created_at, t.updated_at,
 		 (SELECT COUNT(*) FROM tasks WHERE parent_id = t.id AND deleted_at IS NULL) as children_count
 		 FROM tasks t
 		 WHERE t.id = $1 AND t.user_id = $2 AND t.deleted_at IS NULL`,
 		taskID, userID,
 	).Scan(
-		&task.ID, &task.UserID, &task.Title, &task.Description, &task.AISummary, &aiStepsJSON,
+		&task.ID, &task.UserID, &task.Title, &task.Description, &task.AISummary,
 		&task.Status, &task.Priority, &task.DueDate, &task.CompletedAt, &task.Tags,
 		&task.ParentID, &task.Depth, &task.Complexity,
-		&task.AICleanedTitle, &task.AIExtractedDue, &task.AIDecomposed,
+		&task.AICleanedTitle, &task.AIExtractedDue,
 		&task.OriginalTitle, &task.OriginalDescription, &task.SkipAutoCleanup, &task.Version, &task.CreatedAt, &task.UpdatedAt, &childCount,
 	)
 
@@ -1295,30 +1380,21 @@ func (h *TaskHandler) getTask(ctx context.Context, taskID, userID uuid.UUID) (*m
 		return nil, 0, fiber.NewError(fiber.StatusInternalServerError, "database error")
 	}
 
-	if aiStepsJSON != nil {
-		_ = task.SetAIStepsFromJSON(aiStepsJSON)
-	}
-
 	return &task, childCount, nil
 }
 
 func scanTask(rows pgx.Rows) (*models.Task, int, error) {
 	var task models.Task
 	var childCount int
-	var aiStepsJSON []byte
 
 	err := rows.Scan(
-		&task.ID, &task.Title, &task.Description, &task.AISummary, &aiStepsJSON,
+		&task.ID, &task.Title, &task.Description, &task.AISummary,
 		&task.Status, &task.Priority, &task.DueDate, &task.CompletedAt, &task.Tags,
 		&task.ParentID, &task.Depth, &task.Complexity,
 		&task.CreatedAt, &task.UpdatedAt, &childCount,
 	)
 	if err != nil {
 		return nil, 0, err
-	}
-
-	if aiStepsJSON != nil {
-		_ = task.SetAIStepsFromJSON(aiStepsJSON)
 	}
 
 	return &task, childCount, nil
@@ -1330,7 +1406,6 @@ func toTaskResponse(t *models.Task, childCount int) TaskResponse {
 		Title:         t.Title,
 		Description:   t.Description,
 		AISummary:     t.AISummary,
-		AISteps:       t.AISteps,
 		Status:        string(t.Status),
 		Priority:      int(t.Priority),
 		Tags:          t.Tags,

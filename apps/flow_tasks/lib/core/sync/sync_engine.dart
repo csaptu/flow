@@ -166,6 +166,7 @@ class SyncEngine {
               : null,
           priority: operation.data['priority'] as int?,
           tags: (operation.data['tags'] as List?)?.cast<String>(),
+          parentId: operation.data['parent_id'] as String?,
         );
         _localStore.onSyncSuccess(operation.id, task);
         break;
@@ -181,6 +182,7 @@ class SyncEngine {
           priority: operation.data['priority'] as int?,
           status: operation.data['status'] as String?,
           tags: (operation.data['tags'] as List?)?.cast<String>(),
+          parentId: operation.data['parent_id'] as String?,
         );
         _localStore.onSyncSuccess(operation.id, task);
         break;

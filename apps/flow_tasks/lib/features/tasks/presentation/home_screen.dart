@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flow_models/flow_models.dart' show Task, TaskList, TaskStatus, AdminUser, Order, AIPromptConfig;
+import 'package:flow_models/flow_models.dart' show Task, TaskList, TaskStatus, AdminUser, Order, AIPromptConfig, SubscriptionPlan;
 import 'package:intl/intl.dart';
 import 'package:flow_tasks/core/constants/app_colors.dart';
 import 'package:flow_tasks/core/constants/app_spacing.dart';
@@ -25,11 +25,45 @@ class HomeScreen extends ConsumerStatefulWidget {
 }
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
-  double _sidebarWidth = FlowSpacing.sidebarWidth;
-  static const _minSidebarWidth = 180.0;
+  double? _userSidebarWidth; // User-set width (null = auto)
+  static const _minSidebarWidth = 160.0;
   static const _maxSidebarWidth = 400.0;
+  static const _collapsedSidebarWidth = 56.0; // Icons only
+  static const _minMiddlePanelWidth = 280.0; // Minimum space for task list
   bool _isShowingSheet = false;
   String? _sheetTaskId; // Track which task is shown in bottom sheet
+
+  /// Calculate sidebar width based on screen size
+  double _getSidebarWidth(double screenWidth, bool hasDetailPanel) {
+    // If user has explicitly set a width, try to respect it
+    if (_userSidebarWidth != null) {
+      final availableForSidebar = screenWidth -
+          _minMiddlePanelWidth -
+          (hasDetailPanel ? _detailPanelWidth : 0);
+      return _userSidebarWidth!.clamp(_collapsedSidebarWidth, availableForSidebar.clamp(_collapsedSidebarWidth, _maxSidebarWidth));
+    }
+
+    // Auto-calculate based on available space
+    final availableWidth = screenWidth - (hasDetailPanel ? _detailPanelWidth : 0);
+
+    // Very narrow: collapsed sidebar
+    if (availableWidth < 500) {
+      return _collapsedSidebarWidth;
+    }
+
+    // Narrow: minimal sidebar
+    if (availableWidth < 700) {
+      return _minSidebarWidth;
+    }
+
+    // Medium: comfortable sidebar
+    if (availableWidth < 1000) {
+      return 200.0;
+    }
+
+    // Wide: full sidebar
+    return FlowSpacing.sidebarWidth;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -37,6 +71,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final selectedTask = ref.watch(selectedTaskProvider);
     final screenWidth = MediaQuery.of(context).size.width;
     final isWideScreen = screenWidth >= _wideScreenBreakpoint;
+    final hasDetailPanel = isWideScreen && selectedTask != null;
+
+    // Calculate responsive sidebar width
+    final sidebarWidth = _getSidebarWidth(screenWidth, hasDetailPanel);
+    final isCollapsed = sidebarWidth <= _collapsedSidebarWidth;
 
     // When resizing from narrow to wide while bottom sheet is open,
     // close the sheet and restore task selection for side panel
@@ -68,7 +107,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               children: [
                 _Sidebar(
                   selectedIndex: selectedIndex,
-                  width: _sidebarWidth,
+                  width: sidebarWidth,
+                  collapsed: isCollapsed,
                   onItemTap: (index) {
                     ref.read(selectedSidebarIndexProvider.notifier).state = index;
                     ref.read(selectedListIdProvider.notifier).state = null; // Clear list selection
@@ -80,8 +120,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   child: GestureDetector(
                     onHorizontalDragUpdate: (details) {
                       setState(() {
-                        _sidebarWidth = (_sidebarWidth + details.delta.dx)
-                            .clamp(_minSidebarWidth, _maxSidebarWidth);
+                        final currentWidth = _userSidebarWidth ?? sidebarWidth;
+                        _userSidebarWidth = (currentWidth + details.delta.dx)
+                            .clamp(_collapsedSidebarWidth, _maxSidebarWidth);
                       });
                     },
                     child: Container(
@@ -532,10 +573,10 @@ class _Header extends ConsumerWidget {
                     tooltip: 'Search tasks',
                     onPressed: () => _showGlobalSearch(context, ref),
                   ),
-                  // Settings
+                  // Profile
                   IconButton(
-                    icon: const Icon(Icons.settings_outlined),
-                    tooltip: 'Settings',
+                    icon: const Icon(Icons.person_outline),
+                    tooltip: 'Profile',
                     onPressed: () {
                       Navigator.of(context).push(
                         MaterialPageRoute(
@@ -1102,92 +1143,102 @@ class _SyncIndicatorState extends ConsumerState<_SyncIndicator>
     final isSyncing = syncState.status == SyncStatus.syncing;
     final isOffline = syncState.status == SyncStatus.offline;
 
-    // Success state - brief "Saved" that fades out
+    // Determine which child to show
+    Widget child;
     if (_showSuccess) {
-      return FadeTransition(
+      child = FadeTransition(
+        key: const ValueKey('saved'),
         opacity: _fadeAnimation,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          child: Text(
-            'Saved',
+        child: _buildIndicatorContent(
+          colors,
+          null,
+          'Saved',
+          colors.textTertiary,
+        ),
+      );
+    } else if (isSyncing) {
+      child = _buildIndicatorContent(
+        colors,
+        SizedBox(
+          width: 12,
+          height: 12,
+          child: CircularProgressIndicator(
+            strokeWidth: 1.5,
+            color: colors.textTertiary,
+          ),
+        ),
+        'Saving',
+        colors.textTertiary,
+        key: const ValueKey('syncing'),
+      );
+    } else if (isOffline) {
+      child = Tooltip(
+        key: const ValueKey('offline'),
+        message: 'Offline - changes will sync when connected',
+        child: _buildIndicatorContent(
+          colors,
+          Icon(
+            Icons.cloud_off_outlined,
+            size: 14,
+            color: colors.warning,
+          ),
+          'Offline',
+          colors.warning,
+        ),
+      );
+    } else {
+      child = const SizedBox.shrink(key: ValueKey('empty'));
+    }
+
+    // Use AnimatedSwitcher for smooth transitions and clip to prevent overflow
+    return ClipRect(
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 200),
+        child: child,
+      ),
+    );
+  }
+
+  Widget _buildIndicatorContent(
+    FlowColorScheme colors,
+    Widget? icon,
+    String text,
+    Color textColor, {
+    Key? key,
+  }) {
+    return Padding(
+      key: key,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            icon,
+            const SizedBox(width: 6),
+          ],
+          Text(
+            text,
             style: TextStyle(
               fontSize: 12,
-              color: colors.textTertiary,
+              color: textColor,
             ),
           ),
-        ),
-      );
-    }
-
-    // Only show indicator when syncing or offline
-    // Don't show "N unsaved" - optimistic updates handle this silently
-    if (isSyncing) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(
-              width: 12,
-              height: 12,
-              child: CircularProgressIndicator(
-                strokeWidth: 1.5,
-                color: colors.textTertiary,
-              ),
-            ),
-            const SizedBox(width: 6),
-            Text(
-              'Saving',
-              style: TextStyle(
-                fontSize: 12,
-                color: colors.textTertiary,
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    if (isOffline) {
-      return Tooltip(
-        message: 'Offline - changes will sync when connected',
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.cloud_off_outlined,
-                size: 14,
-                color: colors.warning,
-              ),
-              const SizedBox(width: 4),
-              Text(
-                'Offline',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: colors.warning,
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    // Hide when everything is normal (synced or pending)
-    return const SizedBox.shrink();
+        ],
+      ),
+    );
   }
 }
 
 class _Sidebar extends ConsumerStatefulWidget {
   final int selectedIndex;
   final double width;
+  final bool collapsed;
   final Function(int) onItemTap;
 
   const _Sidebar({
     required this.selectedIndex,
     required this.width,
+    this.collapsed = false,
     required this.onItemTap,
   });
 
@@ -1211,6 +1262,7 @@ class _SidebarState extends ConsumerState<_Sidebar> {
     final colors = context.flowColors;
     final lists = ref.watch(listTreeProvider);
     final isAdmin = ref.watch(isAdminProvider);
+    final collapsed = widget.collapsed;
 
     return Container(
       width: widget.width,
@@ -1224,29 +1276,35 @@ class _SidebarState extends ConsumerState<_Sidebar> {
         children: [
           // Logo
           Padding(
-            padding: const EdgeInsets.all(FlowSpacing.lg),
-            child: Row(
-              children: [
-                const Icon(
-                  Icons.check_circle,
-                  color: FlowColors.primary,
-                  size: 28,
-                ),
-                const SizedBox(width: FlowSpacing.sm),
-                Text(
-                  'Flow',
-                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
+            padding: EdgeInsets.all(collapsed ? FlowSpacing.sm : FlowSpacing.lg),
+            child: collapsed
+                ? const Icon(
+                    Icons.check_circle,
+                    color: FlowColors.primary,
+                    size: 28,
+                  )
+                : Row(
+                    children: [
+                      const Icon(
+                        Icons.check_circle,
+                        color: FlowColors.primary,
+                        size: 28,
                       ),
-                ),
-              ],
-            ),
+                      const SizedBox(width: FlowSpacing.sm),
+                      Text(
+                        'Flow',
+                        style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
+                      ),
+                    ],
+                  ),
           ),
 
           // Navigation items
           Expanded(
             child: ListView(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
+              padding: EdgeInsets.symmetric(horizontal: collapsed ? 8 : 12),
               children: [
                 // Main navigation items
                 ..._Sidebar._items.asMap().entries.map((entry) {
@@ -1256,40 +1314,57 @@ class _SidebarState extends ConsumerState<_Sidebar> {
 
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 4),
-                    child: Material(
-                      color: isSelected
-                          ? colors.sidebarSelected
-                          : Colors.transparent,
-                      borderRadius: BorderRadius.circular(FlowSpacing.radiusSm),
-                      child: InkWell(
-                        onTap: () => widget.onItemTap(index),
+                    child: Tooltip(
+                      message: collapsed ? item.label : '',
+                      waitDuration: const Duration(milliseconds: 500),
+                      child: Material(
+                        color: isSelected
+                            ? colors.sidebarSelected
+                            : Colors.transparent,
                         borderRadius: BorderRadius.circular(FlowSpacing.radiusSm),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 10,
-                          ),
-                          child: Row(
-                            children: [
-                              Icon(
-                                item.icon,
-                                size: 20,
-                                color: isSelected
-                                    ? colors.primary
-                                    : colors.textSecondary,
-                              ),
-                              const SizedBox(width: 12),
-                              Text(
-                                item.label,
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w500,
-                                  color: isSelected
-                                      ? colors.textPrimary
-                                      : colors.textSecondary,
-                                ),
-                              ),
-                            ],
+                        child: InkWell(
+                          onTap: () => widget.onItemTap(index),
+                          borderRadius: BorderRadius.circular(FlowSpacing.radiusSm),
+                          child: Padding(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: collapsed ? 8 : 12,
+                              vertical: 10,
+                            ),
+                            child: collapsed
+                                ? Center(
+                                    child: Icon(
+                                      item.icon,
+                                      size: 20,
+                                      color: isSelected
+                                          ? colors.primary
+                                          : colors.textSecondary,
+                                    ),
+                                  )
+                                : Row(
+                                    children: [
+                                      Icon(
+                                        item.icon,
+                                        size: 20,
+                                        color: isSelected
+                                            ? colors.primary
+                                            : colors.textSecondary,
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Text(
+                                          item.label,
+                                          style: TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w500,
+                                            color: isSelected
+                                                ? colors.textPrimary
+                                                : colors.textSecondary,
+                                          ),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                           ),
                         ),
                       ),
@@ -1297,8 +1372,8 @@ class _SidebarState extends ConsumerState<_Sidebar> {
                   );
                 }),
 
-                // Lists section (collapsible)
-                if (lists.isNotEmpty) ...[
+                // Lists section (collapsible) - hide when sidebar is collapsed
+                if (lists.isNotEmpty && !collapsed) ...[
                   const SizedBox(height: 16),
                   _CollapsibleListsSection(
                     lists: lists,
@@ -1313,7 +1388,7 @@ class _SidebarState extends ConsumerState<_Sidebar> {
             ),
           ),
 
-          // Bottom actions: Admin toggle + Settings
+          // Bottom actions: Admin toggle + Profile
           Container(
             decoration: BoxDecoration(
               border: Border(
@@ -1323,8 +1398,8 @@ class _SidebarState extends ConsumerState<_Sidebar> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Admin items (expanded)
-                if (_adminExpanded)
+                // Admin items (expanded) - hide when collapsed
+                if (_adminExpanded && !collapsed)
                   isAdmin.when(
                     data: (admin) => admin
                         ? Column(
@@ -1356,57 +1431,87 @@ class _SidebarState extends ConsumerState<_Sidebar> {
                     loading: () => const SizedBox.shrink(),
                     error: (_, __) => const SizedBox.shrink(),
                   ),
-                // Settings and Admin toggle row
+                // Profile and Admin toggle row
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                  child: Row(
-                    children: [
-                      // Settings button (subtle)
-                      Tooltip(
-                        message: 'Settings',
-                        child: InkWell(
-                          onTap: () {
-                            Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (context) => const SettingsScreen(),
-                              ),
-                            );
-                          },
-                          borderRadius: BorderRadius.circular(6),
-                          child: Padding(
-                            padding: const EdgeInsets.all(8),
-                            child: Icon(
-                              Icons.tune,
-                              size: 18,
-                              color: colors.textTertiary,
-                            ),
-                          ),
-                        ),
-                      ),
-                      // Admin toggle (only for admins)
-                      isAdmin.when(
-                        data: (admin) => admin
-                            ? Tooltip(
-                                message: _adminExpanded ? 'Hide admin' : 'Show admin',
-                                child: InkWell(
-                                  onTap: () => setState(() => _adminExpanded = !_adminExpanded),
-                                  borderRadius: BorderRadius.circular(6),
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(8),
-                                    child: Icon(
-                                      Icons.admin_panel_settings_outlined,
-                                      size: 18,
-                                      color: _adminExpanded ? colors.primary : colors.textTertiary,
+                  padding: EdgeInsets.symmetric(
+                    horizontal: collapsed ? 8 : 12,
+                    vertical: 12,
+                  ),
+                  child: collapsed
+                      ? Column(
+                          children: [
+                            // Profile button
+                            Tooltip(
+                              message: 'Profile',
+                              child: InkWell(
+                                onTap: () {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (context) => const SettingsScreen(),
                                     ),
+                                  );
+                                },
+                                borderRadius: BorderRadius.circular(6),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(8),
+                                  child: Icon(
+                                    Icons.person_outline,
+                                    size: 18,
+                                    color: colors.textTertiary,
                                   ),
                                 ),
-                              )
-                            : const SizedBox.shrink(),
-                        loading: () => const SizedBox.shrink(),
-                        error: (_, __) => const SizedBox.shrink(),
-                      ),
-                    ],
-                  ),
+                              ),
+                            ),
+                          ],
+                        )
+                      : Row(
+                          children: [
+                            // Profile button (subtle)
+                            Tooltip(
+                              message: 'Profile',
+                              child: InkWell(
+                                onTap: () {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (context) => const SettingsScreen(),
+                                    ),
+                                  );
+                                },
+                                borderRadius: BorderRadius.circular(6),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(8),
+                                  child: Icon(
+                                    Icons.person_outline,
+                                    size: 18,
+                                    color: colors.textTertiary,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            // Admin toggle (only for admins)
+                            isAdmin.when(
+                              data: (admin) => admin
+                                  ? Tooltip(
+                                      message: _adminExpanded ? 'Hide admin' : 'Show admin',
+                                      child: InkWell(
+                                        onTap: () => setState(() => _adminExpanded = !_adminExpanded),
+                                        borderRadius: BorderRadius.circular(6),
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(8),
+                                          child: Icon(
+                                            Icons.admin_panel_settings_outlined,
+                                            size: 18,
+                                            color: _adminExpanded ? colors.primary : colors.textTertiary,
+                                          ),
+                                        ),
+                                      ),
+                                    )
+                                  : const SizedBox.shrink(),
+                              loading: () => const SizedBox.shrink(),
+                              error: (_, __) => const SizedBox.shrink(),
+                            ),
+                          ],
+                        ),
                 ),
               ],
             ),
@@ -2922,6 +3027,7 @@ class _AdminEditUserDialogState extends ConsumerState<_AdminEditUserDialog> {
   DateTime? _expiresAt;
   bool _isLoading = false;
   String? _error;
+  bool _initializedPlanFromTier = false;
 
   @override
   void initState() {
@@ -2930,6 +3036,26 @@ class _AdminEditUserDialogState extends ConsumerState<_AdminEditUserDialog> {
     _selectedPlanId = widget.user.planId;
     _startsAt = widget.user.subscribedAt ?? DateTime.now();
     _expiresAt = widget.user.expiresAt;
+  }
+
+  void _initPlanFromTier(List<SubscriptionPlan> plans) {
+    if (_initializedPlanFromTier) return;
+    _initializedPlanFromTier = true;
+
+    // If planId is null but tier is not free, find a matching plan
+    if (_selectedPlanId == null && _selectedTier != 'free') {
+      final matchingPlan = plans.where((p) => p.tier == _selectedTier).cast<SubscriptionPlan?>().firstOrNull;
+      if (matchingPlan != null) {
+        // Schedule setState for after build completes
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            setState(() {
+              _selectedPlanId = matchingPlan.id;
+            });
+          }
+        });
+      }
+    }
   }
 
   @override
@@ -2982,35 +3108,39 @@ class _AdminEditUserDialogState extends ConsumerState<_AdminEditUserDialog> {
             Text('Plan', style: TextStyle(color: colors.textSecondary, fontSize: 12, fontWeight: FontWeight.w500)),
             const SizedBox(height: 6),
             plans.when(
-              data: (planList) => Container(
-                decoration: BoxDecoration(border: Border.all(color: colors.border), borderRadius: BorderRadius.circular(8)),
-                child: DropdownButtonHideUnderline(
-                  child: DropdownButton<String?>(
-                    value: _selectedPlanId,
-                    isExpanded: true,
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    hint: const Text('Select plan'),
-                    items: [
-                      const DropdownMenuItem(value: null, child: Text('Free (no plan)')),
-                      ...planList.where((p) => !p.isFree).map((plan) => DropdownMenuItem(
-                        value: plan.id,
-                        child: Text('${plan.name} - ${plan.formattedPrice}'),
-                      )),
-                    ],
-                    onChanged: (value) {
-                      setState(() {
-                        _selectedPlanId = value;
-                        if (value == null) {
-                          _selectedTier = 'free';
-                        } else {
-                          final plan = planList.firstWhere((p) => p.id == value);
-                          _selectedTier = plan.tier;
-                        }
-                      });
-                    },
+              data: (planList) {
+                // Initialize plan selection from tier if needed
+                _initPlanFromTier(planList);
+                return Container(
+                  decoration: BoxDecoration(border: Border.all(color: colors.border), borderRadius: BorderRadius.circular(8)),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String?>(
+                      value: _selectedPlanId,
+                      isExpanded: true,
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      hint: const Text('Select plan'),
+                      items: [
+                        const DropdownMenuItem(value: null, child: Text('Free (no plan)')),
+                        ...planList.where((p) => !p.isFree).map((plan) => DropdownMenuItem(
+                          value: plan.id,
+                          child: Text('${plan.name} - ${plan.formattedPrice}'),
+                        )),
+                      ],
+                      onChanged: (value) {
+                        setState(() {
+                          _selectedPlanId = value;
+                          if (value == null) {
+                            _selectedTier = 'free';
+                          } else {
+                            final plan = planList.firstWhere((p) => p.id == value);
+                            _selectedTier = plan.tier;
+                          }
+                        });
+                      },
+                    ),
                   ),
-                ),
-              ),
+                );
+              },
               loading: () => const SizedBox(height: 48, child: Center(child: CircularProgressIndicator())),
               error: (_, __) => Text('Failed to load plans', style: TextStyle(color: colors.error)),
             ),

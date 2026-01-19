@@ -12,51 +12,12 @@ DateTime _parseToLocal(String dateString) {
   return parsed;
 }
 
-/// Task step from AI decomposition
-class TaskStep extends Equatable {
-  final int step;
-  final String action;
-  final bool done;
-
-  const TaskStep({
-    required this.step,
-    required this.action,
-    this.done = false,
-  });
-
-  factory TaskStep.fromJson(Map<String, dynamic> json) {
-    return TaskStep(
-      step: json['step'] as int,
-      action: json['action'] as String,
-      done: json['done'] as bool? ?? false,
-    );
-  }
-
-  Map<String, dynamic> toJson() => {
-        'step': step,
-        'action': action,
-        'done': done,
-      };
-
-  TaskStep copyWith({bool? done}) {
-    return TaskStep(
-      step: step,
-      action: action,
-      done: done ?? this.done,
-    );
-  }
-
-  @override
-  List<Object?> get props => [step, action, done];
-}
-
 /// Task model
 class Task extends Equatable {
   final String id;
   final String title;
   final String? description;
   final String? aiSummary;
-  final List<TaskStep> aiSteps;
   final TaskStatus status;
   final Priority priority;
   final DateTime? dueDate;
@@ -80,7 +41,6 @@ class Task extends Equatable {
     required this.title,
     this.description,
     this.aiSummary,
-    this.aiSteps = const [],
     this.status = TaskStatus.pending,
     this.priority = Priority.none,
     this.dueDate,
@@ -111,10 +71,6 @@ class Task extends Equatable {
       title: json['title'] as String,
       description: json['description'] as String?,
       aiSummary: json['ai_summary'] as String?,
-      aiSteps: (json['ai_steps'] as List<dynamic>?)
-              ?.map((e) => TaskStep.fromJson(e as Map<String, dynamic>))
-              .toList() ??
-          [],
       status: TaskStatus.fromString(json['status'] as String? ?? 'pending'),
       priority: Priority.fromInt(json['priority'] as int? ?? 0),
       dueDate: json['due_date'] != null
@@ -142,7 +98,6 @@ class Task extends Equatable {
         'title': title,
         'description': description,
         'ai_summary': aiSummary,
-        'ai_steps': aiSteps.map((e) => e.toJson()).toList(),
         'status': status.toJson(),
         'priority': priority.value,
         'due_date': dueDate?.toIso8601String(),
@@ -198,18 +153,11 @@ class Task extends Equatable {
     return false;
   }
 
-  double get progress {
-    if (aiSteps.isEmpty) return isCompleted ? 100.0 : 0.0;
-    final done = aiSteps.where((s) => s.done).length;
-    return (done / aiSteps.length) * 100.0;
-  }
-
   Task copyWith({
     String? id,
     String? title,
     String? description,
     String? aiSummary,
-    List<TaskStep>? aiSteps,
     TaskStatus? status,
     Priority? priority,
     DateTime? dueDate,
@@ -231,7 +179,6 @@ class Task extends Equatable {
       title: title ?? this.title,
       description: description ?? this.description,
       aiSummary: aiSummary ?? this.aiSummary,
-      aiSteps: aiSteps ?? this.aiSteps,
       status: status ?? this.status,
       priority: priority ?? this.priority,
       dueDate: dueDate ?? this.dueDate,

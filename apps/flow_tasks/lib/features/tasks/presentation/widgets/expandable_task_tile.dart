@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flow_models/flow_models.dart';
 import 'package:flow_tasks/core/constants/app_colors.dart';
@@ -44,6 +45,7 @@ class _ExpandableTaskTileState extends ConsumerState<ExpandableTaskTile>
 
   bool _isAnimatingCompletion = false;
   bool _isDragTarget = false; // Highlight when another task is dragged over
+  bool _isDragging = false; // Track when this tile is being dragged
 
   @override
   void initState() {
@@ -148,6 +150,9 @@ class _ExpandableTaskTileState extends ConsumerState<ExpandableTaskTile>
               child: LongPressDraggable<Task>(
                 data: task,
                 delay: const Duration(milliseconds: 150),
+                onDragStarted: () => setState(() => _isDragging = true),
+                onDragEnd: (_) => setState(() => _isDragging = false),
+                onDraggableCanceled: (_, __) => setState(() => _isDragging = false),
                 feedback: Material(
                   elevation: 8,
                   shadowColor: Colors.black26,
@@ -231,13 +236,15 @@ class _ExpandableTaskTileState extends ConsumerState<ExpandableTaskTile>
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              // Drag handle (always visible at the start)
-              Icon(
-                Icons.drag_indicator,
-                size: 18,
-                color: colors.textTertiary.withValues(alpha: 0.5),
-              ),
-              const SizedBox(width: 4),
+              // Drag handle (only visible when dragging)
+              if (_isDragging) ...[
+                Icon(
+                  Icons.drag_indicator,
+                  size: 18,
+                  color: colors.textTertiary,
+                ),
+                const SizedBox(width: 4),
+              ],
 
               // Checkbox
               _BearCheckbox(
@@ -300,6 +307,7 @@ class _ExpandableTaskTileState extends ConsumerState<ExpandableTaskTile>
     final task = widget.task;
     final displayTitle = removeHashtags(task.aiSummary ?? task.title);
     final showStrikethrough = isCompleted || _isAnimatingCompletion;
+    final isAdmin = ref.watch(isAdminProvider).valueOrNull ?? false;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -326,6 +334,50 @@ class _ExpandableTaskTileState extends ConsumerState<ExpandableTaskTile>
           const SizedBox(height: 4),
           _buildMetadataRow(colors),
         ],
+      ],
+    );
+  }
+
+  Widget _buildAdminIdRow(FlowColorScheme colors, Task task) {
+    // Show first 8 chars of ID for brevity
+    final shortId = task.id.length > 8 ? task.id.substring(0, 8) : task.id;
+    // Show due date timestamp for debugging
+    final dueDateStr = task.dueDate != null
+        ? ' | due: ${task.dueDate!.toIso8601String()}'
+        : '';
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Flexible(
+          child: Text(
+            '$shortId$dueDateStr',
+            style: TextStyle(
+              fontSize: 10,
+              fontFamily: 'monospace',
+              color: colors.textTertiary.withOpacity(0.7),
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        const SizedBox(width: 4),
+        GestureDetector(
+          onTap: () {
+            Clipboard.setData(ClipboardData(text: task.id));
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Copied: ${task.id}'),
+                duration: const Duration(seconds: 2),
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          },
+          child: Icon(
+            Icons.copy_rounded,
+            size: 12,
+            color: colors.textTertiary.withOpacity(0.7),
+          ),
+        ),
       ],
     );
   }

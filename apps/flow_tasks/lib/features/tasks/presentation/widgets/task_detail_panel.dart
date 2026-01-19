@@ -336,14 +336,15 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
 
                   const SizedBox(height: 24),
 
-                  // AI Steps (if any)
-                  if (task.aiSteps.isNotEmpty) ...[
-                    _buildStepsSection(colors, task),
-                    const SizedBox(height: 24),
-                  ],
+                  // Subtasks section (always show for root tasks to allow adding)
+                  if (task.depth == 0)
+                    _SubtasksSection(taskId: task.id),
 
                   // Tags only (no timestamps here)
-                  if (task.tags.isNotEmpty) _buildTagsSection(colors, task),
+                  if (task.tags.isNotEmpty) ...[
+                    const SizedBox(height: 24),
+                    _buildTagsSection(colors, task),
+                  ],
                 ],
               ),
             ),
@@ -446,9 +447,9 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
           onClear: () async {
             // Update local state immediately
             setState(() => _localDueDate = null);
-            // Then update the store
+            // Then update the store with clearDueDate flag
             final actions = ref.read(taskActionsProvider);
-            await actions.update(taskId, dueDate: null);
+            await actions.update(taskId, clearDueDate: true);
           },
         );
         if (date != null && mounted) {
@@ -495,68 +496,6 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
             ],
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildStepsSection(FlowColorScheme colors, Task task) {
-    final completed = task.aiSteps.where((s) => s.done).length;
-    final total = task.aiSteps.length;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Icon(Icons.checklist_rounded, size: 18, color: colors.textSecondary),
-            const SizedBox(width: 8),
-            Text(
-              'Steps ($completed/$total)',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: colors.textPrimary,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        ...task.aiSteps.map((step) => _buildStepItem(colors, step)),
-      ],
-    );
-  }
-
-  Widget _buildStepItem(FlowColorScheme colors, TaskStep step) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 24,
-            height: 24,
-            child: Checkbox(
-              value: step.done,
-              onChanged: (value) {
-                // TODO: Toggle step completion
-              },
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(4),
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              step.action,
-              style: TextStyle(
-                fontSize: 14,
-                color: step.done ? colors.textTertiary : colors.textPrimary,
-                decoration: step.done ? TextDecoration.lineThrough : null,
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -656,15 +595,11 @@ class _AIToolbarState extends ConsumerState<_AIToolbar> {
   // Bear app red color
   static const bearRed = Color(0xFFE53935);
 
-  // AI action definitions - matches plan document
+  // AI action definitions - only implemented features
   // Free = no badge, Light = *, Premium = **
   static const _aiActions = [
-    _AIAction('decompose', 'Steps', Icons.checklist_rounded, 1, AIFeature.decompose),
-    _AIAction('complexity', 'Rate', Icons.speed_rounded, 1, AIFeature.complexity),
+    _AIAction('decompose', 'Subtasks', Icons.checklist_rounded, 1, AIFeature.decompose),
     _AIAction('entities', 'Extract', Icons.person_search_rounded, 1, AIFeature.entityExtraction),
-    _AIAction('remind', 'Remind', Icons.alarm_rounded, 2, AIFeature.reminder),
-    _AIAction('email', 'Email', Icons.email_outlined, 2, AIFeature.draftEmail),
-    _AIAction('calendar', 'Invite', Icons.calendar_month_rounded, 2, AIFeature.draftCalendar),
   ];
 
   Future<void> _runAIAction(String action) async {
@@ -679,7 +614,7 @@ class _AIToolbarState extends ConsumerState<_AIToolbar> {
       switch (action) {
         case 'decompose':
           await aiActions.decompose(widget.task.id);
-          _showSnackBar('Steps generated');
+          _showSnackBar('Subtasks created');
           break;
         case 'complexity':
           final result = await aiActions.rate(widget.task.id);
@@ -907,9 +842,9 @@ class _AIToolbarState extends ConsumerState<_AIToolbar> {
                     onClear: () async {
                       // Update parent's local state immediately
                       widget.onDateChanged(null);
-                      // Then update the store
+                      // Then update the store with clearDueDate flag
                       final actions = ref.read(taskActionsProvider);
-                      await actions.update(taskId, dueDate: null);
+                      await actions.update(taskId, clearDueDate: true);
                     },
                   );
                   if (date != null && mounted) {
@@ -1116,6 +1051,317 @@ class _AIActionText extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Subtasks section - displays child tasks with inline add
+class _SubtasksSection extends ConsumerStatefulWidget {
+  final String taskId;
+
+  const _SubtasksSection({required this.taskId});
+
+  @override
+  ConsumerState<_SubtasksSection> createState() => _SubtasksSectionState();
+}
+
+class _SubtasksSectionState extends ConsumerState<_SubtasksSection> {
+  String? _newSubtaskId; // ID of newly created subtask to auto-focus
+
+  Future<void> _addSubtask() async {
+    try {
+      final actions = ref.read(taskActionsProvider);
+      // Create subtask with empty title - will show placeholder in text field
+      final task = await actions.create(title: '', parentId: widget.taskId);
+      ref.invalidate(subtasksProvider(widget.taskId));
+      // Set the new subtask ID to trigger auto-edit
+      setState(() => _newSubtaskId = task.id);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to add subtask: $e')),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.flowColors;
+    final subtasks = ref.watch(subtasksProvider(widget.taskId));
+
+    final completed = subtasks.where((t) => t.isCompleted).length;
+    final total = subtasks.length;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Header (only show if there are subtasks)
+        if (subtasks.isNotEmpty) ...[
+          Row(
+            children: [
+              Icon(Icons.checklist_rounded, size: 16, color: colors.textTertiary),
+              const SizedBox(width: 6),
+              Text(
+                'Subtasks',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w400,
+                  color: colors.textTertiary,
+                ),
+              ),
+              const SizedBox(width: 4),
+              Text(
+                '($completed/$total)',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w400,
+                  color: colors.textTertiary.withOpacity(0.7),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+        ],
+        // Subtask items
+        ...subtasks.asMap().entries.map((entry) {
+          final index = entry.key;
+          final subtask = entry.value;
+          final isLast = index == subtasks.length - 1;
+          return _SubtaskItem(
+            key: ValueKey(subtask.id),
+            subtask: subtask,
+            autoFocus: subtask.id == _newSubtaskId,
+            onEditComplete: () {
+              if (_newSubtaskId == subtask.id) {
+                setState(() => _newSubtaskId = null);
+              }
+            },
+            onSubmitAndContinue: isLast ? _addSubtask : null,
+          );
+        }),
+        // Add subtask button (always visible)
+        Padding(
+          padding: EdgeInsets.only(top: subtasks.isEmpty ? 0 : 8),
+          child: InkWell(
+            onTap: _addSubtask,
+            borderRadius: BorderRadius.circular(4),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: Icon(
+                      Icons.add_rounded,
+                      size: 18,
+                      color: colors.textTertiary,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Add a subtask...',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: colors.textTertiary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Individual subtask item with checkbox - inline editable on tap
+class _SubtaskItem extends ConsumerStatefulWidget {
+  final Task subtask;
+  final bool autoFocus;
+  final VoidCallback? onEditComplete;
+  final VoidCallback? onSubmitAndContinue; // Called when Enter pressed on last item
+
+  const _SubtaskItem({
+    super.key,
+    required this.subtask,
+    this.autoFocus = false,
+    this.onEditComplete,
+    this.onSubmitAndContinue,
+  });
+
+  @override
+  ConsumerState<_SubtaskItem> createState() => _SubtaskItemState();
+}
+
+class _SubtaskItemState extends ConsumerState<_SubtaskItem> {
+  bool _isEditing = false;
+  late TextEditingController _controller;
+  final _focusNode = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    // If title is empty, start with empty text (placeholder will show)
+    _controller = TextEditingController(text: widget.subtask.title);
+    _focusNode.addListener(_onFocusChange);
+    // Auto-start editing if requested (or if title is empty)
+    if (widget.autoFocus || widget.subtask.title.isEmpty) {
+      _isEditing = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _focusNode.requestFocus();
+        // Only select all if there's text
+        if (_controller.text.isNotEmpty) {
+          _controller.selection = TextSelection(
+            baseOffset: 0,
+            extentOffset: _controller.text.length,
+          );
+        }
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(_SubtaskItem oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.subtask.title != widget.subtask.title && !_isEditing) {
+      _controller.text = widget.subtask.title;
+    }
+    // Handle autoFocus changing to true
+    if (widget.autoFocus && !oldWidget.autoFocus && !_isEditing) {
+      _startEditing();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _focusNode.removeListener(_onFocusChange);
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  void _onFocusChange() {
+    if (!_focusNode.hasFocus && _isEditing) {
+      _saveAndExit();
+    }
+  }
+
+  void _startEditing() {
+    setState(() => _isEditing = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _focusNode.requestFocus();
+      // Select all text for easy replacement
+      _controller.selection = TextSelection(
+        baseOffset: 0,
+        extentOffset: _controller.text.length,
+      );
+    });
+  }
+
+  Future<void> _saveAndExit({bool continueToNext = false}) async {
+    final newTitle = _controller.text.trim();
+    final actions = ref.read(taskActionsProvider);
+
+    if (newTitle.isEmpty) {
+      // Delete subtask if title is empty
+      await actions.update(widget.subtask.id, status: 'cancelled');
+      // Refresh subtasks list
+      if (widget.subtask.parentId != null) {
+        ref.invalidate(subtasksProvider(widget.subtask.parentId!));
+      }
+    } else if (newTitle != widget.subtask.title) {
+      // Update title if changed
+      await actions.update(widget.subtask.id, title: newTitle);
+      // Refresh subtasks list
+      if (widget.subtask.parentId != null) {
+        ref.invalidate(subtasksProvider(widget.subtask.parentId!));
+      }
+    }
+
+    if (mounted) {
+      setState(() => _isEditing = false);
+      widget.onEditComplete?.call();
+      // If Enter was pressed on last item, create new subtask
+      if (continueToNext && newTitle.isNotEmpty && widget.onSubmitAndContinue != null) {
+        widget.onSubmitAndContinue!();
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.flowColors;
+    final isCompleted = widget.subtask.isCompleted;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 24,
+            height: 24,
+            child: Checkbox(
+              value: isCompleted,
+              onChanged: (value) async {
+                final actions = ref.read(taskActionsProvider);
+                if (value == true) {
+                  await actions.complete(widget.subtask.id);
+                } else {
+                  await actions.uncomplete(widget.subtask.id);
+                }
+                // Refresh subtasks
+                ref.invalidate(subtasksProvider(widget.subtask.parentId!));
+              },
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(4),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _isEditing
+                ? TextField(
+                    controller: _controller,
+                    focusNode: _focusNode,
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: colors.textPrimary,
+                    ),
+                    decoration: InputDecoration(
+                      border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(vertical: 2),
+                      hintText: 'New subtask',
+                      hintStyle: TextStyle(
+                        fontSize: 14,
+                        color: colors.textTertiary,
+                      ),
+                    ),
+                    onSubmitted: (_) => _saveAndExit(continueToNext: true),
+                  )
+                : GestureDetector(
+                    onTap: _startEditing,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: Text(
+                        widget.subtask.title,
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: isCompleted ? colors.textTertiary : colors.textPrimary,
+                          decoration: isCompleted ? TextDecoration.lineThrough : null,
+                        ),
+                      ),
+                    ),
+                  ),
+          ),
+        ],
       ),
     );
   }

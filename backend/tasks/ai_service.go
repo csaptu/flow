@@ -481,7 +481,7 @@ func (s *AIService) Decompose(ctx context.Context, userID uuid.UUID, title, desc
 	}
 
 	// Get configurable decompose settings
-	stepCount := s.getConfig("decompose_step_count", "2-5")
+	stepCount := s.getConfig("decompose_step_count", "3-5")
 	decomposeRules := s.getConfig("decompose_rules", `Each step should be a single, concrete action
 Steps should be in logical order
 Use action verbs (Call, Send, Research, Write, etc.)
@@ -497,7 +497,40 @@ Keep each step under 10 words`)
 		}
 	}
 
-	prompt := fmt.Sprintf(`Break down this task into %s actionable steps.
+	descPart := ""
+	if description != "" {
+		descPart = "Description: " + description
+	}
+
+	// First attempt
+	steps, err := s.decomposeWithPrompt(ctx, title, descPart, stepCount, formattedRules, false)
+	if err != nil {
+		return nil, err
+	}
+
+	// Post-process: if more than 5 steps, retry with strict MAX = 5
+	if len(steps) > 5 {
+		steps, err = s.decomposeWithPrompt(ctx, title, descPart, "exactly 5", formattedRules, true)
+		if err != nil {
+			return nil, err
+		}
+		// Truncate if still over 5
+		if len(steps) > 5 {
+			steps = steps[:5]
+		}
+	}
+
+	return steps, nil
+}
+
+// decomposeWithPrompt is a helper that calls the LLM with the decompose prompt
+func (s *AIService) decomposeWithPrompt(ctx context.Context, title, descPart, stepCount, formattedRules string, strict bool) ([]TaskStep, error) {
+	strictNote := ""
+	if strict {
+		strictNote = "\n\nIMPORTANT: You MUST return MAXIMUM 5 steps. No more than 5. Combine steps if needed."
+	}
+
+	prompt := fmt.Sprintf(`Break down this task into %s actionable steps. MAXIMUM 5 steps allowed.
 
 Task: %s
 %s
@@ -509,12 +542,7 @@ Return ONLY a JSON array:
 ]
 
 Rules:
-%s`, stepCount, title, func() string {
-		if description != "" {
-			return "Description: " + description
-		}
-		return ""
-	}(), formattedRules)
+%s%s`, stepCount, title, descPart, formattedRules, strictNote)
 
 	resp, err := s.llm.Complete(ctx, llm.CompletionRequest{
 		Messages: []llm.Message{

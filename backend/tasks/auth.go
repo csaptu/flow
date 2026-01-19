@@ -41,8 +41,15 @@ type DevLoginRequest struct {
 
 // Dev accounts that can bypass password
 var devAccounts = map[string]string{
-	"tupham@prepedu.com": "Tu Pham",
-	"alice@prepedu.com":  "Alice",
+	"quangtu.pham@gmail.com": "Tu Pham",
+	"alice@prepedu.com":      "Alice",
+}
+
+// Dev aliases for convenience (short name -> real email)
+var devAliases = map[string]string{
+	"tupham": "quangtu.pham@gmail.com",
+	"tu":     "quangtu.pham@gmail.com",
+	"alice":  "alice@prepedu.com",
 }
 
 // DevLogin handles passwordless login for dev accounts (dev/debug only)
@@ -53,11 +60,18 @@ func (h *AuthHandler) DevLogin(c *fiber.Ctx) error {
 		return httputil.BadRequest(c, "invalid request body")
 	}
 
+	// Check for alias first (e.g., "tupham" -> "quangtu.pham@gmail.com")
+	email := req.Email
+	if realEmail, ok := devAliases[email]; ok {
+		email = realEmail
+	}
+
 	// Check if email is a dev account
-	name, ok := devAccounts[req.Email]
+	name, ok := devAccounts[email]
 	if !ok {
 		return httputil.Unauthorized(c, "not a dev account")
 	}
+	req.Email = email // Use resolved email
 
 	// Use deterministic UUID based on email for consistent dev login
 	userID := uuid.NewSHA1(uuid.NameSpaceURL, []byte("dev-user:"+req.Email))

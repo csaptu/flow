@@ -1,6 +1,5 @@
 import 'package:equatable/equatable.dart';
 import 'enums.dart';
-import 'task.dart';
 
 /// WBS Node model
 class WBSNode extends Equatable {
@@ -21,7 +20,6 @@ class WBSNode extends Equatable {
   final int? duration;
   final bool isCritical;
   final bool hasChildren;
-  final List<TaskStep> aiSteps;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -43,7 +41,6 @@ class WBSNode extends Equatable {
     this.duration,
     this.isCritical = false,
     this.hasChildren = false,
-    this.aiSteps = const [],
     required this.createdAt,
     required this.updatedAt,
   });
@@ -71,10 +68,6 @@ class WBSNode extends Equatable {
       duration: json['duration'] as int?,
       isCritical: json['is_critical'] as bool? ?? false,
       hasChildren: json['has_children'] as bool? ?? false,
-      aiSteps: (json['ai_steps'] as List<dynamic>?)
-              ?.map((e) => TaskStep.fromJson(e as Map<String, dynamic>))
-              .toList() ??
-          [],
       createdAt: DateTime.parse(json['created_at'] as String),
       updatedAt: DateTime.parse(json['updated_at'] as String),
     );
@@ -133,7 +126,6 @@ class WBSNode extends Equatable {
       duration: duration,
       isCritical: isCritical,
       hasChildren: hasChildren,
-      aiSteps: aiSteps,
       createdAt: createdAt,
       updatedAt: updatedAt,
     );

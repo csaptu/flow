@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flow_tasks/core/theme/flow_theme.dart';
 import 'package:intl/intl.dart';
@@ -163,14 +164,63 @@ class _DatePickerDialogState extends State<_DatePickerDialog> {
     Navigator.of(context).pop(result);
   }
 
-  Future<void> _showTimePickerDialog() async {
-    final time = await showTimePicker(
+  void _showTimeWheelPicker() {
+    final colors = context.flowColors;
+    var tempTime = _selectedTime ?? const TimeOfDay(hour: 9, minute: 0);
+
+    showModalBottomSheet(
       context: context,
-      initialTime: _selectedTime ?? const TimeOfDay(hour: 9, minute: 0),
+      backgroundColor: colors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: Text('Cancel', style: TextStyle(color: colors.textSecondary)),
+                  ),
+                  Text(
+                    'Select Time',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: colors.textPrimary,
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () {
+                      setState(() => _selectedTime = tempTime);
+                      Navigator.pop(context);
+                    },
+                    child: Text('Done', style: TextStyle(color: colors.primary, fontWeight: FontWeight.w600)),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(
+              height: 200,
+              child: CupertinoDatePicker(
+                mode: CupertinoDatePickerMode.time,
+                initialDateTime: DateTime(2024, 1, 1, tempTime.hour, tempTime.minute),
+                use24hFormat: false,
+                onDateTimeChanged: (dateTime) {
+                  tempTime = TimeOfDay(hour: dateTime.hour, minute: dateTime.minute);
+                },
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
     );
-    if (time != null) {
-      setState(() => _selectedTime = time);
-    }
   }
 
   @override
@@ -325,7 +375,7 @@ class _DatePickerDialogState extends State<_DatePickerDialog> {
                   const Spacer(),
                   if (_showTime && _selectedTime != null)
                     GestureDetector(
-                      onTap: _showTimePickerDialog,
+                      onTap: _showTimeWheelPicker,
                       child: Container(
                         padding: const EdgeInsets.symmetric(
                             horizontal: 12, vertical: 6),

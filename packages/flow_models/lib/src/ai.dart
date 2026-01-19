@@ -269,6 +269,20 @@ class AIDraft extends Equatable {
   List<Object?> get props => [id, taskId, type];
 }
 
+/// AI Decompose result (task breakdown into subtasks)
+class AIDecomposeResult extends Equatable {
+  final dynamic task; // Task object (parent)
+  final List<dynamic> subtasks; // List of created subtask objects
+
+  const AIDecomposeResult({
+    required this.task,
+    required this.subtasks,
+  });
+
+  @override
+  List<Object?> get props => [task, subtasks];
+}
+
 /// AI Rate result (complexity rating)
 class AIRateResult extends Equatable {
   final dynamic task; // Task object

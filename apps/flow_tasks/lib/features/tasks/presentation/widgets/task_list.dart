@@ -52,13 +52,14 @@ class TaskList extends ConsumerWidget {
             onComplete: () => _completeTask(ref, task),
             onUncomplete: () => _uncompleteTask(ref, task),
             onDelete: () => _moveToTrash(ref, task),
+            onDropInto: (draggedTask, targetTask) => _makeSubtask(ref, draggedTask, targetTask),
           );
         },
       );
     }
 
     // Group tasks by date
-    final groups = _groupTasksByDate(tasks);
+    final groups = _groupTasksByDate(tasks, type);
 
     return _GroupedTaskListView(
       groups: groups,
@@ -66,7 +67,7 @@ class TaskList extends ConsumerWidget {
     );
   }
 
-  List<_DateGroup> _groupTasksByDate(List<Task> tasks) {
+  List<_DateGroup> _groupTasksByDate(List<Task> tasks, TaskListType listType) {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final tomorrow = today.add(const Duration(days: 1));
@@ -143,8 +144,9 @@ class TaskList extends ConsumerWidget {
       ));
     }
 
-    // No date section at the end
-    if (noDateTasks.isNotEmpty) {
+    // No date section at the end - but not for Today or Next 7 days views
+    final showNoDate = listType != TaskListType.today && listType != TaskListType.next7days;
+    if (noDateTasks.isNotEmpty && showNoDate) {
       groups.add(_DateGroup(
         title: 'No Date',
         tasks: noDateTasks,
@@ -266,6 +268,14 @@ class TaskList extends ConsumerWidget {
     await actions.update(task.id, status: 'cancelled');
   }
 
+  /// Make a task a subtask of another task
+  Future<void> _makeSubtask(WidgetRef ref, Task draggedTask, Task targetTask) async {
+    final actions = ref.read(taskActionsProvider);
+    await actions.update(draggedTask.id, parentId: targetTask.id);
+    // Refresh the task list to show updated hierarchy
+    ref.invalidate(subtasksProvider(targetTask.id));
+  }
+
   void _openTaskDetail(WidgetRef ref, Task task) {
     ref.read(selectedTaskIdProvider.notifier).state = task.id;
   }
@@ -367,6 +377,7 @@ class _GroupedTaskListViewState extends ConsumerState<_GroupedTaskListView> {
                 onComplete: () => _completeTask(task),
                 onUncomplete: () => _uncompleteTask(task),
                 onDelete: () => _moveToTrash(task),
+                onDropInto: (draggedTask, targetTask) => _makeSubtask(draggedTask, targetTask),
               )),
           ],
         );
@@ -387,5 +398,12 @@ class _GroupedTaskListViewState extends ConsumerState<_GroupedTaskListView> {
   Future<void> _moveToTrash(Task task) async {
     final actions = ref.read(taskActionsProvider);
     await actions.update(task.id, status: 'cancelled');
+  }
+
+  Future<void> _makeSubtask(Task draggedTask, Task targetTask) async {
+    final actions = ref.read(taskActionsProvider);
+    await actions.update(draggedTask.id, parentId: targetTask.id);
+    // Refresh the subtasks to show updated hierarchy
+    ref.invalidate(subtasksProvider(targetTask.id));
   }
 }

@@ -32,10 +32,9 @@ type Task struct {
 	ReminderAt *time.Time `json:"reminder_at,omitempty" db:"reminder_at"`
 
 	// AI features
-	AICleanedTitle bool     `json:"ai_cleaned_title" db:"ai_cleaned_title"`
-	AIExtractedDue bool     `json:"ai_extracted_due" db:"ai_extracted_due"`
-	AIDecomposed   bool     `json:"ai_decomposed" db:"ai_decomposed"`
-	Complexity     int      `json:"complexity" db:"complexity"` // 1-10 scale from AI
+	AICleanedTitle bool `json:"ai_cleaned_title" db:"ai_cleaned_title"`
+	AIExtractedDue bool `json:"ai_extracted_due" db:"ai_extracted_due"`
+	Complexity     int  `json:"complexity" db:"complexity"` // 1-10 scale from AI
 
 	// Entities extracted by AI
 	Entities []TaskEntity `json:"entities,omitempty" db:"entities"`
@@ -67,7 +66,6 @@ func NewTask(userID uuid.UUID, title string) *Task {
 			Status:    models.StatusPending,
 			Priority:  models.PriorityNone,
 			Tags:      []string{},
-			AISteps:   []models.TaskStep{},
 			CreatedAt: now,
 			UpdatedAt: now,
 		},

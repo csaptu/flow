@@ -127,9 +127,8 @@ func (s *Server) registerRoutes() {
 	// API v1
 	v1 := s.app.Group("/api/v1")
 
-	// Dev login (no auth required) - for local development
-	authHandler := NewAuthHandler(s.db, s.config)
-	v1.Post("/auth/dev-login", authHandler.DevLogin)
+	// Note: Auth routes are handled by the shared service (port 8080)
+	// See shared/auth/handler.go for auth endpoints
 
 	// All routes require authentication
 	v1.Use(middleware.Auth(middleware.AuthConfig{
@@ -153,22 +152,8 @@ func (s *Server) registerRoutes() {
 	tasks.Post("/:id/children", taskHandler.CreateChild)
 	tasks.Get("/:id/children", taskHandler.GetChildren)
 
-	// AI features (per-task)
-	tasks.Post("/:id/ai/decompose", taskHandler.AIDecompose)
-	tasks.Post("/:id/ai/clean", taskHandler.AIClean)
-	tasks.Post("/:id/ai/rate", taskHandler.AIRate)
-	tasks.Post("/:id/ai/extract", taskHandler.AIExtract)
-	tasks.Post("/:id/ai/remind", taskHandler.AIRemind)
-	tasks.Post("/:id/ai/email", taskHandler.AIEmail)
-	tasks.Post("/:id/ai/invite", taskHandler.AIInvite)
-
-	// AI management routes
-	ai := v1.Group("/ai")
-	ai.Get("/usage", taskHandler.GetAIUsage)
-	ai.Get("/tier", taskHandler.GetUserTier)
-	ai.Get("/drafts", taskHandler.GetAIDrafts)
-	ai.Post("/drafts/:id/approve", taskHandler.ApproveDraft)
-	ai.Delete("/drafts/:id", taskHandler.DeleteDraft)
+	// Note: AI features have been moved to the shared service
+	// See shared/ai/handler.go for AI endpoints
 
 	// Sync endpoint
 	v1.Post("/sync", taskHandler.Sync)
@@ -180,7 +165,7 @@ func (s *Server) registerRoutes() {
 	tasks.Get("/:id/attachments/:attachmentId/download", taskHandler.DownloadAttachment)
 	tasks.Delete("/:id/attachments/:attachmentId", taskHandler.DeleteAttachment)
 
-	// Subscription routes
+	// Subscription routes (payment flows with Paddle integration)
 	subHandler := NewSubscriptionHandler(s.db)
 	subs := v1.Group("/subscriptions")
 	subs.Get("/plans", subHandler.GetPlans)
@@ -196,21 +181,13 @@ func (s *Server) registerRoutes() {
 	admin := v1.Group("/admin")
 	admin.Use(adminHandler.AdminOnly())
 	admin.Get("/check", adminHandler.CheckAdmin)
-
-	// Admin user management
 	admin.Get("/users", adminHandler.ListUsers)
 	admin.Get("/users/:id", adminHandler.GetUser)
 	admin.Put("/users/:id/subscription", adminHandler.UpdateUserSubscription)
-
-	// Admin order management
 	admin.Get("/orders", adminHandler.ListOrders)
 	admin.Get("/orders/:id", adminHandler.GetOrder)
-
-	// Admin plan management
 	admin.Get("/plans", adminHandler.ListPlans)
 	admin.Put("/plans/:id", adminHandler.UpdatePlan)
-
-	// Admin AI config management
 	admin.Get("/ai-configs", adminHandler.ListAIConfigs)
 	admin.Put("/ai-configs/:key", adminHandler.UpdateAIConfig)
 }

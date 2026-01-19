@@ -26,26 +26,25 @@ func NewWBSHandler(db *pgxpool.Pool) *WBSHandler {
 
 // WBSNodeResponse represents a WBS node in API responses
 type WBSNodeResponse struct {
-	ID           string                   `json:"id"`
-	ProjectID    string                   `json:"project_id"`
-	ParentID     *string                  `json:"parent_id,omitempty"`
-	Title        string                   `json:"title"`
-	Description  *string                  `json:"description,omitempty"`
-	Status       string                   `json:"status"`
-	Priority     int                      `json:"priority"`
-	Progress     float64                  `json:"progress"`
-	Depth        int                      `json:"depth"`
-	Path         string                   `json:"path"`
-	Position     int                      `json:"position"`
-	AssigneeID   *string                  `json:"assignee_id,omitempty"`
-	PlannedStart *string                  `json:"planned_start,omitempty"`
-	PlannedEnd   *string                  `json:"planned_end,omitempty"`
-	Duration     *int                     `json:"duration,omitempty"`
-	IsCritical   bool                     `json:"is_critical"`
-	HasChildren  bool                     `json:"has_children"`
-	AISteps      []commonModels.TaskStep  `json:"ai_steps,omitempty"`
-	CreatedAt    string                   `json:"created_at"`
-	UpdatedAt    string                   `json:"updated_at"`
+	ID           string  `json:"id"`
+	ProjectID    string  `json:"project_id"`
+	ParentID     *string `json:"parent_id,omitempty"`
+	Title        string  `json:"title"`
+	Description  *string `json:"description,omitempty"`
+	Status       string  `json:"status"`
+	Priority     int     `json:"priority"`
+	Progress     float64 `json:"progress"`
+	Depth        int     `json:"depth"`
+	Path         string  `json:"path"`
+	Position     int     `json:"position"`
+	AssigneeID   *string `json:"assignee_id,omitempty"`
+	PlannedStart *string `json:"planned_start,omitempty"`
+	PlannedEnd   *string `json:"planned_end,omitempty"`
+	Duration     *int    `json:"duration,omitempty"`
+	IsCritical   bool    `json:"is_critical"`
+	HasChildren  bool    `json:"has_children"`
+	CreatedAt    string  `json:"created_at"`
+	UpdatedAt    string  `json:"updated_at"`
 }
 
 // Create creates a new WBS node
@@ -191,7 +190,7 @@ func (h *WBSHandler) List(c *fiber.Ctx) error {
 	rows, err := h.db.Query(c.Context(),
 		`SELECT n.id, n.project_id, n.parent_id, n.title, n.description, n.status, n.priority,
 		 n.progress, n.depth, n.path, n.position, n.assignee_id, n.planned_start, n.planned_end,
-		 n.duration, n.is_critical, n.ai_steps, n.created_at, n.updated_at,
+		 n.duration, n.is_critical, n.created_at, n.updated_at,
 		 EXISTS(SELECT 1 FROM wbs_nodes WHERE parent_id = n.id AND deleted_at IS NULL) as has_children
 		 FROM wbs_nodes n
 		 WHERE n.project_id = $1 AND n.deleted_at IS NULL
@@ -234,7 +233,7 @@ func (h *WBSHandler) GetTree(c *fiber.Ctx) error {
 	rows, err := h.db.Query(c.Context(),
 		`SELECT n.id, n.project_id, n.parent_id, n.title, n.description, n.status, n.priority,
 		 n.progress, n.depth, n.path, n.position, n.assignee_id, n.planned_start, n.planned_end,
-		 n.duration, n.is_critical, n.ai_steps, n.created_at, n.updated_at,
+		 n.duration, n.is_critical, n.created_at, n.updated_at,
 		 EXISTS(SELECT 1 FROM wbs_nodes WHERE parent_id = n.id AND deleted_at IS NULL) as has_children
 		 FROM wbs_nodes n
 		 WHERE n.project_id = $1 AND n.deleted_at IS NULL
@@ -746,7 +745,7 @@ func (h *WBSHandler) AssignedToMe(c *fiber.Ctx) error {
 	rows, err := h.db.Query(c.Context(),
 		`SELECT n.id, n.project_id, n.parent_id, n.title, n.description, n.status, n.priority,
 		 n.progress, n.depth, n.path, n.position, n.assignee_id, n.planned_start, n.planned_end,
-		 n.duration, n.is_critical, n.ai_steps, n.created_at, n.updated_at,
+		 n.duration, n.is_critical, n.created_at, n.updated_at,
 		 p.name as project_name
 		 FROM wbs_nodes n
 		 JOIN projects p ON n.project_id = p.id
@@ -769,21 +768,16 @@ func (h *WBSHandler) AssignedToMe(c *fiber.Ctx) error {
 	for rows.Next() {
 		var node models.WBSNode
 		var projectName string
-		var aiStepsJSON []byte
 
 		err := rows.Scan(
 			&node.ID, &node.ProjectID, &node.ParentID, &node.Title, &node.Description,
 			&node.Status, &node.Priority, &node.Progress, &node.Depth, &node.Path,
 			&node.Position, &node.AssigneeID, &node.PlannedStart, &node.PlannedEnd,
-			&node.Duration, &node.IsCritical, &aiStepsJSON, &node.CreatedAt, &node.UpdatedAt,
+			&node.Duration, &node.IsCritical, &node.CreatedAt, &node.UpdatedAt,
 			&projectName,
 		)
 		if err != nil {
 			continue
-		}
-
-		if aiStepsJSON != nil {
-			_ = node.SetAIStepsFromJSON(aiStepsJSON)
 		}
 
 		tasks = append(tasks, AssignedTask{
@@ -809,12 +803,11 @@ func (h *WBSHandler) isMember(ctx context.Context, projectID, userID uuid.UUID) 
 func (h *WBSHandler) getNode(ctx context.Context, nodeID, projectID uuid.UUID) (*models.WBSNode, bool, error) {
 	var node models.WBSNode
 	var hasChildren bool
-	var aiStepsJSON []byte
 
 	err := h.db.QueryRow(ctx,
 		`SELECT n.id, n.project_id, n.parent_id, n.user_id, n.title, n.description, n.status, n.priority,
 		 n.progress, n.depth, n.path, n.position, n.assignee_id, n.planned_start, n.planned_end,
-		 n.duration, n.is_critical, n.ai_steps, n.version, n.created_at, n.updated_at,
+		 n.duration, n.is_critical, n.version, n.created_at, n.updated_at,
 		 EXISTS(SELECT 1 FROM wbs_nodes WHERE parent_id = n.id AND deleted_at IS NULL) as has_children
 		 FROM wbs_nodes n
 		 WHERE n.id = $1 AND n.project_id = $2 AND n.deleted_at IS NULL`,
@@ -823,7 +816,7 @@ func (h *WBSHandler) getNode(ctx context.Context, nodeID, projectID uuid.UUID) (
 		&node.ID, &node.ProjectID, &node.ParentID, &node.UserID, &node.Title, &node.Description,
 		&node.Status, &node.Priority, &node.Progress, &node.Depth, &node.Path, &node.Position,
 		&node.AssigneeID, &node.PlannedStart, &node.PlannedEnd, &node.Duration, &node.IsCritical,
-		&aiStepsJSON, &node.Version, &node.CreatedAt, &node.UpdatedAt, &hasChildren,
+		&node.Version, &node.CreatedAt, &node.UpdatedAt, &hasChildren,
 	)
 
 	if err == pgx.ErrNoRows {
@@ -833,31 +826,22 @@ func (h *WBSHandler) getNode(ctx context.Context, nodeID, projectID uuid.UUID) (
 		return nil, false, fiber.NewError(fiber.StatusInternalServerError, "database error")
 	}
 
-	if aiStepsJSON != nil {
-		_ = node.SetAIStepsFromJSON(aiStepsJSON)
-	}
-
 	return &node, hasChildren, nil
 }
 
 func scanWBSNode(rows pgx.Rows) (*models.WBSNode, bool, error) {
 	var node models.WBSNode
 	var hasChildren bool
-	var aiStepsJSON []byte
 
 	err := rows.Scan(
 		&node.ID, &node.ProjectID, &node.ParentID, &node.Title, &node.Description,
 		&node.Status, &node.Priority, &node.Progress, &node.Depth, &node.Path,
 		&node.Position, &node.AssigneeID, &node.PlannedStart, &node.PlannedEnd,
-		&node.Duration, &node.IsCritical, &aiStepsJSON, &node.CreatedAt, &node.UpdatedAt,
+		&node.Duration, &node.IsCritical, &node.CreatedAt, &node.UpdatedAt,
 		&hasChildren,
 	)
 	if err != nil {
 		return nil, false, err
-	}
-
-	if aiStepsJSON != nil {
-		_ = node.SetAIStepsFromJSON(aiStepsJSON)
 	}
 
 	return &node, hasChildren, nil
@@ -878,7 +862,6 @@ func toWBSNodeResponse(n *models.WBSNode, hasChildren bool) WBSNodeResponse {
 		Duration:    n.Duration,
 		IsCritical:  n.IsCritical,
 		HasChildren: hasChildren,
-		AISteps:     n.AISteps,
 		CreatedAt:   n.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:   n.UpdatedAt.Format(time.RFC3339),
 	}

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flow_models/flow_models.dart';
 import 'package:flow_tasks/core/constants/app_colors.dart';
 import 'package:flow_tasks/core/constants/app_spacing.dart';
@@ -11,6 +12,7 @@ class TaskTile extends StatelessWidget {
   final VoidCallback onComplete;
   final VoidCallback onUncomplete;
   final VoidCallback? onDelete;
+  final bool isAdmin;
 
   const TaskTile({
     super.key,
@@ -19,6 +21,7 @@ class TaskTile extends StatelessWidget {
     required this.onComplete,
     required this.onUncomplete,
     this.onDelete,
+    this.isAdmin = false,
   });
 
   @override
@@ -164,9 +167,8 @@ class TaskTile extends StatelessWidget {
       ));
     }
 
-    // Steps progress
-    if (task.aiSteps.isNotEmpty) {
-      final done = task.aiSteps.where((s) => s.done).length;
+    // Subtask count indicator
+    if (task.childrenCount > 0) {
       parts.add(Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -177,7 +179,7 @@ class TaskTile extends StatelessWidget {
           ),
           const SizedBox(width: 4),
           Text(
-            '$done/${task.aiSteps.length}',
+            '${task.childrenCount}',
             style: TextStyle(
               fontSize: 12,
               color: colors.textTertiary,
@@ -208,6 +210,44 @@ class TaskTile extends StatelessWidget {
       // All other dates: "Jan 15" format
       return DateFormat('MMM d').format(date);
     }
+  }
+
+  Widget _buildAdminIdRow(BuildContext context) {
+    final colors = context.flowColors;
+    // Show first 8 chars of ID for brevity
+    final shortId = task.id.length > 8 ? task.id.substring(0, 8) : task.id;
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          shortId,
+          style: TextStyle(
+            fontSize: 10,
+            fontFamily: 'monospace',
+            color: colors.textTertiary.withOpacity(0.7),
+          ),
+        ),
+        const SizedBox(width: 4),
+        GestureDetector(
+          onTap: () {
+            Clipboard.setData(ClipboardData(text: task.id));
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Copied: ${task.id}'),
+                duration: const Duration(seconds: 2),
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          },
+          child: Icon(
+            Icons.copy_rounded,
+            size: 12,
+            color: colors.textTertiary.withOpacity(0.7),
+          ),
+        ),
+      ],
+    );
   }
 }
 

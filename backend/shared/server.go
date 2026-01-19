@@ -16,6 +16,7 @@ import (
 	"github.com/csaptu/flow/pkg/config"
 	"github.com/csaptu/flow/pkg/llm"
 	"github.com/csaptu/flow/pkg/middleware"
+	"github.com/csaptu/flow/shared/ai"
 	"github.com/csaptu/flow/shared/auth"
 	"github.com/csaptu/flow/shared/repository"
 	"github.com/csaptu/flow/shared/subscription"
@@ -42,6 +43,14 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	// Initialize repository (for internal monorepo API calls)
 	if err := repository.Init(cfg); err != nil {
 		return nil, fmt.Errorf("failed to initialize repository: %w", err)
+	}
+
+	// Initialize tasks database connection (for AI features that need task access)
+	fmt.Printf("[Shared] Tasks DB URL configured: %s\n", cfg.Databases.Tasks.URL)
+	if err := repository.InitTasksDB(cfg); err != nil {
+		fmt.Printf("Warning: Tasks DB initialization failed (AI features may be limited): %v\n", err)
+	} else {
+		fmt.Printf("[Shared] Tasks DB connection successful\n")
 	}
 
 	// Initialize Redis client
@@ -173,6 +182,28 @@ func (s *Server) registerRoutes() {
 	protected.Get("/plans", subHandler.ListPlans)
 	protected.Get("/plans/:plan_id", subHandler.GetPlan)
 
+	// AI routes (protected)
+	aiHandler := ai.NewHandler(s.llm)
+
+	// Task AI features
+	tasks := protected.Group("/tasks")
+	tasks.Post("/:id/ai/decompose", aiHandler.AIDecompose)
+	tasks.Post("/:id/ai/clean", aiHandler.AIClean)
+	tasks.Post("/:id/ai/revert", aiHandler.AIRevert)
+	tasks.Post("/:id/ai/rate", aiHandler.AIRate)
+	tasks.Post("/:id/ai/extract", aiHandler.AIExtract)
+	tasks.Post("/:id/ai/remind", aiHandler.AIRemind)
+	tasks.Post("/:id/ai/email", aiHandler.AIEmail)
+	tasks.Post("/:id/ai/invite", aiHandler.AIInvite)
+
+	// AI management routes
+	aiRoutes := protected.Group("/ai")
+	aiRoutes.Get("/usage", aiHandler.GetAIUsage)
+	aiRoutes.Get("/tier", aiHandler.GetUserTier)
+	aiRoutes.Get("/drafts", aiHandler.GetAIDrafts)
+	aiRoutes.Post("/drafts/:id/approve", aiHandler.ApproveDraft)
+	aiRoutes.Delete("/drafts/:id", aiHandler.DeleteDraft)
+
 	// Internal routes (for service-to-service calls)
 	// Note: For monorepo internal calls, use shared/repository directly instead of HTTP
 	internal := v1.Group("/internal")
@@ -229,6 +260,9 @@ func (s *Server) ShutdownWithContext(ctx context.Context) error {
 	if s.db != nil {
 		s.db.Close()
 	}
+
+	// Close tasks database connection
+	repository.CloseTasksDB()
 
 	// Close Redis connection
 	if s.redis != nil {

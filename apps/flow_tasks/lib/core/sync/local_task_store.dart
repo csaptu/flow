@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flow_models/flow_models.dart';
@@ -21,7 +22,16 @@ class LocalTaskStore extends StateNotifier<LocalTaskState> {
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
 
-    // Load pending operations
+    // On web, clear local storage on new browser session to start fresh
+    // (localStorage persists across sessions, but we want fresh start)
+    if (kIsWeb) {
+      await prefs.remove('sync_operations');
+      await prefs.remove('optimistic_tasks');
+      await prefs.remove('deleted_task_ids');
+      return; // Start with empty state
+    }
+
+    // For mobile: Load pending operations
     final opsJson = prefs.getStringList('sync_operations') ?? [];
     final operations = opsJson
         .map((json) => SyncOperation.fromJson(jsonDecode(json)))
@@ -86,6 +96,26 @@ class LocalTaskStore extends StateNotifier<LocalTaskState> {
     state = state.copyWith(
       serverTasks: newServer,
       optimisticTasks: newOptimistic,
+      incrementVersion: true,
+    );
+  }
+
+  /// Update multiple tasks from server at once (e.g., after AI decompose)
+  void updateTasksFromServer(List<Task> tasks) {
+    if (tasks.isEmpty) return;
+
+    final newServer = Map<String, Task>.from(state.serverTasks);
+    final newOptimistic = Map<String, Task>.from(state.optimisticTasks);
+
+    for (final task in tasks) {
+      newServer[task.id] = task;
+      newOptimistic.remove(task.id);
+    }
+
+    state = state.copyWith(
+      serverTasks: newServer,
+      optimisticTasks: newOptimistic,
+      incrementVersion: true,
     );
   }
 
@@ -114,6 +144,7 @@ class LocalTaskStore extends StateNotifier<LocalTaskState> {
     DateTime? dueDate,
     int? priority,
     List<String>? tags,
+    String? parentId,
   }) async {
     final now = DateTime.now();
     final taskId = generateClientId();
@@ -126,6 +157,8 @@ class LocalTaskStore extends StateNotifier<LocalTaskState> {
       dueDate: dueDate,
       priority: priority != null ? Priority.fromInt(priority) : Priority.none,
       tags: tags ?? [],
+      parentId: parentId,
+      depth: parentId != null ? 1 : 0,
       status: TaskStatus.pending,
       createdAt: now,
       updatedAt: now,
@@ -138,9 +171,10 @@ class LocalTaskStore extends StateNotifier<LocalTaskState> {
       data: {
         'title': title,
         'description': description,
-        'due_date': dueDate?.toIso8601String(),
+        'due_date': dueDate?.toUtc().toIso8601String(),
         'priority': priority,
         'tags': tags,
+        'parent_id': parentId,
       },
     );
 
@@ -160,6 +194,7 @@ class LocalTaskStore extends StateNotifier<LocalTaskState> {
     String? title,
     String? description,
     DateTime? dueDate,
+    bool clearDueDate = false, // Set to true to explicitly clear the date
     int? priority,
     String? status,
     List<String>? tags,
@@ -172,16 +207,28 @@ class LocalTaskStore extends StateNotifier<LocalTaskState> {
       throw Exception('Task not found: $taskId');
     }
 
-    // Create updated task
-    final updated = existing.copyWith(
-      title: title,
-      description: description,
-      dueDate: dueDate,
-      priority: priority != null ? Priority.fromInt(priority) : null,
-      status: status != null ? TaskStatus.fromString(status) : null,
-      tags: tags,
-      skipAutoCleanup: skipAutoCleanup,
+    // Create updated task - handle nullable dueDate specially
+    final updatedDueDate = clearDueDate ? null : (dueDate ?? existing.dueDate);
+    final updated = Task(
+      id: existing.id,
+      title: title ?? existing.title,
+      description: description ?? existing.description,
+      aiSummary: existing.aiSummary,
+      status: status != null ? TaskStatus.fromString(status) : existing.status,
+      priority: priority != null ? Priority.fromInt(priority) : existing.priority,
+      dueDate: updatedDueDate,
+      completedAt: existing.completedAt,
+      tags: tags ?? existing.tags,
+      parentId: existing.parentId,
+      depth: existing.depth,
+      complexity: existing.complexity,
+      hasChildren: existing.hasChildren,
+      childrenCount: existing.childrenCount,
+      createdAt: existing.createdAt,
       updatedAt: DateTime.now(),
+      originalTitle: existing.originalTitle,
+      originalDescription: existing.originalDescription,
+      skipAutoCleanup: skipAutoCleanup ?? existing.skipAutoCleanup,
     );
 
     // Create sync operation
@@ -191,7 +238,8 @@ class LocalTaskStore extends StateNotifier<LocalTaskState> {
       data: {
         if (title != null) 'title': title,
         if (description != null) 'description': description,
-        if (dueDate != null) 'due_date': dueDate.toIso8601String(),
+        if (dueDate != null) 'due_date': dueDate.toUtc().toIso8601String(),
+        if (clearDueDate) 'due_date': null, // Explicitly send null to clear
         if (priority != null) 'priority': priority,
         if (status != null) 'status': status,
         if (tags != null) 'tags': tags,
@@ -417,4 +465,11 @@ class LocalTaskState {
 
   bool get hasPendingChanges => pendingOperations.isNotEmpty;
   int get pendingCount => pendingOperations.length;
+
+  /// Check if a specific task has a pending create operation
+  bool hasPendingCreate(String taskId) {
+    return pendingOperations.any(
+      (op) => op.entityId == taskId && op.type == SyncOperationType.create,
+    );
+  }
 }

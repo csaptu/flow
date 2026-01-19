@@ -66,7 +66,6 @@ func NewWBSNode(projectID, userID uuid.UUID, title string) *WBSNode {
 			Status:    models.StatusPending,
 			Priority:  models.PriorityNone,
 			Tags:      []string{},
-			AISteps:   []models.TaskStep{},
 			CreatedAt: now,
 			UpdatedAt: now,
 		},

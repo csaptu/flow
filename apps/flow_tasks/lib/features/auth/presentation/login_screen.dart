@@ -7,9 +7,10 @@ import 'package:flow_tasks/core/constants/app_spacing.dart';
 import 'package:flow_tasks/core/providers/providers.dart';
 
 // Dev accounts for quick login (only shown in debug mode)
+// Uses aliases that the server resolves to real emails
 const _devAccounts = [
-  ('tupham@prepedu.com', 'Tu Pham'),
-  ('alice@prepedu.com', 'Alice'),
+  ('tupham', 'Tu Pham'),  // -> quangtu.pham@gmail.com
+  ('alice', 'Alice'),      // -> alice@prepedu.com
 ];
 
 class LoginScreen extends ConsumerStatefulWidget {
@@ -358,7 +359,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     const SizedBox(height: FlowSpacing.xxl),
                     // Version info
                     Text(
-                      'v2026-01-18 20:07 GMT+7',
+                      'v2025-01-19 18:30 GMT+7',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                             color: FlowColors.lightTextSecondary.withOpacity(0.5),
                           ),
@@ -366,7 +367,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Admin in sidebar, bottom sheet drag fix, API timeout increase',
+                      'AI subtasks now show immediately, AI clean removes periods',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                             color: FlowColors.lightTextSecondary.withOpacity(0.4),
                             fontSize: 10,
