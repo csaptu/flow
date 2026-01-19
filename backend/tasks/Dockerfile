@@ -1,5 +1,8 @@
 FROM golang:1.22-alpine AS builder
 
+# Cache bust: 2025-01-19-v2
+ARG CACHEBUST=1
+
 WORKDIR /app
 
 # Install dependencies
@@ -42,5 +45,6 @@ COPY --from=builder /app/tasks/database/migrations ./database/migrations
 
 EXPOSE 8081
 
-# Run migrations then start server (continue even if migrations report no change)
-CMD ["sh", "-c", "./migrate up || true; ./tasks-service"]
+# Skip migrations (already at v14) and start server directly
+# Migrations can be run manually if needed
+CMD ["./tasks-service"]
