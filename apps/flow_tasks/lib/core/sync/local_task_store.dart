@@ -164,6 +164,7 @@ class LocalTaskStore extends StateNotifier<LocalTaskState> {
     String? status,
     List<String>? tags,
     bool? skipAutoCleanup,
+    String? parentId, // Set to empty string to remove parent
   }) async {
     // Find existing task
     final existing = state.optimisticTasks[taskId] ?? state.serverTasks[taskId];
@@ -194,6 +195,7 @@ class LocalTaskStore extends StateNotifier<LocalTaskState> {
         if (priority != null) 'priority': priority,
         if (status != null) 'status': status,
         if (tags != null) 'tags': tags,
+        if (parentId != null) 'parent_id': parentId,
       },
     );
 
