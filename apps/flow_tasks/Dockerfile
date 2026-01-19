@@ -18,7 +18,7 @@ RUN flutter pub get
 
 # Build for web - API URLs for production
 # Each service has its own URL - shared handles auth, tasks handles tasks
-ARG TASKS_API_URL=https://tasks-api-production.up.railway.app/api/v1
+ARG TASKS_API_URL=https://tasks-api-production-0064.up.railway.app/api/v1
 ARG SHARED_API_URL=https://shared-api-production.up.railway.app/api/v1
 ARG PROJECTS_API_URL=https://projects-api-production.up.railway.app/api/v1
 
