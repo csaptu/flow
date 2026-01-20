@@ -20,7 +20,7 @@ RUN flutter pub get
 # Each service has its own URL - shared handles auth, tasks handles tasks
 ARG TASKS_API_URL=https://tasks-api-production-0064.up.railway.app/api/v1
 ARG SHARED_API_URL=https://shared-api-production.up.railway.app/api/v1
-ARG PROJECTS_API_URL=https://projects-api-production.up.railway.app/api/v1
+ARG PROJECTS_API_URL=https://projects-api-production-95b7.up.railway.app/api/v1
 
 RUN flutter build web --release \
     --dart-define=TASKS_API_URL=$TASKS_API_URL \
