@@ -334,8 +334,37 @@ class _ExpandableTaskTileState extends ConsumerState<ExpandableTaskTile>
           const SizedBox(height: 4),
           _buildMetadataRow(colors),
         ],
+
+        // Entity chips (compact mode for list view)
+        if (task.entities.isNotEmpty && !isCompleted) ...[
+          const SizedBox(height: 6),
+          _buildEntityChips(colors),
+        ],
       ],
     );
+  }
+
+  Widget _buildEntityChips(FlowColorScheme colors) {
+    final task = widget.task;
+    // Show up to 3 entities in compact mode
+    final displayEntities = task.entities.take(3).toList();
+
+    return Wrap(
+      spacing: 4,
+      runSpacing: 4,
+      children: displayEntities.map((entity) {
+        return _CompactEntityChip(
+          entity: entity,
+          onTap: () => _navigateToSmartList(entity),
+        );
+      }).toList(),
+    );
+  }
+
+  void _navigateToSmartList(AIEntity entity) {
+    ref.read(selectedSmartListProvider.notifier).state = (type: entity.type, value: entity.value);
+    ref.read(selectedSidebarIndexProvider.notifier).state = 200;
+    ref.read(selectedListIdProvider.notifier).state = null;
   }
 
   Widget _buildAdminIdRow(FlowColorScheme colors, Task task) {
@@ -562,4 +591,100 @@ class _BearCheckbox extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Compact entity chip for task list view
+class _CompactEntityChip extends StatelessWidget {
+  final AIEntity entity;
+  final VoidCallback onTap;
+
+  const _CompactEntityChip({
+    required this.entity,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.flowColors;
+    final chipColors = _getEntityColors(entity.type, colors);
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          color: chipColors.background,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: chipColors.border, width: 0.5),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(chipColors.icon, size: 10, color: chipColors.foreground),
+            const SizedBox(width: 3),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 80),
+              child: Text(
+                entity.value,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: chipColors.foreground,
+                  fontWeight: FontWeight.w500,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  _EntityChipColors _getEntityColors(String type, FlowColorScheme colors) {
+    switch (type) {
+      case 'person':
+        return _EntityChipColors(
+          background: const Color(0xFF3B82F6).withOpacity(0.1),
+          foreground: const Color(0xFF3B82F6),
+          border: const Color(0xFF3B82F6).withOpacity(0.3),
+          icon: Icons.person_outline,
+        );
+      case 'location':
+        return _EntityChipColors(
+          background: const Color(0xFF10B981).withOpacity(0.1),
+          foreground: const Color(0xFF10B981),
+          border: const Color(0xFF10B981).withOpacity(0.3),
+          icon: Icons.location_on_outlined,
+        );
+      case 'organization':
+        return _EntityChipColors(
+          background: const Color(0xFF8B5CF6).withOpacity(0.1),
+          foreground: const Color(0xFF8B5CF6),
+          border: const Color(0xFF8B5CF6).withOpacity(0.3),
+          icon: Icons.business_outlined,
+        );
+      default:
+        return _EntityChipColors(
+          background: colors.textTertiary.withOpacity(0.1),
+          foreground: colors.textSecondary,
+          border: colors.textTertiary.withOpacity(0.3),
+          icon: Icons.label_outline,
+        );
+    }
+  }
+}
+
+class _EntityChipColors {
+  final Color background;
+  final Color foreground;
+  final Color border;
+  final IconData icon;
+
+  const _EntityChipColors({
+    required this.background,
+    required this.foreground,
+    required this.border,
+    required this.icon,
+  });
 }

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flow_models/flow_models.dart' show Task, TaskList, TaskStatus, AdminUser, Order, AIPromptConfig, SubscriptionPlan;
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flow_models/flow_models.dart' show Task, TaskList, TaskStatus, AdminUser, Order, AIPromptConfig, SubscriptionPlan, SmartListItem;
 import 'package:intl/intl.dart';
 import 'package:flow_tasks/core/constants/app_colors.dart';
 import 'package:flow_tasks/core/constants/app_spacing.dart';
@@ -243,6 +245,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       case 12: // Admin: AI Services
         return const _AdminAIServicesView();
       default:
+        // Index >= 200 means a smart list (entity) is selected
+        if (selectedIndex >= 200) {
+          return const _SmartListTaskList();
+        }
         // Index >= 100 means a list is selected
         if (selectedIndex >= 100) {
           return const _ListTaskList();
@@ -308,6 +314,65 @@ class _ListTaskList extends ConsumerWidget {
   }
 }
 
+/// Task list widget for viewing tasks filtered by Smart List entity
+class _SmartListTaskList extends ConsumerWidget {
+  const _SmartListTaskList();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final tasks = ref.watch(smartListTasksProvider);
+    final selection = ref.watch(selectedSmartListProvider);
+
+    if (tasks.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.lightbulb_outline, size: 64, color: Colors.grey[400]),
+            const SizedBox(height: 16),
+            Text(
+              selection != null
+                  ? 'No tasks mentioning "${selection.value}"'
+                  : 'No tasks found',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.grey[600], fontSize: 16),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      itemCount: tasks.length,
+      itemBuilder: (context, index) {
+        final task = tasks[index];
+        return widgets.ExpandableTaskTile(
+          task: task,
+          onComplete: () => _completeTask(ref, task),
+          onUncomplete: () => _uncompleteTask(ref, task),
+          onDelete: () => _deleteTask(ref, task),
+        );
+      },
+    );
+  }
+
+  Future<void> _completeTask(WidgetRef ref, Task task) async {
+    final actions = ref.read(taskActionsProvider);
+    await actions.complete(task.id);
+  }
+
+  Future<void> _uncompleteTask(WidgetRef ref, Task task) async {
+    final actions = ref.read(taskActionsProvider);
+    await actions.uncomplete(task.id);
+  }
+
+  Future<void> _deleteTask(WidgetRef ref, Task task) async {
+    final actions = ref.read(taskActionsProvider);
+    await actions.delete(task.id);
+  }
+}
+
 /// Draggable bottom sheet for task detail on mobile
 class _DraggableTaskSheet extends ConsumerStatefulWidget {
   final Task task;
@@ -318,24 +383,52 @@ class _DraggableTaskSheet extends ConsumerStatefulWidget {
   ConsumerState<_DraggableTaskSheet> createState() => _DraggableTaskSheetState();
 }
 
-class _DraggableTaskSheetState extends ConsumerState<_DraggableTaskSheet> {
+class _DraggableTaskSheetState extends ConsumerState<_DraggableTaskSheet>
+    with WidgetsBindingObserver {
   final DraggableScrollableController _controller =
       DraggableScrollableController();
   double _dragStartSize = 0.5;
   double _totalDragDelta = 0; // Track total drag direction
   bool _isClosing = false;
+  double _previousKeyboardHeight = 0;
 
   @override
   void initState() {
     super.initState();
     _controller.addListener(_onSizeChanged);
+    WidgetsBinding.instance.addObserver(this);
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _controller.removeListener(_onSizeChanged);
     _controller.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeMetrics() {
+    super.didChangeMetrics();
+    // Use post-frame callback to ensure MediaQuery is updated
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _isClosing) return;
+
+      // Detect keyboard appearance
+      final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
+      final keyboardAppeared = keyboardHeight > 0 && _previousKeyboardHeight == 0;
+      _previousKeyboardHeight = keyboardHeight;
+
+      // When keyboard appears and sheet is not already at full height, expand it
+      if (keyboardAppeared && _controller.size < 0.9) {
+        debugPrint('[TaskSheet] Keyboard appeared - expanding to full');
+        _controller.animateTo(
+          1.0,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+        );
+      }
+    });
   }
 
   void _onSizeChanged() {
@@ -555,18 +648,20 @@ class _Header extends ConsumerWidget {
                   const Spacer(),
                   // Sync indicator
                   const _SyncIndicator(),
-                  // Group by Date toggle
+                  // Group by Date toggle (with popup for completed view)
                   if (showGroupByDate)
-                    IconButton(
-                      icon: Icon(
-                        Icons.view_agenda_outlined,
-                        color: groupByDate ? colors.primary : colors.textSecondary,
-                      ),
-                      tooltip: groupByDate ? 'Ungroup tasks' : 'Group by date',
-                      onPressed: () {
-                        ref.read(groupByDateProvider.notifier).state = !groupByDate;
-                      },
-                    ),
+                    selectedIndex == 3 // Completed view
+                        ? _CompletedGroupByButton(colors: colors, groupByDate: groupByDate)
+                        : IconButton(
+                            icon: Icon(
+                              Icons.view_agenda_outlined,
+                              color: groupByDate ? colors.primary : colors.textSecondary,
+                            ),
+                            tooltip: groupByDate ? 'Ungroup tasks' : 'Group by date',
+                            onPressed: () {
+                              ref.read(groupByDateProvider.notifier).state = !groupByDate;
+                            },
+                          ),
                   // Global search
                   IconButton(
                     icon: const Icon(Icons.search),
@@ -620,20 +715,22 @@ class _Header extends ConsumerWidget {
           const Spacer(),
           // Sync indicator with success animation
           const _SyncIndicator(),
-          // Group by Date toggle
+          // Group by Date toggle (with popup for completed view)
           if (showGroupByDate)
-            Tooltip(
-              message: groupByDate ? 'Ungroup tasks' : 'Group by date',
-              child: IconButton(
-                icon: Icon(
-                  Icons.view_agenda_outlined,
-                  color: groupByDate ? colors.primary : colors.textSecondary,
-                ),
-                onPressed: () {
-                  ref.read(groupByDateProvider.notifier).state = !groupByDate;
-                },
-              ),
-            ),
+            selectedIndex == 3 // Completed view
+                ? _CompletedGroupByButton(colors: colors, groupByDate: groupByDate)
+                : Tooltip(
+                    message: groupByDate ? 'Ungroup tasks' : 'Group by date',
+                    child: IconButton(
+                      icon: Icon(
+                        Icons.view_agenda_outlined,
+                        color: groupByDate ? colors.primary : colors.textSecondary,
+                      ),
+                      onPressed: () {
+                        ref.read(groupByDateProvider.notifier).state = !groupByDate;
+                      },
+                    ),
+                  ),
           // Global search
           Tooltip(
             message: 'Search tasks',
@@ -660,6 +757,94 @@ class _Header extends ConsumerWidget {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => const _ListsDrawer(),
+    );
+  }
+}
+
+/// Group by button with popup menu for completed tasks view
+class _CompletedGroupByButton extends ConsumerWidget {
+  final FlowColorScheme colors;
+  final bool groupByDate;
+
+  const _CompletedGroupByButton({
+    required this.colors,
+    required this.groupByDate,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final completedGroupMode = ref.watch(completedGroupModeProvider);
+
+    return PopupMenuButton<String>(
+      icon: Icon(
+        Icons.view_agenda_outlined,
+        color: groupByDate ? colors.primary : colors.textSecondary,
+      ),
+      tooltip: 'Group by',
+      onSelected: (value) {
+        if (value == 'none') {
+          ref.read(groupByDateProvider.notifier).state = false;
+        } else if (value == 'due_date') {
+          ref.read(groupByDateProvider.notifier).state = true;
+          ref.read(completedGroupModeProvider.notifier).state = CompletedGroupMode.dueDate;
+        } else if (value == 'completion_date') {
+          ref.read(groupByDateProvider.notifier).state = true;
+          ref.read(completedGroupModeProvider.notifier).state = CompletedGroupMode.completionDate;
+        }
+      },
+      itemBuilder: (context) => [
+        PopupMenuItem<String>(
+          value: 'due_date',
+          child: Row(
+            children: [
+              Icon(
+                groupByDate && completedGroupMode == CompletedGroupMode.dueDate
+                    ? Icons.radio_button_checked
+                    : Icons.radio_button_unchecked,
+                size: 18,
+                color: groupByDate && completedGroupMode == CompletedGroupMode.dueDate
+                    ? colors.primary
+                    : colors.textSecondary,
+              ),
+              const SizedBox(width: 12),
+              const Text('Due date'),
+            ],
+          ),
+        ),
+        PopupMenuItem<String>(
+          value: 'completion_date',
+          child: Row(
+            children: [
+              Icon(
+                groupByDate && completedGroupMode == CompletedGroupMode.completionDate
+                    ? Icons.radio_button_checked
+                    : Icons.radio_button_unchecked,
+                size: 18,
+                color: groupByDate && completedGroupMode == CompletedGroupMode.completionDate
+                    ? colors.primary
+                    : colors.textSecondary,
+              ),
+              const SizedBox(width: 12),
+              const Text('Completion date'),
+            ],
+          ),
+        ),
+        const PopupMenuDivider(),
+        PopupMenuItem<String>(
+          value: 'none',
+          child: Row(
+            children: [
+              Icon(
+                !groupByDate ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+                size: 18,
+                color: !groupByDate ? colors.primary : colors.textSecondary,
+              ),
+              const SizedBox(width: 12),
+              const Text('No grouping'),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
@@ -1381,6 +1566,19 @@ class _SidebarState extends ConsumerState<_Sidebar> {
                     onListTap: (listId) {
                       ref.read(selectedListIdProvider.notifier).state = listId;
                       ref.read(selectedSidebarIndexProvider.notifier).state = 100;
+                      ref.read(selectedSmartListProvider.notifier).state = null;
+                    },
+                  ),
+                ],
+
+                // Smart Lists section (AI-extracted entities) - hide when collapsed
+                if (!collapsed) ...[
+                  const SizedBox(height: 16),
+                  _SmartListsSection(
+                    onEntityTap: (type, value) {
+                      ref.read(selectedSmartListProvider.notifier).state = (type: type, value: value);
+                      ref.read(selectedSidebarIndexProvider.notifier).state = 200;
+                      ref.read(selectedListIdProvider.notifier).state = null;
                     },
                   ),
                 ],
@@ -1851,14 +2049,53 @@ class _GlobalSearchDialog extends ConsumerStatefulWidget {
 class _GlobalSearchDialogState extends ConsumerState<_GlobalSearchDialog> {
   final _controller = TextEditingController();
   final _focusNode = FocusNode();
+  int _selectedRecentIndex = -1;
+  static const String _recentSearchesKey = 'recent_searches';
 
   @override
   void initState() {
     super.initState();
+    _loadRecentSearches();
     // Auto-focus the search field
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _focusNode.requestFocus();
     });
+  }
+
+  Future<void> _loadRecentSearches() async {
+    final prefs = await SharedPreferences.getInstance();
+    final searches = prefs.getStringList(_recentSearchesKey) ?? [];
+    ref.read(recentSearchesProvider.notifier).state = searches;
+  }
+
+  Future<void> _saveRecentSearch(String query) async {
+    if (query.trim().isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    final searches = List<String>.from(ref.read(recentSearchesProvider));
+    // Remove if exists, add to front
+    searches.remove(query);
+    searches.insert(0, query);
+    // Keep max 10
+    if (searches.length > 10) searches.removeLast();
+    await prefs.setStringList(_recentSearchesKey, searches);
+    ref.read(recentSearchesProvider.notifier).state = searches;
+  }
+
+  Future<void> _clearRecentSearches() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_recentSearchesKey);
+    ref.read(recentSearchesProvider.notifier).state = [];
+  }
+
+  void _selectRecentSearch(String search) {
+    _controller.text = search;
+    _controller.selection = TextSelection.fromPosition(
+      TextPosition(offset: _controller.text.length),
+    );
+    ref.read(globalSearchQueryProvider.notifier).state = search;
+    _selectedRecentIndex = -1;
+    setState(() {});
+    _focusNode.requestFocus();
   }
 
   @override
@@ -1876,93 +2113,238 @@ class _GlobalSearchDialogState extends ConsumerState<_GlobalSearchDialog> {
   Widget build(BuildContext context) {
     final colors = context.flowColors;
     final results = ref.watch(globalSearchResultsProvider);
+    final recentSearches = ref.watch(recentSearchesProvider);
     final screenWidth = MediaQuery.of(context).size.width;
-    final dialogWidth = screenWidth < 600 ? screenWidth * 0.9 : 500.0;
+    final dialogWidth = screenWidth < 600 ? screenWidth * 0.9 : 450.0;
+    final isSearching = _controller.text.isNotEmpty;
 
     return Dialog(
       backgroundColor: colors.surface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Container(
-        width: dialogWidth,
-        constraints: const BoxConstraints(maxHeight: 500),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Search input
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: TextField(
-                controller: _controller,
-                focusNode: _focusNode,
-                decoration: InputDecoration(
-                  hintText: 'Search tasks...',
-                  prefixIcon: const Icon(Icons.search),
-                  suffixIcon: _controller.text.isNotEmpty
-                      ? IconButton(
-                          icon: const Icon(Icons.clear),
-                          onPressed: () {
-                            _controller.clear();
-                            ref.read(globalSearchQueryProvider.notifier).state = '';
-                          },
-                        )
-                      : null,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: BorderSide(color: colors.border),
+      child: KeyboardListener(
+        focusNode: FocusNode(),
+        onKeyEvent: (event) {
+          if (event is KeyDownEvent && !isSearching && recentSearches.isNotEmpty) {
+            if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+              setState(() {
+                _selectedRecentIndex = (_selectedRecentIndex + 1) % recentSearches.length;
+              });
+            } else if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+              setState(() {
+                _selectedRecentIndex = _selectedRecentIndex <= 0
+                    ? recentSearches.length - 1
+                    : _selectedRecentIndex - 1;
+              });
+            } else if (event.logicalKey == LogicalKeyboardKey.enter && _selectedRecentIndex >= 0) {
+              _selectRecentSearch(recentSearches[_selectedRecentIndex]);
+            }
+          }
+        },
+        child: Container(
+          width: dialogWidth,
+          constraints: const BoxConstraints(maxHeight: 550),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Search input
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: TextField(
+                  controller: _controller,
+                  focusNode: _focusNode,
+                  style: const TextStyle(fontSize: 16),
+                  decoration: InputDecoration(
+                    hintText: 'Search tasks...',
+                    hintStyle: TextStyle(color: colors.textTertiary, fontSize: 16),
+                    prefixIcon: Icon(Icons.search, color: colors.textTertiary),
+                    suffixIcon: _controller.text.isNotEmpty
+                        ? IconButton(
+                            icon: Icon(Icons.clear, color: colors.textTertiary),
+                            onPressed: () {
+                              _controller.clear();
+                              ref.read(globalSearchQueryProvider.notifier).state = '';
+                              _selectedRecentIndex = -1;
+                              setState(() {});
+                            },
+                          )
+                        : null,
+                    filled: true,
+                    fillColor: colors.background,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide.none,
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide(color: colors.primary, width: 1.5),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                   ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: BorderSide(color: colors.primary),
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  onChanged: (value) {
+                    ref.read(globalSearchQueryProvider.notifier).state = value;
+                    _selectedRecentIndex = -1;
+                    setState(() {});
+                  },
+                  onSubmitted: (value) {
+                    if (value.isNotEmpty && results.isNotEmpty) {
+                      _saveRecentSearch(value);
+                      Navigator.of(context).pop();
+                      ref.read(selectedTaskIdProvider.notifier).state = results.first.id;
+                      ref.read(selectedSidebarIndexProvider.notifier).state = 2;
+                      ref.read(selectedListIdProvider.notifier).state = null;
+                    }
+                  },
                 ),
-                onChanged: (value) {
-                  ref.read(globalSearchQueryProvider.notifier).state = value;
-                  setState(() {});
-                },
               ),
-            ),
-            // Results
-            if (_controller.text.isNotEmpty) ...[
+
               Divider(height: 1, color: colors.divider),
-              Flexible(
-                child: results.isEmpty
-                    ? Padding(
-                        padding: const EdgeInsets.all(32),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
+
+              // Recent searches (when not searching)
+              if (!isSearching && recentSearches.isNotEmpty) ...[
+                Flexible(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                        child: Row(
                           children: [
-                            Icon(Icons.search_off, size: 48, color: colors.textTertiary),
-                            const SizedBox(height: 12),
+                            Icon(Icons.history, size: 14, color: colors.textTertiary),
+                            const SizedBox(width: 6),
                             Text(
-                              'No tasks found',
-                              style: TextStyle(color: colors.textSecondary),
+                              'Recent Searches',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                                color: colors.textTertiary,
+                              ),
+                            ),
+                            const Spacer(),
+                            GestureDetector(
+                              onTap: _clearRecentSearches,
+                              child: Text(
+                                'Clear',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: colors.primary,
+                                ),
+                              ),
                             ),
                           ],
                         ),
-                      )
-                    : ListView.builder(
-                        shrinkWrap: true,
-                        padding: const EdgeInsets.symmetric(vertical: 8),
-                        itemCount: results.length,
-                        itemBuilder: (context, index) {
-                          final task = results[index];
-                          return _SearchResultItem(
-                            task: task,
-                            onTap: () {
-                              Navigator.of(context).pop();
-                              // Select the task
-                              ref.read(selectedTaskIdProvider.notifier).state = task.id;
-                              // Switch to All view to ensure task is visible
-                              ref.read(selectedSidebarIndexProvider.notifier).state = 2;
-                              ref.read(selectedListIdProvider.notifier).state = null;
-                            },
-                          );
-                        },
                       ),
-              ),
+                      Flexible(
+                        child: ListView.builder(
+                          shrinkWrap: true,
+                          padding: const EdgeInsets.only(bottom: 8),
+                          itemCount: recentSearches.length,
+                          itemBuilder: (context, index) {
+                            final search = recentSearches[index];
+                            final isSelected = index == _selectedRecentIndex;
+                            return InkWell(
+                              onTap: () => _selectRecentSearch(search),
+                              child: Container(
+                                color: isSelected ? colors.primary.withAlpha(20) : null,
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.history,
+                                      size: 16,
+                                      color: isSelected ? colors.primary : colors.textTertiary,
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Text(
+                                        search,
+                                        style: TextStyle(
+                                          fontSize: 14,
+                                          color: isSelected ? colors.primary : colors.textPrimary,
+                                        ),
+                                      ),
+                                    ),
+                                    Icon(
+                                      Icons.north_west,
+                                      size: 14,
+                                      color: colors.textTertiary,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+
+              // Empty state when no recent searches
+              if (!isSearching && recentSearches.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.all(32),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.search, size: 40, color: colors.textTertiary),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Search for tasks',
+                        style: TextStyle(color: colors.textSecondary, fontSize: 14),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Type to find tasks by title or description',
+                        style: TextStyle(color: colors.textTertiary, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+
+              // Results (when searching)
+              if (isSearching) ...[
+                Flexible(
+                  child: results.isEmpty
+                      ? Padding(
+                          padding: const EdgeInsets.all(32),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.search_off, size: 48, color: colors.textTertiary),
+                              const SizedBox(height: 12),
+                              Text(
+                                'No tasks found',
+                                style: TextStyle(color: colors.textSecondary),
+                              ),
+                            ],
+                          ),
+                        )
+                      : ListView.builder(
+                          shrinkWrap: true,
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          itemCount: results.length,
+                          itemBuilder: (context, index) {
+                            final task = results[index];
+                            return _SearchResultItem(
+                              task: task,
+                              onTap: () {
+                                _saveRecentSearch(_controller.text);
+                                Navigator.of(context).pop();
+                                // Select the task
+                                ref.read(selectedTaskIdProvider.notifier).state = task.id;
+                                // Switch to All view to ensure task is visible
+                                ref.read(selectedSidebarIndexProvider.notifier).state = 2;
+                                ref.read(selectedListIdProvider.notifier).state = null;
+                              },
+                            );
+                          },
+                        ),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
@@ -3244,5 +3626,237 @@ class _AdminEditUserDialogState extends ConsumerState<_AdminEditUserDialog> {
     } finally {
       if (mounted) setState(() { _isLoading = false; });
     }
+  }
+}
+
+// =====================================================
+// Smart Lists Section (AI-extracted entities)
+// =====================================================
+
+class _SmartListsSection extends ConsumerWidget {
+  final void Function(String type, String value) onEntityTap;
+
+  const _SmartListsSection({required this.onEntityTap});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final colors = context.flowColors;
+    final isExpanded = ref.watch(smartListsExpandedProvider);
+    final entitiesAsync = ref.watch(smartListsProvider);
+    final selectedSmartList = ref.watch(selectedSmartListProvider);
+
+    return entitiesAsync.when(
+      data: (entities) {
+        if (entities.isEmpty) return const SizedBox.shrink();
+
+        // Count total entities
+        final totalCount = entities.values.fold<int>(0, (sum, items) => sum + items.length);
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header row: Smart Lists label + expand/collapse
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              child: InkWell(
+                onTap: () {
+                  ref.read(smartListsExpandedProvider.notifier).state = !isExpanded;
+                },
+                borderRadius: BorderRadius.circular(4),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        isExpanded ? Icons.expand_more : Icons.chevron_right,
+                        size: 16,
+                        color: colors.textTertiary,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Smart Lists',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: colors.textTertiary,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        '($totalCount)',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: colors.textTertiary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
+            // Entity categories (when expanded)
+            if (isExpanded) ...[
+              // People
+              if (entities['person']?.isNotEmpty ?? false)
+                _SmartListCategory(
+                  icon: Icons.person_outline,
+                  label: 'People',
+                  items: entities['person']!,
+                  selectedItem: selectedSmartList?.type == 'person' ? selectedSmartList?.value : null,
+                  onItemTap: (value) => onEntityTap('person', value),
+                ),
+
+              // Locations
+              if (entities['location']?.isNotEmpty ?? false)
+                _SmartListCategory(
+                  icon: Icons.location_on_outlined,
+                  label: 'Locations',
+                  items: entities['location']!,
+                  selectedItem: selectedSmartList?.type == 'location' ? selectedSmartList?.value : null,
+                  onItemTap: (value) => onEntityTap('location', value),
+                ),
+
+              // Organizations
+              if (entities['organization']?.isNotEmpty ?? false)
+                _SmartListCategory(
+                  icon: Icons.business_outlined,
+                  label: 'Organizations',
+                  items: entities['organization']!,
+                  selectedItem: selectedSmartList?.type == 'organization' ? selectedSmartList?.value : null,
+                  onItemTap: (value) => onEntityTap('organization', value),
+                ),
+            ],
+          ],
+        );
+      },
+      loading: () => const SizedBox.shrink(),
+      error: (_, __) => const SizedBox.shrink(),
+    );
+  }
+}
+
+class _SmartListCategory extends StatefulWidget {
+  final IconData icon;
+  final String label;
+  final List<SmartListItem> items;
+  final String? selectedItem;
+  final void Function(String) onItemTap;
+
+  const _SmartListCategory({
+    required this.icon,
+    required this.label,
+    required this.items,
+    required this.selectedItem,
+    required this.onItemTap,
+  });
+
+  @override
+  State<_SmartListCategory> createState() => _SmartListCategoryState();
+}
+
+class _SmartListCategoryState extends State<_SmartListCategory> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.flowColors;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Category header
+        Padding(
+          padding: const EdgeInsets.only(left: 24, right: 12, top: 4, bottom: 2),
+          child: InkWell(
+            onTap: () => setState(() => _expanded = !_expanded),
+            borderRadius: BorderRadius.circular(4),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                children: [
+                  Icon(
+                    _expanded ? Icons.expand_more : Icons.chevron_right,
+                    size: 14,
+                    color: colors.textTertiary,
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(widget.icon, size: 14, color: colors.textTertiary),
+                  const SizedBox(width: 6),
+                  Text(
+                    widget.label,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w500,
+                      color: colors.textTertiary,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    '(${widget.items.length})',
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: colors.textTertiary.withOpacity(0.7),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+
+        // Entity items (when expanded)
+        if (_expanded)
+          ...widget.items.map((item) {
+            final isSelected = widget.selectedItem?.toLowerCase() == item.value.toLowerCase();
+            return Padding(
+              padding: const EdgeInsets.only(left: 36, right: 12, bottom: 2),
+              child: Material(
+                color: isSelected ? colors.sidebarSelected : Colors.transparent,
+                borderRadius: BorderRadius.circular(FlowSpacing.radiusSm),
+                child: InkWell(
+                  onTap: () => widget.onItemTap(item.value),
+                  borderRadius: BorderRadius.circular(FlowSpacing.radiusSm),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            item.value,
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: isSelected ? colors.textPrimary : colors.textSecondary,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: colors.textTertiary.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            '${item.count}',
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: colors.textTertiary,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }),
+      ],
+    );
   }
 }

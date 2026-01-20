@@ -154,7 +154,7 @@ func (h *TaskHandler) Create(c *fiber.Ctx) error {
 
 	_, err = h.db.Exec(c.Context(),
 		`INSERT INTO tasks (id, user_id, title, description, status, priority, due_date, tags,
-		 parent_id, depth, entities, version, created_at, updated_at)
+		 parent_id, depth, ai_entities, version, created_at, updated_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
 		task.ID, task.UserID, task.Title, task.Description, task.Status, task.Priority,
 		task.DueDate, task.Tags, task.ParentID, task.Depth, entitiesJSON,
@@ -640,7 +640,7 @@ func (h *TaskHandler) CreateChild(c *fiber.Ctx) error {
 
 	_, err = h.db.Exec(c.Context(),
 		`INSERT INTO tasks (id, user_id, title, description, status, priority, due_date, tags,
-		 parent_id, depth, entities, version, created_at, updated_at)
+		 parent_id, depth, ai_entities, version, created_at, updated_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
 		task.ID, task.UserID, task.Title, task.Description, task.Status, task.Priority,
 		task.DueDate, task.Tags, task.ParentID, task.Depth, entitiesJSON,
@@ -787,7 +787,7 @@ Each subtask should be:
 		subtask.UpdatedAt = now
 
 		_, err = h.db.Exec(c.Context(),
-			`INSERT INTO tasks (id, user_id, title, status, priority, tags, parent_id, depth, entities, version, created_at, updated_at)
+			`INSERT INTO tasks (id, user_id, title, status, priority, tags, parent_id, depth, ai_entities, version, created_at, updated_at)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 			subtask.ID, subtask.UserID, subtask.Title, subtask.Status, subtask.Priority,
 			subtask.Tags, subtask.ParentID, subtask.Depth, []byte("[]"),
@@ -1822,7 +1822,7 @@ func (h *TaskHandler) applyAIResultsToTask(ctx context.Context, userID, taskID u
 
 	if len(result.Entities) > 0 {
 		entitiesJSON, _ := json.Marshal(result.Entities)
-		updates = append(updates, fmt.Sprintf("entities = $%d", argNum))
+		updates = append(updates, fmt.Sprintf("ai_entities = $%d", argNum))
 		args = append(args, entitiesJSON)
 		argNum++
 	}

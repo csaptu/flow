@@ -1156,7 +1156,7 @@ class _AISettingsContent extends ConsumerWidget {
               ),
               const SizedBox(height: 8),
               Text(
-                'Configure how AI features behave. Auto runs automatically, Ask shows suggestions, Off disables.',
+                'Configure how AI features behave. Auto runs automatically, Manual requires user action, Off disables.',
                 style: TextStyle(
                   fontSize: 14,
                   color: colors.textSecondary,
@@ -1171,7 +1171,6 @@ class _AISettingsContent extends ConsumerWidget {
                 features: [
                   AIFeature.cleanTitle,
                   AIFeature.cleanDescription,
-                  AIFeature.smartDueDate,
                 ],
                 aiPrefs: aiPrefs,
                 userTier: userTier,
@@ -1186,24 +1185,9 @@ class _AISettingsContent extends ConsumerWidget {
                   AIFeature.decompose,
                   AIFeature.complexity,
                   AIFeature.entityExtraction,
-                  AIFeature.recurringDetection,
-                  AIFeature.autoGroup,
                   AIFeature.reminder,
                   AIFeature.draftEmail,
                   AIFeature.draftCalendar,
-                ],
-                aiPrefs: aiPrefs,
-                userTier: userTier,
-              ),
-              const SizedBox(height: 24),
-
-              // Premium tier features
-              _AIFeatureSection(
-                title: 'Premium Features',
-                subtitle: 'Requires Premium subscription',
-                features: [
-                  AIFeature.sendEmail,
-                  AIFeature.sendCalendar,
                 ],
                 aiPrefs: aiPrefs,
                 userTier: userTier,

@@ -1252,6 +1252,83 @@ class _EditUserDialogState extends ConsumerState<_EditUserDialog> {
 // AI Services Section
 // =====================================================
 
+/// Service definition with its configs and implementation status
+class _AIService {
+  final String name;
+  final String description;
+  final IconData icon;
+  final bool isImplemented;
+  final List<String> configKeys;
+
+  const _AIService({
+    required this.name,
+    required this.description,
+    required this.icon,
+    required this.isImplemented,
+    required this.configKeys,
+  });
+}
+
+/// All AI services with their configs
+const List<_AIService> _aiServices = [
+  _AIService(
+    name: 'Decompose',
+    description: 'Break down tasks into subtasks',
+    icon: Icons.account_tree_outlined,
+    isImplemented: true,
+    configKeys: ['decompose_rules', 'decompose_step_count'],
+  ),
+  _AIService(
+    name: 'Clean',
+    description: 'Clean up task titles and descriptions',
+    icon: Icons.auto_fix_high_outlined,
+    isImplemented: true,
+    configKeys: ['clean_title_instruction', 'summary_instruction'],
+  ),
+  _AIService(
+    name: 'Rate',
+    description: 'Rate task complexity (1-10)',
+    icon: Icons.speed_outlined,
+    isImplemented: true,
+    configKeys: ['complexity_instruction'],
+  ),
+  _AIService(
+    name: 'Extract',
+    description: 'Extract entities (people, places, etc.)',
+    icon: Icons.person_search_outlined,
+    isImplemented: true,
+    configKeys: ['entities_instruction'],
+  ),
+  _AIService(
+    name: 'Remind',
+    description: 'Suggest reminder times',
+    icon: Icons.notifications_outlined,
+    isImplemented: true,
+    configKeys: ['reminder_instruction'],
+  ),
+  _AIService(
+    name: 'Email',
+    description: 'Draft emails from task content',
+    icon: Icons.email_outlined,
+    isImplemented: true,
+    configKeys: [], // No configurable prompts yet
+  ),
+  _AIService(
+    name: 'Invite',
+    description: 'Draft calendar invites from task content',
+    icon: Icons.event_outlined,
+    isImplemented: true,
+    configKeys: [], // No configurable prompts yet
+  ),
+  _AIService(
+    name: 'Task Parsing',
+    description: 'Parse due dates, recurrence, and categories',
+    icon: Icons.text_fields_outlined,
+    isImplemented: false,
+    configKeys: ['due_date_instruction', 'recurrence_instruction', 'suggested_group_instruction'],
+  ),
+];
+
 /// AI Services content section
 class _AIServicesContent extends ConsumerStatefulWidget {
   final Function(AIPromptConfig) onEditConfig;
@@ -1266,6 +1343,7 @@ class _AIServicesContent extends ConsumerStatefulWidget {
 
 class _AIServicesContentState extends ConsumerState<_AIServicesContent> {
   bool _showHelp = false;
+  final Set<String> _expandedServices = {'Decompose', 'Clean'}; // Default expanded
 
   @override
   Widget build(BuildContext context) {
@@ -1292,17 +1370,114 @@ class _AIServicesContentState extends ConsumerState<_AIServicesContent> {
       return _buildEmptyState(colors, 'No AI configurations found');
     }
 
+    // Create a map for quick config lookup
+    final configMap = {for (var c in configs) c.key: c};
+
     return Column(
       children: [
         // Help toggle button
         _buildHelpToggle(colors),
         // Collapsible help section
         if (_showHelp) _buildHelpSection(colors),
-        // Config list
-        ...configs.map((config) => _AIConfigItem(
-          config: config,
-          onTap: () => widget.onEditConfig(config),
-        )),
+        // Services grouped with their configs
+        ..._aiServices.map((service) => _buildServiceGroup(colors, service, configMap)),
+      ],
+    );
+  }
+
+  Widget _buildServiceGroup(
+    FlowColorScheme colors,
+    _AIService service,
+    Map<String, AIPromptConfig> configMap,
+  ) {
+    final isExpanded = _expandedServices.contains(service.name);
+    final serviceConfigs = service.configKeys
+        .map((key) => configMap[key])
+        .where((c) => c != null)
+        .cast<AIPromptConfig>()
+        .toList();
+    final hasConfigs = serviceConfigs.isNotEmpty;
+
+    return Column(
+      children: [
+        // Service header
+        InkWell(
+          onTap: hasConfigs ? () {
+            setState(() {
+              if (isExpanded) {
+                _expandedServices.remove(service.name);
+              } else {
+                _expandedServices.add(service.name);
+              }
+            });
+          } : null,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            decoration: BoxDecoration(
+              color: colors.surfaceVariant.withValues(alpha: 0.3),
+              border: Border(
+                bottom: BorderSide(color: colors.divider.withValues(alpha: 0.5), width: 0.5),
+              ),
+            ),
+            child: Row(
+              children: [
+                if (hasConfigs)
+                  Icon(
+                    isExpanded ? Icons.expand_more : Icons.chevron_right,
+                    size: 18,
+                    color: colors.textSecondary,
+                  )
+                else
+                  const SizedBox(width: 18),
+                const SizedBox(width: 8),
+                Icon(service.icon, size: 18, color: colors.primary),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Text(
+                            service.name,
+                            style: TextStyle(
+                              color: colors.textPrimary,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 14,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          _StatusBadge(isImplemented: service.isImplemented),
+                        ],
+                      ),
+                      Text(
+                        service.description,
+                        style: TextStyle(color: colors.textTertiary, fontSize: 11),
+                      ),
+                    ],
+                  ),
+                ),
+                if (hasConfigs)
+                  Text(
+                    '${serviceConfigs.length}',
+                    style: TextStyle(color: colors.textTertiary, fontSize: 12),
+                  )
+                else
+                  Text(
+                    'No config',
+                    style: TextStyle(color: colors.textTertiary.withValues(alpha: 0.6), fontSize: 11),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        // Config items (when expanded)
+        if (isExpanded && hasConfigs)
+          ...serviceConfigs.map((config) => _AIConfigItem(
+            config: config,
+            onTap: () => widget.onEditConfig(config),
+            indent: true,
+          )),
       ],
     );
   }
@@ -1479,12 +1654,46 @@ class _AIServicesContentState extends ConsumerState<_AIServicesContent> {
   }
 }
 
+/// Status badge for implementation status
+class _StatusBadge extends StatelessWidget {
+  final bool isImplemented;
+
+  const _StatusBadge({required this.isImplemented});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = isImplemented ? Colors.green : Colors.orange;
+    final label = isImplemented ? 'Active' : 'Planned';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: isImplemented ? Colors.green.shade700 : Colors.orange.shade700,
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+}
+
 /// AI Config item (Bear-style)
 class _AIConfigItem extends StatelessWidget {
   final AIPromptConfig config;
   final VoidCallback onTap;
+  final bool indent;
 
-  const _AIConfigItem({required this.config, required this.onTap});
+  const _AIConfigItem({
+    required this.config,
+    required this.onTap,
+    this.indent = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1493,25 +1702,31 @@ class _AIConfigItem extends StatelessWidget {
     return InkWell(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        padding: EdgeInsets.only(
+          left: indent ? 48 : 16,
+          right: 16,
+          top: 10,
+          bottom: 10,
+        ),
         decoration: BoxDecoration(
+          color: indent ? colors.background : null,
           border: Border(
-            bottom: BorderSide(color: colors.divider.withValues(alpha: 0.5), width: 0.5),
+            bottom: BorderSide(color: colors.divider.withValues(alpha: 0.3), width: 0.5),
           ),
         ),
         child: Row(
           children: [
             // Icon
             Container(
-              width: 32,
-              height: 32,
+              width: 28,
+              height: 28,
               decoration: BoxDecoration(
-                color: Colors.purple.withValues(alpha: 0.1),
+                color: Colors.purple.withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(6),
               ),
-              child: const Icon(Icons.tune, size: 16, color: Colors.purple),
+              child: const Icon(Icons.tune, size: 14, color: Colors.purple),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 10),
 
             // Info
             Expanded(
@@ -1523,33 +1738,24 @@ class _AIConfigItem extends StatelessWidget {
                     style: TextStyle(
                       color: colors.textPrimary,
                       fontWeight: FontWeight.w500,
-                      fontSize: 14,
+                      fontSize: 13,
                     ),
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    config.value.length > 60
-                        ? '${config.value.substring(0, 60)}...'
+                    config.value.length > 50
+                        ? '${config.value.substring(0, 50)}...'
                         : config.value,
-                    style: TextStyle(color: colors.textTertiary, fontSize: 12),
+                    style: TextStyle(color: colors.textTertiary, fontSize: 11),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  if (config.description != null) ...[
-                    const SizedBox(height: 2),
-                    Text(
-                      config.description!,
-                      style: TextStyle(color: colors.textTertiary.withValues(alpha: 0.7), fontSize: 11),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
                 ],
               ),
             ),
 
             // Edit indicator
-            Icon(Icons.chevron_right, size: 20, color: colors.textTertiary),
+            Icon(Icons.chevron_right, size: 18, color: colors.textTertiary),
           ],
         ),
       ),

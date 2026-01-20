@@ -28,7 +28,7 @@ class TasksService {
       if (id != null) 'id': id,
       'title': title,
       'description': description,
-      'due_date': dueDate?.toUtc().toIso8601String(),
+      'due_date': _formatDueDate(dueDate),
       'priority': priority,
       'tags': tags,
       'parent_id': parentId,
@@ -148,7 +148,7 @@ class TasksService {
     final response = await _dio.put('/tasks/$id', data: {
       if (title != null) 'title': title,
       if (description != null) 'description': description,
-      if (dueDate != null) 'due_date': dueDate.toUtc().toIso8601String(),
+      if (dueDate != null) 'due_date': _formatDueDate(dueDate),
       if (priority != null) 'priority': priority,
       if (status != null) 'status': status,
       if (tags != null) 'tags': tags,
@@ -504,6 +504,33 @@ class TasksService {
     }
   }
 
+  /// Get aggregated entities for Smart Lists
+  Future<Map<String, List<SmartListItem>>> getEntities() async {
+    final response = await _sharedDio.get('/tasks/entities');
+
+    if (response.data['success'] == true) {
+      final data = response.data['data'] as Map<String, dynamic>? ?? {};
+      final result = <String, List<SmartListItem>>{};
+
+      for (final entry in data.entries) {
+        final items = (entry.value as List?)
+                ?.map((e) => SmartListItem.fromJson({
+                      'type': entry.key,
+                      ...(e as Map<String, dynamic>),
+                    }))
+                .toList() ??
+            [];
+        if (items.isNotEmpty) {
+          result[entry.key] = items;
+        }
+      }
+
+      return result;
+    }
+
+    throw ApiException.fromResponse(response.data);
+  }
+
   // =====================================================
   // Subscription Endpoints
   // =====================================================
@@ -692,4 +719,29 @@ class PaginatedResponse<T> {
 
   bool get hasMore =>
       meta != null && meta!.page < meta!.totalPages;
+}
+
+/// Format due date for API.
+/// If the date has no specific time (midnight local), send it as local time to preserve the date.
+/// If it has a specific time, send as UTC for accuracy.
+String? _formatDueDate(DateTime? date) {
+  if (date == null) return null;
+
+  // Convert to local time to check if it's midnight
+  final local = date.toLocal();
+  final isDateOnly = local.hour == 0 && local.minute == 0 && local.second == 0;
+
+  if (isDateOnly) {
+    // Send as local midnight to preserve the date across timezones
+    // Format: 2026-01-20T00:00:00+07:00 (with local offset)
+    final offset = local.timeZoneOffset;
+    final sign = offset.isNegative ? '-' : '+';
+    final hours = offset.inHours.abs().toString().padLeft(2, '0');
+    final minutes = (offset.inMinutes.abs() % 60).toString().padLeft(2, '0');
+    final dateStr = '${local.year.toString().padLeft(4, '0')}-${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')}';
+    return '${dateStr}T00:00:00$sign$hours:$minutes';
+  } else {
+    // Has specific time - send as UTC for accuracy
+    return date.toUtc().toIso8601String();
+  }
 }

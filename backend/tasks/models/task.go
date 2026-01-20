@@ -37,7 +37,7 @@ type Task struct {
 	Complexity     int  `json:"complexity" db:"complexity"` // 1-10 scale from AI
 
 	// Entities extracted by AI
-	Entities []TaskEntity `json:"entities,omitempty" db:"entities"`
+	Entities []TaskEntity `json:"entities,omitempty" db:"ai_entities"`
 
 	// Project promotion tracking
 	PromotedToProject *uuid.UUID `json:"promoted_to_project,omitempty" db:"promoted_to_project"`

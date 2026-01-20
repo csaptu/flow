@@ -1,4 +1,5 @@
 import 'package:equatable/equatable.dart';
+import 'ai.dart';
 import 'enums.dart';
 
 /// Parse a date string and convert to local timezone
@@ -35,6 +36,8 @@ class Task extends Equatable {
   final String? originalDescription;
   // Flag to prevent auto-cleanup after user reverts
   final bool skipAutoCleanup;
+  // AI-extracted entities (people, locations, organizations)
+  final List<AIEntity> entities;
 
   const Task({
     required this.id,
@@ -56,6 +59,7 @@ class Task extends Equatable {
     this.originalTitle,
     this.originalDescription,
     this.skipAutoCleanup = false,
+    this.entities = const [],
   });
 
   /// Returns true if the title was cleaned by AI (original differs from current)
@@ -90,6 +94,10 @@ class Task extends Equatable {
       originalTitle: json['original_title'] as String?,
       originalDescription: json['original_description'] as String?,
       skipAutoCleanup: json['skip_auto_cleanup'] as bool? ?? false,
+      entities: (json['entities'] as List<dynamic>?)
+              ?.map((e) => AIEntity.fromJson(e as Map<String, dynamic>))
+              .toList() ??
+          [],
     );
   }
 
@@ -113,6 +121,7 @@ class Task extends Equatable {
         'original_title': originalTitle,
         'original_description': originalDescription,
         'skip_auto_cleanup': skipAutoCleanup,
+        'entities': entities.map((e) => {'type': e.type, 'value': e.value}).toList(),
       };
 
   bool get isCompleted => status == TaskStatus.completed;
@@ -173,6 +182,7 @@ class Task extends Equatable {
     String? originalTitle,
     String? originalDescription,
     bool? skipAutoCleanup,
+    List<AIEntity>? entities,
   }) {
     return Task(
       id: id ?? this.id,
@@ -194,9 +204,10 @@ class Task extends Equatable {
       originalTitle: originalTitle ?? this.originalTitle,
       originalDescription: originalDescription ?? this.originalDescription,
       skipAutoCleanup: skipAutoCleanup ?? this.skipAutoCleanup,
+      entities: entities ?? this.entities,
     );
   }
 
   @override
-  List<Object?> get props => [id, title, status, priority, dueDate, updatedAt];
+  List<Object?> get props => [id, title, status, priority, dueDate, updatedAt, entities];
 }

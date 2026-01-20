@@ -359,7 +359,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     const SizedBox(height: FlowSpacing.xxl),
                     // Version info
                     Text(
-                      'v2025-01-19 18:30 GMT+7',
+                      'v2025-01-20 14:45 GMT+7',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                             color: FlowColors.lightTextSecondary.withOpacity(0.5),
                           ),
@@ -367,7 +367,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'AI subtasks now show immediately, AI clean removes periods',
+                      'Mobile keyboard auto-expands panel, completed tasks group by options, AI extract fix',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                             color: FlowColors.lightTextSecondary.withOpacity(0.4),
                             fontSize: 10,

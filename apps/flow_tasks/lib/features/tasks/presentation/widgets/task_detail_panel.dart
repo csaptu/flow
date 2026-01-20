@@ -230,15 +230,16 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
                           ),
                         )
                       else if (task.titleWasCleaned)
-                        InkWell(
-                          onTap: _revertTitle,
-                          borderRadius: BorderRadius.circular(4),
-                          child: Padding(
-                            padding: const EdgeInsets.only(left: 8, top: 4),
-                            child: Text(
-                              'revert',
-                              style: TextStyle(
-                                fontSize: 12,
+                        Tooltip(
+                          message: 'Revert to original',
+                          child: InkWell(
+                            onTap: _revertTitle,
+                            borderRadius: BorderRadius.circular(4),
+                            child: Padding(
+                              padding: const EdgeInsets.only(left: 8, top: 4),
+                              child: Icon(
+                                Icons.undo_rounded,
+                                size: 16,
                                 color: colors.textTertiary,
                               ),
                             ),
@@ -304,15 +305,16 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
                             ),
                           )
                         else if (task.descriptionWasCleaned)
-                          InkWell(
-                            onTap: _revertDescription,
-                            borderRadius: BorderRadius.circular(4),
-                            child: Padding(
-                              padding: const EdgeInsets.only(left: 8, top: 4),
-                              child: Text(
-                                'revert',
-                                style: TextStyle(
-                                  fontSize: 12,
+                          Tooltip(
+                            message: 'Revert to original',
+                            child: InkWell(
+                              onTap: _revertDescription,
+                              borderRadius: BorderRadius.circular(4),
+                              child: Padding(
+                                padding: const EdgeInsets.only(left: 8, top: 4),
+                                child: Icon(
+                                  Icons.undo_rounded,
+                                  size: 16,
                                   color: colors.textTertiary,
                                 ),
                               ),
@@ -333,6 +335,12 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
                           ),
                     ],
                   ),
+
+                  // Entities section (AI-extracted)
+                  if (task.entities.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    _buildEntitiesSection(colors, task),
+                  ],
 
                   const SizedBox(height: 24),
 
@@ -498,6 +506,53 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
         ),
       ),
     );
+  }
+
+  Widget _buildEntitiesSection(FlowColorScheme colors, Task task) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Section header
+        Row(
+          children: [
+            Icon(
+              Icons.lightbulb_outline,
+              size: 14,
+              color: colors.textTertiary,
+            ),
+            const SizedBox(width: 6),
+            Text(
+              'Extracted Info',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+                color: colors.textTertiary,
+                letterSpacing: 0.3,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        // Entity chips
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: task.entities.map((entity) {
+            return _EntityChipWithPopup(
+              entity: entity,
+              onNavigateToSmartList: () => _navigateToSmartList(entity),
+            );
+          }).toList(),
+        ),
+      ],
+    );
+  }
+
+  void _navigateToSmartList(AIEntity entity) {
+    ref.read(selectedSmartListProvider.notifier).state = (type: entity.type, value: entity.value);
+    ref.read(selectedSidebarIndexProvider.notifier).state = 200;
+    ref.read(selectedListIdProvider.notifier).state = null;
+    widget.onClose();
   }
 
   Widget _buildTagsSection(FlowColorScheme colors, Task task) {
@@ -1365,4 +1420,166 @@ class _SubtaskItemState extends ConsumerState<_SubtaskItem> {
       ),
     );
   }
+}
+
+/// Entity chip with popup for task detail panel
+class _EntityChipWithPopup extends StatelessWidget {
+  final AIEntity entity;
+  final VoidCallback onNavigateToSmartList;
+
+  const _EntityChipWithPopup({
+    required this.entity,
+    required this.onNavigateToSmartList,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.flowColors;
+    final chipColors = _getEntityColors(entity.type, colors);
+
+    return PopupMenuButton<String>(
+      padding: EdgeInsets.zero,
+      offset: const Offset(0, 30),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      color: colors.surface,
+      onSelected: (value) {
+        if (value == 'view_all') {
+          onNavigateToSmartList();
+        }
+      },
+      itemBuilder: (context) => [
+        PopupMenuItem<String>(
+          enabled: false,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(chipColors.icon, size: 16, color: chipColors.foreground),
+                  const SizedBox(width: 8),
+                  Text(
+                    _getTypeLabel(entity.type),
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: colors.textTertiary,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                entity.value,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: colors.textPrimary,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const PopupMenuDivider(),
+        PopupMenuItem<String>(
+          value: 'view_all',
+          child: Row(
+            children: [
+              Icon(Icons.list, size: 16, color: colors.textSecondary),
+              const SizedBox(width: 8),
+              Text(
+                'View all tasks',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: colors.textPrimary,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: chipColors.background,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: chipColors.border, width: 0.5),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(chipColors.icon, size: 14, color: chipColors.foreground),
+            const SizedBox(width: 6),
+            Text(
+              entity.value,
+              style: TextStyle(
+                fontSize: 13,
+                color: chipColors.foreground,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _getTypeLabel(String type) {
+    switch (type) {
+      case 'person':
+        return 'Person';
+      case 'location':
+        return 'Location';
+      case 'organization':
+        return 'Organization';
+      default:
+        return type;
+    }
+  }
+
+  _EntityChipColors _getEntityColors(String type, FlowColorScheme colors) {
+    switch (type) {
+      case 'person':
+        return _EntityChipColors(
+          background: const Color(0xFF3B82F6).withOpacity(0.1),
+          foreground: const Color(0xFF3B82F6),
+          border: const Color(0xFF3B82F6).withOpacity(0.3),
+          icon: Icons.person_outline,
+        );
+      case 'location':
+        return _EntityChipColors(
+          background: const Color(0xFF10B981).withOpacity(0.1),
+          foreground: const Color(0xFF10B981),
+          border: const Color(0xFF10B981).withOpacity(0.3),
+          icon: Icons.location_on_outlined,
+        );
+      case 'organization':
+        return _EntityChipColors(
+          background: const Color(0xFF8B5CF6).withOpacity(0.1),
+          foreground: const Color(0xFF8B5CF6),
+          border: const Color(0xFF8B5CF6).withOpacity(0.3),
+          icon: Icons.business_outlined,
+        );
+      default:
+        return _EntityChipColors(
+          background: colors.textTertiary.withOpacity(0.1),
+          foreground: colors.textSecondary,
+          border: colors.textTertiary.withOpacity(0.3),
+          icon: Icons.label_outline,
+        );
+    }
+  }
+}
+
+class _EntityChipColors {
+  final Color background;
+  final Color foreground;
+  final Color border;
+  final IconData icon;
+
+  const _EntityChipColors({
+    required this.background,
+    required this.foreground,
+    required this.border,
+    required this.icon,
+  });
 }

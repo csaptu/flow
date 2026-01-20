@@ -195,6 +195,7 @@ func (s *Server) registerRoutes() {
 	tasks.Post("/:id/ai/remind", aiHandler.AIRemind)
 	tasks.Post("/:id/ai/email", aiHandler.AIEmail)
 	tasks.Post("/:id/ai/invite", aiHandler.AIInvite)
+	tasks.Get("/entities", aiHandler.GetAggregatedEntities) // Smart Lists - aggregated entities
 
 	// AI management routes
 	aiRoutes := protected.Group("/ai")

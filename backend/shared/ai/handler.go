@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -587,7 +588,11 @@ Only include entities that are actually present. Leave array empty if none found
 			return ""
 		}())
 
-	resp, err := h.service.LLM().Complete(c.Context(), llm.CompletionRequest{
+	// Create a context with longer timeout for AI operations
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	resp, err := h.service.LLM().Complete(ctx, llm.CompletionRequest{
 		Messages: []llm.Message{
 			{Role: "user", Content: prompt},
 		},
@@ -595,29 +600,193 @@ Only include entities that are actually present. Leave array empty if none found
 		Temperature: 0.2,
 	})
 	if err != nil {
-		return httputil.ServiceUnavailable(c, "AI service error")
+		// Return empty entities on AI error instead of failing
+		return httputil.Success(c, map[string]interface{}{
+			"task":     toTaskResponse(task, childCount),
+			"entities": []Entity{},
+			"error":    "AI service temporarily unavailable",
+		})
 	}
 
 	var extracted struct {
 		Entities []Entity `json:"entities"`
 	}
-	if err := json.Unmarshal([]byte(resp.Content), &extracted); err != nil {
-		return httputil.InternalError(c, "failed to parse AI response")
+
+	// Try to parse JSON, handle potential formatting issues
+	content := strings.TrimSpace(resp.Content)
+	// Remove markdown code blocks if present
+	if strings.HasPrefix(content, "```") {
+		lines := strings.Split(content, "\n")
+		var jsonLines []string
+		inBlock := false
+		for _, line := range lines {
+			if strings.HasPrefix(line, "```") {
+				inBlock = !inBlock
+				continue
+			}
+			if inBlock {
+				jsonLines = append(jsonLines, line)
+			}
+		}
+		content = strings.Join(jsonLines, "\n")
 	}
 
-	entitiesJSON, _ := json.Marshal(extracted.Entities)
+	if err := json.Unmarshal([]byte(content), &extracted); err != nil {
+		// Return empty entities on parse error instead of failing
+		return httputil.Success(c, map[string]interface{}{
+			"task":     toTaskResponse(task, childCount),
+			"entities": []Entity{},
+		})
+	}
+
+	// If no entities found, return success with empty array
+	if len(extracted.Entities) == 0 {
+		return httputil.Success(c, map[string]interface{}{
+			"task":     toTaskResponse(task, childCount),
+			"entities": []Entity{},
+		})
+	}
+
+	// Normalize entities: check if similar entities already exist for this user
+	// Use a separate context with timeout for normalization
+	normCtx, normCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer normCancel()
+	normalizedEntities := h.normalizeEntities(normCtx, userID, extracted.Entities)
+
+	entitiesJSON, _ := json.Marshal(normalizedEntities)
 	updates := map[string]interface{}{
 		"ai_entities": entitiesJSON,
 	}
 	if err := repository.UpdateTaskAIFields(c.Context(), taskID, userID, updates); err != nil {
-		return httputil.InternalError(c, "failed to update task")
+		// Still return the entities even if DB update fails
+		return httputil.Success(c, map[string]interface{}{
+			"task":     toTaskResponse(task, childCount),
+			"entities": normalizedEntities,
+		})
 	}
 
 	task, childCount, _ = repository.GetTaskByID(c.Context(), taskID, userID)
 	return httputil.Success(c, map[string]interface{}{
 		"task":     toTaskResponse(task, childCount),
-		"entities": extracted.Entities,
+		"entities": normalizedEntities,
 	})
+}
+
+// normalizeEntities checks each entity against existing entities and uses canonical names
+func (h *Handler) normalizeEntities(ctx context.Context, userID uuid.UUID, entities []Entity) []Entity {
+	if len(entities) == 0 {
+		return entities
+	}
+
+	// Types that benefit from normalization (locations, people, organizations)
+	normalizableTypes := map[string]bool{
+		"person":       true,
+		"location":     true,
+		"organization": true,
+	}
+
+	normalized := make([]Entity, 0, len(entities))
+	for _, entity := range entities {
+		// Skip normalization for types that don't need it (email, phone, date)
+		if !normalizableTypes[entity.Type] {
+			normalized = append(normalized, entity)
+			continue
+		}
+
+		// Get existing entities of the same type for this user
+		existing, err := repository.GetUserEntitiesByType(ctx, userID, entity.Type)
+		if err != nil || len(existing) == 0 {
+			normalized = append(normalized, entity)
+			continue
+		}
+
+		// Check if this entity matches any existing one
+		match := h.findMatchingEntity(ctx, entity.Value, existing)
+		if match != "" {
+			entity.Value = match // Use canonical name
+		}
+		normalized = append(normalized, entity)
+	}
+
+	return normalized
+}
+
+// findMatchingEntity uses LLM to check if a new entity value matches any existing values
+func (h *Handler) findMatchingEntity(ctx context.Context, newValue string, existingValues []string) string {
+	// Quick check: exact match (case insensitive)
+	for _, existing := range existingValues {
+		if strings.EqualFold(newValue, existing) {
+			return existing
+		}
+	}
+
+	// If only a few existing values, ask LLM to check for similar names
+	// Limit to 20 existing values to keep prompt reasonable
+	if len(existingValues) > 20 {
+		existingValues = existingValues[:20]
+	}
+
+	prompt := fmt.Sprintf(`Is "%s" the same as any of these? %v
+
+Reply with ONLY the matching value from the list, or "none" if no match.
+Consider: spelling variations, abbreviations, nicknames, different languages.
+Examples: "hanoi" = "Ha Noi", "hcmc" = "Ho Chi Minh City", "NYC" = "New York City"`,
+		newValue, existingValues)
+
+	resp, err := h.service.LLM().Complete(ctx, llm.CompletionRequest{
+		Messages: []llm.Message{
+			{Role: "user", Content: prompt},
+		},
+		MaxTokens:   50,
+		Temperature: 0.1,
+	})
+	if err != nil {
+		return "" // On error, don't normalize
+	}
+
+	match := strings.TrimSpace(resp.Content)
+	match = strings.Trim(match, `"'`)
+
+	if strings.EqualFold(match, "none") || match == "" {
+		return ""
+	}
+
+	// Verify the match is actually in the existing list
+	for _, existing := range existingValues {
+		if strings.EqualFold(match, existing) {
+			return existing
+		}
+	}
+
+	return ""
+}
+
+// GetAggregatedEntities returns all extracted entities grouped by type with task counts.
+// Used for the Smart Lists sidebar feature.
+func (h *Handler) GetAggregatedEntities(c *fiber.Ctx) error {
+	userID, err := middleware.GetUserID(c)
+	if err != nil {
+		return httputil.Unauthorized(c, "")
+	}
+
+	entities, err := repository.GetAggregatedEntities(c.Context(), userID)
+	if err != nil {
+		return httputil.InternalError(c, "failed to get entities")
+	}
+
+	// Ensure we return empty arrays instead of null for each type
+	result := map[string][]repository.EntityItem{
+		"person":       {},
+		"location":     {},
+		"organization": {},
+	}
+
+	// Merge fetched entities
+	for entityType, items := range entities {
+		result[entityType] = items
+	}
+
+	return httputil.Success(c, result)
 }
 
 // AIRemind suggests a reminder time for a task

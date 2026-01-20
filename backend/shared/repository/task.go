@@ -250,7 +250,7 @@ func CreateSubtask(ctx context.Context, userID, parentID uuid.UUID, title string
 	now := time.Now().Add(time.Duration(order) * time.Millisecond) // Ensure ordering
 
 	_, err := db.Exec(ctx, `
-		INSERT INTO tasks (id, user_id, title, status, priority, tags, parent_id, depth, entities, version, created_at, updated_at)
+		INSERT INTO tasks (id, user_id, title, status, priority, tags, parent_id, depth, ai_entities, version, created_at, updated_at)
 		VALUES ($1, $2, $3, 'pending', 0, '{}', $4, 1, '[]', 1, $5, $5)
 	`, subtaskID, userID, title, parentID, now)
 
@@ -392,4 +392,87 @@ func joinStrings(strs []string, sep string) string {
 		result += sep + strs[i]
 	}
 	return result
+}
+
+// EntityItem represents an extracted entity with its count
+type EntityItem struct {
+	Type  string `json:"type"`
+	Value string `json:"value"`
+	Count int    `json:"count"`
+}
+
+// GetUserEntitiesByType returns all unique entity values for a user by entity type.
+// Used for normalization during entity extraction.
+func GetUserEntitiesByType(ctx context.Context, userID uuid.UUID, entityType string) ([]string, error) {
+	db := getTasksPool()
+	if db == nil {
+		return nil, ErrTasksDBNotInitialized
+	}
+
+	// Query distinct entity values from ai_entities JSONB column
+	rows, err := db.Query(ctx, `
+		SELECT DISTINCT entity->>'value' as value
+		FROM tasks, jsonb_array_elements(COALESCE(ai_entities, '[]'::jsonb)) as entity
+		WHERE user_id = $1
+		  AND deleted_at IS NULL
+		  AND entity->>'type' = $2
+		  AND entity->>'value' IS NOT NULL
+		  AND entity->>'value' != ''
+		ORDER BY value
+	`, userID, entityType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var values []string
+	for rows.Next() {
+		var value string
+		if err := rows.Scan(&value); err != nil {
+			continue
+		}
+		values = append(values, value)
+	}
+
+	return values, nil
+}
+
+// GetAggregatedEntities returns all entities grouped by type with task counts.
+// Used for the Smart Lists sidebar.
+func GetAggregatedEntities(ctx context.Context, userID uuid.UUID) (map[string][]EntityItem, error) {
+	db := getTasksPool()
+	if db == nil {
+		return nil, ErrTasksDBNotInitialized
+	}
+
+	rows, err := db.Query(ctx, `
+		SELECT
+			entity->>'type' as type,
+			entity->>'value' as value,
+			COUNT(DISTINCT t.id) as count
+		FROM tasks t, jsonb_array_elements(COALESCE(t.ai_entities, '[]'::jsonb)) as entity
+		WHERE t.user_id = $1
+		  AND t.deleted_at IS NULL
+		  AND t.status != 'cancelled'
+		  AND entity->>'type' IS NOT NULL
+		  AND entity->>'value' IS NOT NULL
+		  AND entity->>'value' != ''
+		GROUP BY entity->>'type', entity->>'value'
+		ORDER BY entity->>'type', count DESC, entity->>'value'
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[string][]EntityItem)
+	for rows.Next() {
+		var item EntityItem
+		if err := rows.Scan(&item.Type, &item.Value, &item.Count); err != nil {
+			continue
+		}
+		result[item.Type] = append(result[item.Type], item)
+	}
+
+	return result, nil
 }

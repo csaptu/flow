@@ -179,7 +179,7 @@ enum AISetting {
       case AISetting.auto:
         return 'Auto';
       case AISetting.ask:
-        return 'Ask';
+        return 'Manual';
       case AISetting.off:
         return 'Off';
     }

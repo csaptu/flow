@@ -320,6 +320,30 @@ class AIEntity extends Equatable {
   List<Object?> get props => [type, value];
 }
 
+/// Smart List item (aggregated entity with task count)
+class SmartListItem extends Equatable {
+  final String type; // person, location, organization
+  final String value;
+  final int count; // number of tasks with this entity
+
+  const SmartListItem({
+    required this.type,
+    required this.value,
+    required this.count,
+  });
+
+  factory SmartListItem.fromJson(Map<String, dynamic> json) {
+    return SmartListItem(
+      type: json['type'] as String,
+      value: json['value'] as String,
+      count: json['count'] as int? ?? 0,
+    );
+  }
+
+  @override
+  List<Object?> get props => [type, value, count];
+}
+
 /// AI Extract result (entity extraction)
 class AIExtractResult extends Equatable {
   final dynamic task; // Task object

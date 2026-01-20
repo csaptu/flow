@@ -594,6 +594,10 @@ final selectedSidebarIndexProvider = StateProvider<int>((ref) => 1);
 // Group by date toggle (default to true for all views)
 final groupByDateProvider = StateProvider<bool>((ref) => true);
 
+// Completed tasks group mode (due date or completion date)
+enum CompletedGroupMode { dueDate, completionDate }
+final completedGroupModeProvider = StateProvider<CompletedGroupMode>((ref) => CompletedGroupMode.dueDate);
+
 // Lists section expanded state (collapsed by default)
 final listsExpandedProvider = StateProvider<bool>((ref) => false);
 
@@ -605,6 +609,9 @@ final globalSearchQueryProvider = StateProvider<String>((ref) => '');
 
 // Global task search active state
 final globalSearchActiveProvider = StateProvider<bool>((ref) => false);
+
+// Recent searches (max 10, persisted via SharedPreferences in widget)
+final recentSearchesProvider = StateProvider<List<String>>((ref) => []);
 
 /// Filtered lists based on search query
 final filteredListsProvider = Provider<List<TaskList>>((ref) {
@@ -1405,3 +1412,47 @@ class AIConfigActions {
 final aiConfigActionsProvider = Provider<AIConfigActions>((ref) {
   return AIConfigActions(ref);
 });
+
+// =====================================================
+// Smart Lists Providers (AI-extracted entities)
+// =====================================================
+
+/// Fetches aggregated entities from server for Smart Lists sidebar
+final smartListsProvider = FutureProvider.autoDispose<Map<String, List<SmartListItem>>>((ref) async {
+  final authState = ref.watch(authStateProvider);
+  if (authState.status != AuthStatus.authenticated) return {};
+
+  final client = ref.watch(apiClientProvider);
+  if (!client.isAuthenticated) return {};
+
+  try {
+    final service = ref.watch(tasksServiceProvider);
+    return await service.getEntities();
+  } catch (e) {
+    return {};
+  }
+});
+
+/// Selected smart list entity (type + value)
+final selectedSmartListProvider = StateProvider<({String type, String value})?>((ref) => null);
+
+/// Tasks filtered by selected smart list entity
+final smartListTasksProvider = Provider<List<Task>>((ref) {
+  final selection = ref.watch(selectedSmartListProvider);
+  if (selection == null) return [];
+
+  final tasks = ref.watch(tasksProvider);
+  return tasks.where((task) {
+    // Skip completed/cancelled tasks
+    if (task.status == TaskStatus.completed || task.status == TaskStatus.cancelled) {
+      return false;
+    }
+    // Check if task has matching entity
+    return task.entities.any((e) =>
+        e.type == selection.type &&
+        e.value.toLowerCase() == selection.value.toLowerCase());
+  }).toList();
+});
+
+/// Smart Lists section expanded state (collapsed by default)
+final smartListsExpandedProvider = StateProvider<bool>((ref) => false);

@@ -34,13 +34,14 @@ class TaskList extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final tasks = _getTasksList(ref);
     final groupByDate = ref.watch(groupByDateProvider);
+    final completedGroupMode = ref.watch(completedGroupModeProvider);
 
     if (tasks.isEmpty) {
       return _buildEmptyState();
     }
 
-    // Don't group for trash or completed views
-    if (type == TaskListType.trash || type == TaskListType.completed || !groupByDate) {
+    // Don't group for trash view
+    if (type == TaskListType.trash || !groupByDate) {
       return ListView.builder(
         padding: const EdgeInsets.symmetric(vertical: 8),
         itemCount: tasks.length,
@@ -55,6 +56,17 @@ class TaskList extends ConsumerWidget {
             onDropInto: (draggedTask, targetTask) => _makeSubtask(ref, draggedTask, targetTask),
           );
         },
+      );
+    }
+
+    // Group completed tasks by completion date or due date
+    if (type == TaskListType.completed) {
+      final groups = completedGroupMode == CompletedGroupMode.completionDate
+          ? _groupTasksByCompletionDate(tasks)
+          : _groupTasksByDate(tasks, type);
+      return _GroupedTaskListView(
+        groups: groups,
+        type: type,
       );
     }
 
@@ -171,6 +183,88 @@ class TaskList extends ConsumerWidget {
       // All other dates: "Jan 15" format
       return DateFormat('MMM d').format(date);
     }
+  }
+
+  /// Groups completed tasks by their completion date
+  List<_DateGroup> _groupTasksByCompletionDate(List<Task> tasks) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final yesterday = today.subtract(const Duration(days: 1));
+
+    final todayTasks = <Task>[];
+    final yesterdayTasks = <Task>[];
+    final pastTasks = <String, List<Task>>{};
+    final noCompletionDateTasks = <Task>[];
+
+    for (final task in tasks) {
+      if (task.completedAt == null) {
+        noCompletionDateTasks.add(task);
+      } else {
+        final completedDate = DateTime(
+          task.completedAt!.year,
+          task.completedAt!.month,
+          task.completedAt!.day,
+        );
+
+        if (completedDate.isAtSameMomentAs(today)) {
+          todayTasks.add(task);
+        } else if (completedDate.isAtSameMomentAs(yesterday)) {
+          yesterdayTasks.add(task);
+        } else {
+          // Group by date string for past dates
+          final dateKey = DateFormat('MMM d').format(task.completedAt!);
+          pastTasks.putIfAbsent(dateKey, () => []).add(task);
+        }
+      }
+    }
+
+    final groups = <_DateGroup>[];
+
+    // Today section
+    if (todayTasks.isNotEmpty) {
+      // Sort by completion time, most recent first
+      todayTasks.sort((a, b) => (b.completedAt ?? DateTime.now()).compareTo(a.completedAt ?? DateTime.now()));
+      groups.add(_DateGroup(
+        title: 'Today',
+        tasks: todayTasks,
+      ));
+    }
+
+    // Yesterday section
+    if (yesterdayTasks.isNotEmpty) {
+      yesterdayTasks.sort((a, b) => (b.completedAt ?? DateTime.now()).compareTo(a.completedAt ?? DateTime.now()));
+      groups.add(_DateGroup(
+        title: 'Yesterday',
+        tasks: yesterdayTasks,
+      ));
+    }
+
+    // Past dates sorted by date (most recent first)
+    final sortedPastDates = pastTasks.keys.toList()
+      ..sort((a, b) {
+        final dateA = pastTasks[a]!.first.completedAt!;
+        final dateB = pastTasks[b]!.first.completedAt!;
+        return dateB.compareTo(dateA); // Most recent first
+      });
+
+    for (final dateKey in sortedPastDates) {
+      final tasksForDate = pastTasks[dateKey]!;
+      tasksForDate.sort((a, b) => (b.completedAt ?? DateTime.now()).compareTo(a.completedAt ?? DateTime.now()));
+      groups.add(_DateGroup(
+        title: dateKey,
+        tasks: tasksForDate,
+      ));
+    }
+
+    // No completion date section at the end
+    if (noCompletionDateTasks.isNotEmpty) {
+      groups.add(_DateGroup(
+        title: 'Unknown',
+        tasks: noCompletionDateTasks,
+      ));
+    }
+
+    return groups;
   }
 
   List<Task> _getTasksList(WidgetRef ref) {
