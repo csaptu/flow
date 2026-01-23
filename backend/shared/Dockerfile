@@ -39,5 +39,6 @@ COPY --from=builder /app/shared/database/migrations ./database/migrations
 
 EXPOSE 8080
 
-# Run migrations then start server
-CMD ["sh", "-c", "./migrate up && ./shared-service"]
+# Skip migrations (already applied) and start server directly
+# Migrations can be run manually if needed
+CMD ["./shared-service"]
