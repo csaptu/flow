@@ -797,8 +797,9 @@ class TasksService {
     final response = await _dio.put('/admin/users/$userId/subscription', data: {
       'tier': tier,
       'plan_id': planId,
-      'starts_at': startsAt?.toIso8601String(),
-      'expires_at': expiresAt?.toIso8601String(),
+      // Convert to UTC for RFC3339 compatibility with Go backend
+      'starts_at': startsAt?.toUtc().toIso8601String(),
+      'expires_at': expiresAt?.toUtc().toIso8601String(),
     });
 
     if (response.data['success'] != true) {
