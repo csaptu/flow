@@ -4,6 +4,7 @@ import 'package:flow_api/flow_api.dart';
 import 'package:flow_models/flow_models.dart';
 import 'package:flow_tasks/core/providers/providers.dart';
 import 'package:flow_tasks/core/theme/flow_theme.dart';
+import 'package:flow_tasks/features/admin/presentation/widgets/user_ai_profile_dialog.dart';
 import 'package:intl/intl.dart';
 
 /// Admin section type
@@ -90,6 +91,7 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
                       page: _usersPage,
                       onPageChanged: (page) => setState(() => _usersPage = page),
                       onEditUser: (user) => _showEditUserDialog(context, ref, user),
+                      onShowAIProfile: (user) => _showAIProfileDialog(context, user),
                     ),
                   ),
                 ),
@@ -153,6 +155,7 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
               page: _usersPage,
               onPageChanged: (page) => setState(() => _usersPage = page),
               onEditUser: (user) => _showEditUserDialog(context, ref, user),
+              onShowAIProfile: (user) => _showAIProfileDialog(context, user),
             ),
           ),
           // Orders section
@@ -257,6 +260,17 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
       }
     });
   }
+
+  void _showAIProfileDialog(BuildContext context, AdminUser user) {
+    showDialog(
+      context: context,
+      builder: (context) => UserAIProfileDialog(
+        userId: user.id,
+        userName: user.name ?? '',
+        userEmail: user.email,
+      ),
+    );
+  }
 }
 
 /// Tier filter bar (shared for both users and orders)
@@ -326,12 +340,14 @@ class _UsersContent extends ConsumerWidget {
   final int page;
   final ValueChanged<int> onPageChanged;
   final Function(AdminUser) onEditUser;
+  final Function(AdminUser) onShowAIProfile;
 
   const _UsersContent({
     required this.tierFilter,
     required this.page,
     required this.onPageChanged,
     required this.onEditUser,
+    required this.onShowAIProfile,
   });
 
   @override
@@ -370,6 +386,7 @@ class _UsersContent extends ConsumerWidget {
         ...response.items.map((user) => _UserItem(
           user: user,
           onTap: () => onEditUser(user),
+          onShowAIProfile: () => onShowAIProfile(user),
         )),
 
         // Pagination
@@ -428,8 +445,13 @@ class _UsersContent extends ConsumerWidget {
 class _UserItem extends StatelessWidget {
   final AdminUser user;
   final VoidCallback onTap;
+  final VoidCallback onShowAIProfile;
 
-  const _UserItem({required this.user, required this.onTap});
+  const _UserItem({
+    required this.user,
+    required this.onTap,
+    required this.onShowAIProfile,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -490,6 +512,15 @@ class _UserItem extends StatelessWidget {
                   ),
                 ],
               ),
+            ),
+
+            // AI Profile button
+            IconButton(
+              onPressed: onShowAIProfile,
+              icon: Icon(Icons.psychology_outlined, size: 18, color: colors.primary),
+              tooltip: 'AI Profile',
+              padding: const EdgeInsets.all(4),
+              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
             ),
 
             // Task count
@@ -1272,6 +1303,13 @@ class _AIService {
 /// All AI services with their configs
 const List<_AIService> _aiServices = [
   _AIService(
+    name: 'Context Building',
+    description: 'System prompt and safety guardrails for all AI',
+    icon: Icons.psychology_outlined,
+    isImplemented: true,
+    configKeys: ['system_first_context'],
+  ),
+  _AIService(
     name: 'Decompose',
     description: 'Break down tasks into subtasks',
     icon: Icons.account_tree_outlined,
@@ -1298,6 +1336,13 @@ const List<_AIService> _aiServices = [
     icon: Icons.person_search_outlined,
     isImplemented: true,
     configKeys: ['entities_instruction'],
+  ),
+  _AIService(
+    name: 'Duplicates',
+    description: 'Detect similar or duplicate tasks',
+    icon: Icons.content_copy_outlined,
+    isImplemented: true,
+    configKeys: ['duplicate_check_instruction'],
   ),
   _AIService(
     name: 'Remind',
@@ -1343,7 +1388,7 @@ class _AIServicesContent extends ConsumerStatefulWidget {
 
 class _AIServicesContentState extends ConsumerState<_AIServicesContent> {
   bool _showHelp = false;
-  final Set<String> _expandedServices = {'Decompose', 'Clean'}; // Default expanded
+  final Set<String> _expandedServices = {'Context Building', 'Decompose', 'Clean'}; // Default expanded
 
   @override
   Widget build(BuildContext context) {
@@ -1781,12 +1826,32 @@ class _EditAIConfigDialogState extends ConsumerState<_EditAIConfigDialog> {
 
   // Default values for reset functionality
   static const Map<String, String> _defaults = {
-    'clean_title_instruction': 'Concise, action-oriented title (max 10 words)',
-    'summary_instruction': 'Brief summary if description is long (max 20 words)',
+    'system_first_context': '''You are Flow AI, an assistant for Flow Tasks - a personal task management app.
+
+PRINCIPLES:
+- Be concise and actionable
+- Respect user privacy
+- Focus on productivity
+
+RESTRICTIONS (Universal):
+- No violence, weapons, harm instructions
+- No self-harm or suicide content
+- No pornographic/explicit content
+- No illegal activities assistance
+- No medical/legal/financial advice (suggest professionals)
+
+RESTRICTIONS (Regional):
+- Vietnam/China: No political commentary, no criticism of government/leaders
+- Monarchies (Thailand, Saudi Arabia, UAE, etc.): No disrespect to royal family
+
+OUTPUT: Always respond in valid JSON when requested.''',
+    'clean_title_instruction': 'Concise, action-oriented title (max 10 words). IMPORTANT: Preserve all entities - dates, times, people names, places, organizations must NOT be removed or changed.',
+    'summary_instruction': 'Brief summary if description is long (max 20 words). IMPORTANT: Preserve all entities - dates, times, people names, places, organizations must NOT be removed or changed.',
     'complexity_instruction': "1-10 scale (1=trivial like 'buy milk', 10=complex multi-step project)",
     'due_date_instruction': "ISO 8601 date if mentioned (e.g., 'tomorrow' = next day, 'next week' = next Monday)",
     'reminder_instruction': "ISO 8601 datetime if 'remind me' or similar phrase found",
     'entities_instruction': 'person|place|organization',
+    'duplicate_check_instruction': 'Compare task semantically to find similar tasks covering the same goal',
     'recurrence_instruction': "RRULE string if recurring pattern detected (e.g., 'every Monday')",
     'suggested_group_instruction': "Category suggestion based on content (e.g., 'Work', 'Shopping', 'Health')",
     'decompose_step_count': '2-5',
@@ -1945,7 +2010,7 @@ class _EditAIConfigDialogState extends ConsumerState<_EditAIConfigDialog> {
             const SizedBox(height: 6),
             TextField(
               controller: _valueController,
-              maxLines: widget.config.key.contains('rules') ? 6 : 3,
+              maxLines: widget.config.key.contains('rules') || widget.config.key.contains('first_context') ? 12 : 3,
               style: TextStyle(color: colors.textPrimary, fontSize: 14),
               decoration: InputDecoration(
                 hintText: 'Enter value...',

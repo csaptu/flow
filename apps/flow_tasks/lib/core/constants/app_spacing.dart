@@ -25,6 +25,7 @@ class FlowSpacing {
   static const double taskItemHeight = 56.0;
   static const double taskItemPaddingH = 16.0;
   static const double taskItemPaddingV = 12.0;
+  static const double dialogMaxWidth = 420.0;
 
   // Border radius (soft, Bear-style)
   static const double radiusXs = 4.0;

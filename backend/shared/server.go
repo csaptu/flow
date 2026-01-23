@@ -195,7 +195,10 @@ func (s *Server) registerRoutes() {
 	tasks.Post("/:id/ai/remind", aiHandler.AIRemind)
 	tasks.Post("/:id/ai/email", aiHandler.AIEmail)
 	tasks.Post("/:id/ai/invite", aiHandler.AIInvite)
-	tasks.Get("/entities", aiHandler.GetAggregatedEntities) // Smart Lists - aggregated entities
+	tasks.Post("/:id/ai/check-duplicates", aiHandler.AICheckDuplicates)
+	tasks.Post("/:id/ai/resolve-duplicate", aiHandler.AIResolveDuplicate)
+	tasks.Get("/entities", aiHandler.GetAggregatedEntities)           // Smart Lists - aggregated entities
+	tasks.Delete("/:id/entities/:type/:value", aiHandler.RemoveEntityFromTask) // Remove entity from single task
 
 	// AI management routes
 	aiRoutes := protected.Group("/ai")

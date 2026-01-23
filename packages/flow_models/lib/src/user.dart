@@ -78,17 +78,12 @@ class AIPreferences extends Equatable {
   // Free tier features
   final AISetting cleanTitle;
   final AISetting cleanDescription;
-  final AISetting smartDueDates;
 
   // Light tier features
   final AISetting decompose;
-  final AISetting complexity;
   final AISetting entityExtraction;
+  final AISetting duplicateCheck;
   final AISetting recurringDetection;
-  final AISetting autoGroup;
-  final AISetting reminder;
-  final AISetting draftEmail;
-  final AISetting draftCalendar;
 
   // Premium tier features
   final AISetting sendEmail;
@@ -98,16 +93,11 @@ class AIPreferences extends Equatable {
     // Free - Auto by default
     this.cleanTitle = AISetting.auto,
     this.cleanDescription = AISetting.auto,
-    this.smartDueDates = AISetting.auto,
     // Light - Mixed defaults
     this.decompose = AISetting.ask,
-    this.complexity = AISetting.auto,
     this.entityExtraction = AISetting.auto,
+    this.duplicateCheck = AISetting.ask,
     this.recurringDetection = AISetting.ask,
-    this.autoGroup = AISetting.ask,
-    this.reminder = AISetting.ask,
-    this.draftEmail = AISetting.ask,
-    this.draftCalendar = AISetting.ask,
     // Premium - Ask by default
     this.sendEmail = AISetting.ask,
     this.sendCalendar = AISetting.ask,
@@ -120,15 +110,10 @@ class AIPreferences extends Equatable {
     return AIPreferences(
       cleanTitle: AISetting.fromString(json['clean_title'] ?? 'auto'),
       cleanDescription: AISetting.fromString(json['clean_description'] ?? 'auto'),
-      smartDueDates: AISetting.fromString(json['smart_due_dates'] ?? 'auto'),
       decompose: AISetting.fromString(json['decompose'] ?? 'ask'),
-      complexity: AISetting.fromString(json['complexity'] ?? 'auto'),
       entityExtraction: AISetting.fromString(json['entity_extraction'] ?? 'auto'),
+      duplicateCheck: AISetting.fromString(json['duplicate_check'] ?? 'ask'),
       recurringDetection: AISetting.fromString(json['recurring_detection'] ?? 'ask'),
-      autoGroup: AISetting.fromString(json['auto_group'] ?? 'ask'),
-      reminder: AISetting.fromString(json['reminder'] ?? 'ask'),
-      draftEmail: AISetting.fromString(json['draft_email'] ?? 'ask'),
-      draftCalendar: AISetting.fromString(json['draft_calendar'] ?? 'ask'),
       sendEmail: AISetting.fromString(json['send_email'] ?? 'ask'),
       sendCalendar: AISetting.fromString(json['send_calendar'] ?? 'ask'),
     );
@@ -137,15 +122,10 @@ class AIPreferences extends Equatable {
   Map<String, dynamic> toJson() => {
         'clean_title': cleanTitle.name,
         'clean_description': cleanDescription.name,
-        'smart_due_dates': smartDueDates.name,
         'decompose': decompose.name,
-        'complexity': complexity.name,
         'entity_extraction': entityExtraction.name,
+        'duplicate_check': duplicateCheck.name,
         'recurring_detection': recurringDetection.name,
-        'auto_group': autoGroup.name,
-        'reminder': reminder.name,
-        'draft_email': draftEmail.name,
-        'draft_calendar': draftCalendar.name,
         'send_email': sendEmail.name,
         'send_calendar': sendCalendar.name,
       };
@@ -159,24 +139,14 @@ class AIPreferences extends Equatable {
         return cleanTitle;
       case 'clean_description':
         return cleanDescription;
-      case 'smart_due_date':
-        return smartDueDates;
       case 'decompose':
         return decompose;
-      case 'complexity':
-        return complexity;
       case 'entity_extraction':
         return entityExtraction;
+      case 'duplicate_check':
+        return duplicateCheck;
       case 'recurring_detection':
         return recurringDetection;
-      case 'auto_group':
-        return autoGroup;
-      case 'reminder':
-        return reminder;
-      case 'draft_email':
-        return draftEmail;
-      case 'draft_calendar':
-        return draftCalendar;
       case 'send_email':
         return sendEmail;
       case 'send_calendar':
@@ -192,15 +162,10 @@ class AIPreferences extends Equatable {
     return AIPreferences(
       cleanTitle: key == 'clean_title' ? setting : cleanTitle,
       cleanDescription: key == 'clean_description' ? setting : cleanDescription,
-      smartDueDates: key == 'smart_due_date' ? setting : smartDueDates,
       decompose: key == 'decompose' ? setting : decompose,
-      complexity: key == 'complexity' ? setting : complexity,
       entityExtraction: key == 'entity_extraction' ? setting : entityExtraction,
+      duplicateCheck: key == 'duplicate_check' ? setting : duplicateCheck,
       recurringDetection: key == 'recurring_detection' ? setting : recurringDetection,
-      autoGroup: key == 'auto_group' ? setting : autoGroup,
-      reminder: key == 'reminder' ? setting : reminder,
-      draftEmail: key == 'draft_email' ? setting : draftEmail,
-      draftCalendar: key == 'draft_calendar' ? setting : draftCalendar,
       sendEmail: key == 'send_email' ? setting : sendEmail,
       sendCalendar: key == 'send_calendar' ? setting : sendCalendar,
     );
@@ -210,15 +175,10 @@ class AIPreferences extends Equatable {
   List<Object?> get props => [
         cleanTitle,
         cleanDescription,
-        smartDueDates,
         decompose,
-        complexity,
         entityExtraction,
+        duplicateCheck,
         recurringDetection,
-        autoGroup,
-        reminder,
-        draftEmail,
-        draftCalendar,
         sendEmail,
         sendCalendar,
       ];

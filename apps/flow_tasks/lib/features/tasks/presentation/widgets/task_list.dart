@@ -84,18 +84,31 @@ class TaskList extends ConsumerWidget {
     final today = DateTime(now.year, now.month, now.day);
     final tomorrow = today.add(const Duration(days: 1));
 
-    // Separate tasks by date
+    // Separate completed tasks for lists and smart lists (they go in their own group)
+    final shouldSeparateCompleted = listType == TaskListType.list;
+    final completedTasks = <Task>[];
+    final pendingTasks = <Task>[];
+
+    for (final task in tasks) {
+      if (shouldSeparateCompleted && task.isCompleted) {
+        completedTasks.add(task);
+      } else {
+        pendingTasks.add(task);
+      }
+    }
+
+    // Separate pending tasks by date
     final overdueTasks = <Task>[];
     final todayTasks = <Task>[];
     final tomorrowTasks = <Task>[];
     final futureTasks = <String, List<Task>>{};
     final noDateTasks = <Task>[];
 
-    for (final task in tasks) {
-      if (task.dueDate == null) {
+    for (final task in pendingTasks) {
+      if (task.dueAt == null) {
         noDateTasks.add(task);
       } else {
-        final dueDate = DateTime(task.dueDate!.year, task.dueDate!.month, task.dueDate!.day);
+        final dueDate = DateTime(task.dueAt!.year, task.dueAt!.month, task.dueAt!.day);
 
         // Tasks due today go to "Today" section, even if past the specific time
         if (dueDate.isAtSameMomentAs(today)) {
@@ -107,7 +120,7 @@ class TaskList extends ConsumerWidget {
           overdueTasks.add(task);
         } else {
           // Group by date string for future dates
-          final dateKey = _formatGroupDate(task.dueDate!);
+          final dateKey = _formatGroupDate(task.dueAt!);
           futureTasks.putIfAbsent(dateKey, () => []).add(task);
         }
       }
@@ -115,18 +128,36 @@ class TaskList extends ConsumerWidget {
 
     final groups = <_DateGroup>[];
 
-    // Overdue section always first
+    // Overdue section always first (called "Past" in completed view)
     if (overdueTasks.isNotEmpty) {
-      overdueTasks.sort((a, b) => (a.dueDate ?? DateTime.now()).compareTo(b.dueDate ?? DateTime.now()));
+      overdueTasks.sort((a, b) => (a.dueAt ?? DateTime.now()).compareTo(b.dueAt ?? DateTime.now()));
       groups.add(_DateGroup(
-        title: 'Overdue',
+        title: listType == TaskListType.completed ? 'Past' : 'Overdue',
         tasks: overdueTasks,
-        isOverdue: true,
+        isOverdue: listType != TaskListType.completed, // Only style as overdue if not completed view
       ));
     }
 
-    // Today section
+    // Today section - sort so time-overdue tasks appear at top
     if (todayTasks.isNotEmpty) {
+      todayTasks.sort((a, b) {
+        // Time-overdue tasks (due today with passed time) come first
+        final aOverdue = a.isOverdue ? 0 : 1;
+        final bOverdue = b.isOverdue ? 0 : 1;
+        if (aOverdue != bOverdue) return aOverdue.compareTo(bOverdue);
+
+        // Then sort by time (if both have time, earlier first; no time at end)
+        final aHasTime = a.hasDueTime;
+        final bHasTime = b.hasDueTime;
+        if (aHasTime && bHasTime) {
+          return a.dueAt!.compareTo(b.dueAt!);
+        } else if (aHasTime) {
+          return -1; // a has time, b doesn't -> a first
+        } else if (bHasTime) {
+          return 1; // b has time, a doesn't -> b first
+        }
+        return 0;
+      });
       groups.add(_DateGroup(
         title: 'Today',
         tasks: todayTasks,
@@ -144,8 +175,8 @@ class TaskList extends ConsumerWidget {
     // Future dates sorted by date
     final sortedFutureDates = futureTasks.keys.toList()
       ..sort((a, b) {
-        final dateA = futureTasks[a]!.first.dueDate!;
-        final dateB = futureTasks[b]!.first.dueDate!;
+        final dateA = futureTasks[a]!.first.dueAt!;
+        final dateB = futureTasks[b]!.first.dueAt!;
         return dateA.compareTo(dateB);
       });
 
@@ -156,12 +187,25 @@ class TaskList extends ConsumerWidget {
       ));
     }
 
-    // No date section at the end - but not for Today or Next 7 days views
+    // No date section - but not for Today or Next 7 days views
     final showNoDate = listType != TaskListType.today && listType != TaskListType.next7days;
     if (noDateTasks.isNotEmpty && showNoDate) {
       groups.add(_DateGroup(
         title: 'No Date',
         tasks: noDateTasks,
+      ));
+    }
+
+    // Completed section at the very end (for lists and smart lists)
+    if (completedTasks.isNotEmpty) {
+      // Sort completed tasks by completion date (most recent first)
+      completedTasks.sort((a, b) =>
+        (b.completedAt ?? DateTime.now()).compareTo(a.completedAt ?? DateTime.now()));
+      groups.add(_DateGroup(
+        title: 'Completed',
+        tasks: completedTasks,
+        isCollapsible: true,
+        isExpanded: false, // Collapsed by default
       ));
     }
 
@@ -396,16 +440,16 @@ class _GroupedTaskListViewState extends ConsumerState<_GroupedTaskListView> {
   void initState() {
     super.initState();
     _expandedState = {
-      for (final group in widget.groups) group.title: true,
+      for (final group in widget.groups) group.title: group.isExpanded,
     };
   }
 
   @override
   void didUpdateWidget(covariant _GroupedTaskListView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Add new groups to expanded state
+    // Add new groups to expanded state (using their default isExpanded value)
     for (final group in widget.groups) {
-      _expandedState.putIfAbsent(group.title, () => true);
+      _expandedState.putIfAbsent(group.title, () => group.isExpanded);
     }
   }
 

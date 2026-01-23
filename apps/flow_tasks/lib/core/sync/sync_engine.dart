@@ -161,9 +161,10 @@ class SyncEngine {
           id: operation.entityId, // Send client ID for offline-first sync
           title: operation.data['title'] as String,
           description: operation.data['description'] as String?,
-          dueDate: operation.data['due_date'] != null
-              ? DateTime.parse(operation.data['due_date'] as String)
+          dueAt: operation.data['due_at'] != null
+              ? DateTime.parse(operation.data['due_at'] as String)
               : null,
+          hasDueTime: operation.data['has_due_time'] as bool? ?? false,
           priority: operation.data['priority'] as int?,
           tags: (operation.data['tags'] as List?)?.cast<String>(),
           parentId: operation.data['parent_id'] as String?,
@@ -176,9 +177,11 @@ class SyncEngine {
           operation.entityId,
           title: operation.data['title'] as String?,
           description: operation.data['description'] as String?,
-          dueDate: operation.data['due_date'] != null
-              ? DateTime.parse(operation.data['due_date'] as String)
+          dueAt: operation.data['due_at'] != null
+              ? DateTime.parse(operation.data['due_at'] as String)
               : null,
+          hasDueTime: operation.data['has_due_time'] as bool?,
+          clearDueAt: operation.data['clear_due_at'] as bool? ?? false,
           priority: operation.data['priority'] as int?,
           status: operation.data['status'] as String?,
           tags: (operation.data['tags'] as List?)?.cast<String>(),

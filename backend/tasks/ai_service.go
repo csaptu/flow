@@ -143,17 +143,18 @@ func escapeForJSONPrompt(s string) string {
 
 // AIProcessResult contains all AI processing results
 type AIProcessResult struct {
-	CleanedTitle    *string            `json:"cleaned_title,omitempty"`
-	CleanedDesc     *string            `json:"cleaned_description,omitempty"`
-	Summary         *string            `json:"summary,omitempty"`
-	DueDate         *time.Time         `json:"due_date,omitempty"`
-	ReminderTime    *time.Time         `json:"reminder_time,omitempty"`
-	Complexity      *int               `json:"complexity,omitempty"`
-	Entities        []Entity           `json:"entities,omitempty"`
-	RecurrenceRule  *string            `json:"recurrence_rule,omitempty"`
-	SuggestedGroup  *string            `json:"suggested_group,omitempty"`
-	Steps           []TaskStep         `json:"steps,omitempty"`
-	Draft           *DraftContent      `json:"draft,omitempty"`
+	CleanedTitle   *string       `json:"cleaned_title,omitempty"`
+	CleanedDesc    *string       `json:"cleaned_description,omitempty"`
+	Summary        *string       `json:"summary,omitempty"`
+	DueAt          *time.Time    `json:"due_date,omitempty"` // JSON uses due_date (AI response format)
+	HasDueTime     bool          `json:"has_due_time"`       // true if AI detected specific time
+	ReminderTime   *time.Time    `json:"reminder_time,omitempty"`
+	Complexity     *int          `json:"complexity,omitempty"`
+	Entities       []Entity      `json:"entities,omitempty"`
+	RecurrenceRule *string       `json:"recurrence_rule,omitempty"`
+	SuggestedGroup *string       `json:"suggested_group,omitempty"`
+	Steps          []TaskStep    `json:"steps,omitempty"`
+	Draft          *DraftContent `json:"draft,omitempty"`
 }
 
 // Entity represents an extracted entity
@@ -393,16 +394,22 @@ func (s *AIService) parseAutoProcessResponse(content string, result *AIProcessRe
 	}
 
 	if parsed.CleanedTitle != "" {
-		result.CleanedTitle = &parsed.CleanedTitle
+		// Post-process: remove trailing period (not suitable for todo list titles)
+		cleanedTitle := strings.TrimSuffix(parsed.CleanedTitle, ".")
+		result.CleanedTitle = &cleanedTitle
 	}
 	if parsed.Summary != "" {
 		result.Summary = &parsed.Summary
 	}
 	if parsed.DueDate != "" {
 		if t, err := time.Parse(time.RFC3339, parsed.DueDate); err == nil {
-			result.DueDate = &t
+			result.DueAt = &t
+			// RFC3339 format includes time, so HasDueTime = true
+			result.HasDueTime = true
 		} else if t, err := time.Parse("2006-01-02", parsed.DueDate); err == nil {
-			result.DueDate = &t
+			result.DueAt = &t
+			// Date-only format, so HasDueTime = false
+			result.HasDueTime = false
 		}
 	}
 	if parsed.ReminderTime != "" {
@@ -436,7 +443,7 @@ func (s *AIService) trackAutoProcessUsage(ctx context.Context, userID uuid.UUID,
 	if result.Summary != nil {
 		s.incrementUsage(ctx, userID, FeatureCleanDescription)
 	}
-	if result.DueDate != nil {
+	if result.DueAt != nil {
 		s.incrementUsage(ctx, userID, FeatureSmartDueDate)
 	}
 	if result.ReminderTime != nil {

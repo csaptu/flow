@@ -27,17 +27,12 @@ enum AIFeature {
   // Free tier features
   cleanTitle,
   cleanDescription,
-  smartDueDate,
 
   // Light tier features
   decompose,
-  complexity,
   entityExtraction,
+  duplicateCheck,
   recurringDetection,
-  autoGroup,
-  reminder,
-  draftEmail,
-  draftCalendar,
 
   // Premium tier features (execution)
   sendEmail,
@@ -49,24 +44,14 @@ enum AIFeature {
         return 'clean_title';
       case AIFeature.cleanDescription:
         return 'clean_description';
-      case AIFeature.smartDueDate:
-        return 'smart_due_date';
       case AIFeature.decompose:
         return 'decompose';
-      case AIFeature.complexity:
-        return 'complexity';
       case AIFeature.entityExtraction:
         return 'entity_extraction';
+      case AIFeature.duplicateCheck:
+        return 'duplicate_check';
       case AIFeature.recurringDetection:
         return 'recurring_detection';
-      case AIFeature.autoGroup:
-        return 'auto_group';
-      case AIFeature.reminder:
-        return 'reminder';
-      case AIFeature.draftEmail:
-        return 'draft_email';
-      case AIFeature.draftCalendar:
-        return 'draft_calendar';
       case AIFeature.sendEmail:
         return 'send_email';
       case AIFeature.sendCalendar:
@@ -81,24 +66,14 @@ enum AIFeature {
         return 'Clean Title';
       case AIFeature.cleanDescription:
         return 'Clean Description';
-      case AIFeature.smartDueDate:
-        return 'Smart Due Dates';
       case AIFeature.decompose:
         return 'Decompose Tasks';
-      case AIFeature.complexity:
-        return 'Complexity Check';
       case AIFeature.entityExtraction:
         return 'Entity Extraction';
+      case AIFeature.duplicateCheck:
+        return 'Duplicate Check';
       case AIFeature.recurringDetection:
         return 'Recurring Detection';
-      case AIFeature.autoGroup:
-        return 'Auto-Group';
-      case AIFeature.reminder:
-        return 'Reminder';
-      case AIFeature.draftEmail:
-        return 'Draft Email';
-      case AIFeature.draftCalendar:
-        return 'Draft Calendar';
       case AIFeature.sendEmail:
         return 'Send Email';
       case AIFeature.sendCalendar:
@@ -111,16 +86,11 @@ enum AIFeature {
     switch (this) {
       case AIFeature.cleanTitle:
       case AIFeature.cleanDescription:
-      case AIFeature.smartDueDate:
         return UserTier.free;
       case AIFeature.decompose:
-      case AIFeature.complexity:
       case AIFeature.entityExtraction:
+      case AIFeature.duplicateCheck:
       case AIFeature.recurringDetection:
-      case AIFeature.autoGroup:
-      case AIFeature.reminder:
-      case AIFeature.draftEmail:
-      case AIFeature.draftCalendar:
         return UserTier.light;
       case AIFeature.sendEmail:
       case AIFeature.sendCalendar:
@@ -133,16 +103,11 @@ enum AIFeature {
     switch (this) {
       case AIFeature.cleanTitle:
       case AIFeature.cleanDescription:
-      case AIFeature.smartDueDate:
-      case AIFeature.complexity:
       case AIFeature.entityExtraction:
         return AISetting.auto;
       case AIFeature.decompose:
+      case AIFeature.duplicateCheck:
       case AIFeature.recurringDetection:
-      case AIFeature.autoGroup:
-      case AIFeature.reminder:
-      case AIFeature.draftEmail:
-      case AIFeature.draftCalendar:
       case AIFeature.sendEmail:
       case AIFeature.sendCalendar:
         return AISetting.ask;
@@ -156,24 +121,14 @@ enum AIFeature {
         return 'Shorten titles to <8 words';
       case AIFeature.cleanDescription:
         return 'Summarize descriptions to <15 words';
-      case AIFeature.smartDueDate:
-        return 'Parse "tomorrow", "next week" etc';
       case AIFeature.decompose:
         return 'Break down tasks into 2-5 steps';
-      case AIFeature.complexity:
-        return 'Score task complexity 1-10';
       case AIFeature.entityExtraction:
         return 'Find people mentioned in tasks';
+      case AIFeature.duplicateCheck:
+        return 'Find similar or duplicate tasks';
       case AIFeature.recurringDetection:
         return 'Detect recurring patterns';
-      case AIFeature.autoGroup:
-        return 'Group similar tasks together';
-      case AIFeature.reminder:
-        return 'Suggest reminder times';
-      case AIFeature.draftEmail:
-        return 'Generate email drafts from tasks';
-      case AIFeature.draftCalendar:
-        return 'Generate calendar invites';
       case AIFeature.sendEmail:
         return 'Send emails via connected account';
       case AIFeature.sendCalendar:
@@ -283,21 +238,6 @@ class AIDecomposeResult extends Equatable {
   List<Object?> get props => [task, subtasks];
 }
 
-/// AI Rate result (complexity rating)
-class AIRateResult extends Equatable {
-  final dynamic task; // Task object
-  final int complexity;
-  final String reason;
-
-  const AIRateResult({
-    required this.task,
-    required this.complexity,
-    required this.reason,
-  });
-
-  @override
-  List<Object?> get props => [complexity, reason];
-}
 
 /// AI Entity extracted from task
 class AIEntity extends Equatable {
@@ -344,6 +284,54 @@ class SmartListItem extends Equatable {
   List<Object?> get props => [type, value, count];
 }
 
+/// Entity alias info
+class EntityAlias extends Equatable {
+  final String value;
+  final DateTime createdAt;
+
+  const EntityAlias({
+    required this.value,
+    required this.createdAt,
+  });
+
+  factory EntityAlias.fromJson(Map<String, dynamic> json) {
+    return EntityAlias(
+      value: json['value'] as String,
+      createdAt: DateTime.parse(json['created_at'] as String),
+    );
+  }
+
+  @override
+  List<Object?> get props => [value, createdAt];
+}
+
+/// Response for getting entity aliases
+class EntityAliasesResponse extends Equatable {
+  final String canonical;
+  final String type;
+  final List<EntityAlias> aliases;
+
+  const EntityAliasesResponse({
+    required this.canonical,
+    required this.type,
+    required this.aliases,
+  });
+
+  factory EntityAliasesResponse.fromJson(Map<String, dynamic> json) {
+    return EntityAliasesResponse(
+      canonical: json['canonical'] as String,
+      type: json['type'] as String,
+      aliases: (json['aliases'] as List<dynamic>?)
+              ?.map((e) => EntityAlias.fromJson(e as Map<String, dynamic>))
+              .toList() ??
+          [],
+    );
+  }
+
+  @override
+  List<Object?> get props => [canonical, type, aliases];
+}
+
 /// AI Extract result (entity extraction)
 class AIExtractResult extends Equatable {
   final dynamic task; // Task object
@@ -358,21 +346,54 @@ class AIExtractResult extends Equatable {
   List<Object?> get props => [entities];
 }
 
+/// AI Duplicates result (duplicate task detection)
+class AIDuplicatesResult extends Equatable {
+  final dynamic task; // Task object
+  final List<dynamic> duplicates; // List of similar task objects
+  final String? reason; // Explanation of why these are duplicates
+
+  const AIDuplicatesResult({
+    required this.task,
+    required this.duplicates,
+    this.reason,
+  });
+
+  @override
+  List<Object?> get props => [duplicates, reason];
+}
+
+/// AI Rate result (complexity rating)
+class AIRateResult extends Equatable {
+  final dynamic task; // Task object
+  final int complexity; // 1-10 scale
+  final String? reason;
+
+  const AIRateResult({
+    required this.task,
+    required this.complexity,
+    this.reason,
+  });
+
+  @override
+  List<Object?> get props => [complexity, reason];
+}
+
 /// AI Remind result (suggested reminder time)
 class AIRemindResult extends Equatable {
   final dynamic task; // Task object
   final DateTime reminderTime;
-  final String reason;
+  final String? reason;
 
   const AIRemindResult({
     required this.task,
     required this.reminderTime,
-    required this.reason,
+    this.reason,
   });
 
   @override
   List<Object?> get props => [reminderTime, reason];
 }
+
 
 /// AI Draft result (email or calendar draft)
 class AIDraftResult extends Equatable {

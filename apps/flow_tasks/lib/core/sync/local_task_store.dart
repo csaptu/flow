@@ -141,10 +141,12 @@ class LocalTaskStore extends StateNotifier<LocalTaskState> {
   Future<Task> createTask({
     required String title,
     String? description,
-    DateTime? dueDate,
+    DateTime? dueAt,
+    bool hasDueTime = false,
     int? priority,
     List<String>? tags,
     String? parentId,
+    bool skipAutoCleanup = false,
   }) async {
     final now = DateTime.now();
     final taskId = generateClientId();
@@ -154,12 +156,15 @@ class LocalTaskStore extends StateNotifier<LocalTaskState> {
       id: taskId,
       title: title,
       description: description,
-      dueDate: dueDate,
+      dueAt: dueAt,
+      hasDueTime: hasDueTime,
       priority: priority != null ? Priority.fromInt(priority) : Priority.none,
       tags: tags ?? [],
       parentId: parentId,
       depth: parentId != null ? 1 : 0,
+      sortOrder: parentId != null ? 9999 : 0, // High value for new subtasks, will be set by server
       status: TaskStatus.pending,
+      skipAutoCleanup: skipAutoCleanup,
       createdAt: now,
       updatedAt: now,
     );
@@ -171,10 +176,12 @@ class LocalTaskStore extends StateNotifier<LocalTaskState> {
       data: {
         'title': title,
         'description': description,
-        'due_date': _formatDueDate(dueDate),
+        'due_at': dueAt?.toUtc().toIso8601String(),
+        'has_due_time': hasDueTime,
         'priority': priority,
         'tags': tags,
         'parent_id': parentId,
+        'skip_auto_cleanup': skipAutoCleanup,
       },
     );
 
@@ -189,12 +196,14 @@ class LocalTaskStore extends StateNotifier<LocalTaskState> {
   }
 
   /// Optimistically update a task
+  /// Set clearDueAt to true to remove the due date entirely
   Future<Task> updateTask(
     String taskId, {
     String? title,
     String? description,
-    DateTime? dueDate,
-    bool clearDueDate = false, // Set to true to explicitly clear the date
+    DateTime? dueAt,
+    bool? hasDueTime,
+    bool clearDueAt = false, // Set to true to explicitly clear the due date
     int? priority,
     String? status,
     List<String>? tags,
@@ -207,16 +216,47 @@ class LocalTaskStore extends StateNotifier<LocalTaskState> {
       throw Exception('Task not found: $taskId');
     }
 
-    // Create updated task - handle nullable dueDate specially
-    final updatedDueDate = clearDueDate ? null : (dueDate ?? existing.dueDate);
+    // Create updated task - handle clearing dueAt
+    final updatedDueAt = clearDueAt ? null : (dueAt ?? existing.dueAt);
+    final updatedHasDueTime = clearDueAt ? false : (hasDueTime ?? existing.hasDueTime);
+    final newTitle = title ?? existing.title;
+    final newDescription = description ?? existing.description;
+
+    // Smart AI field preservation:
+    // Only clear aiCleanedTitle if:
+    // 1. Title is being updated (title != null)
+    // 2. AND the new title is different from the original (title != existing.title)
+    // 3. AND the new title is different from the AI-cleaned version (title != existing.aiCleanedTitle)
+    // This handles: user focuses/blurs without changing, user types same as AI version
+    String? newAiCleanedTitle = existing.aiCleanedTitle;
+    if (title != null) {
+      final bool isSameAsOriginal = title == existing.title;
+      final bool isSameAsAiCleaned = title == existing.aiCleanedTitle;
+      if (!isSameAsOriginal && !isSameAsAiCleaned) {
+        // User actually changed the title to something new - clear AI version
+        newAiCleanedTitle = null;
+      }
+    }
+
+    // Same logic for description
+    String? newAiCleanedDescription = existing.aiCleanedDescription;
+    if (description != null) {
+      final bool isSameAsOriginal = description == existing.description;
+      final bool isSameAsAiCleaned = description == existing.aiCleanedDescription;
+      if (!isSameAsOriginal && !isSameAsAiCleaned) {
+        // User actually changed the description to something new - clear AI version
+        newAiCleanedDescription = null;
+      }
+    }
+
     final updated = Task(
       id: existing.id,
-      title: title ?? existing.title,
-      description: description ?? existing.description,
-      aiSummary: existing.aiSummary,
+      title: newTitle,
+      description: newDescription,
       status: status != null ? TaskStatus.fromString(status) : existing.status,
       priority: priority != null ? Priority.fromInt(priority) : existing.priority,
-      dueDate: updatedDueDate,
+      dueAt: updatedDueAt,
+      hasDueTime: updatedHasDueTime,
       completedAt: existing.completedAt,
       tags: tags ?? existing.tags,
       parentId: existing.parentId,
@@ -226,25 +266,30 @@ class LocalTaskStore extends StateNotifier<LocalTaskState> {
       childrenCount: existing.childrenCount,
       createdAt: existing.createdAt,
       updatedAt: DateTime.now(),
-      originalTitle: existing.originalTitle,
-      originalDescription: existing.originalDescription,
+      aiCleanedTitle: newAiCleanedTitle,
+      aiCleanedDescription: newAiCleanedDescription,
+      // Compute displayTitle/Description
+      displayTitle: newAiCleanedTitle ?? newTitle,
+      displayDescription: newAiCleanedDescription ?? newDescription,
       skipAutoCleanup: skipAutoCleanup ?? existing.skipAutoCleanup,
     );
 
     // Create sync operation
+    final opData = {
+      if (title != null) 'title': title,
+      if (description != null) 'description': description,
+      if (dueAt != null && !clearDueAt) 'due_at': dueAt.toUtc().toIso8601String(),
+      if (clearDueAt) 'clear_due_at': true,
+      if (hasDueTime != null) 'has_due_time': hasDueTime,
+      if (priority != null) 'priority': priority,
+      if (status != null) 'status': status,
+      if (tags != null) 'tags': tags,
+      if (parentId != null) 'parent_id': parentId,
+    };
     final operation = SyncOperation.update(
       entityId: taskId,
       entityType: 'task',
-      data: {
-        if (title != null) 'title': title,
-        if (description != null) 'description': description,
-        if (dueDate != null) 'due_date': _formatDueDate(dueDate),
-        if (clearDueDate) 'due_date': null, // Explicitly send null to clear
-        if (priority != null) 'priority': priority,
-        if (status != null) 'status': status,
-        if (tags != null) 'tags': tags,
-        if (parentId != null) 'parent_id': parentId,
-      },
+      data: opData,
     );
 
     // Update state - increment version to ensure state change is detected
@@ -471,30 +516,5 @@ class LocalTaskState {
     return pendingOperations.any(
       (op) => op.entityId == taskId && op.type == SyncOperationType.create,
     );
-  }
-}
-
-/// Format due date for API.
-/// If the date has no specific time (midnight local), send it as local time to preserve the date.
-/// If it has a specific time, send as UTC for accuracy.
-String? _formatDueDate(DateTime? date) {
-  if (date == null) return null;
-
-  // Convert to local time to check if it's midnight
-  final local = date.toLocal();
-  final isDateOnly = local.hour == 0 && local.minute == 0 && local.second == 0;
-
-  if (isDateOnly) {
-    // Send as local midnight to preserve the date across timezones
-    // Format: 2026-01-20T00:00:00+07:00 (with local offset)
-    final offset = local.timeZoneOffset;
-    final sign = offset.isNegative ? '-' : '+';
-    final hours = offset.inHours.abs().toString().padLeft(2, '0');
-    final minutes = (offset.inMinutes.abs() % 60).toString().padLeft(2, '0');
-    final dateStr = '${local.year.toString().padLeft(4, '0')}-${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')}';
-    return '${dateStr}T00:00:00$sign$hours:$minutes';
-  } else {
-    // Has specific time - send as UTC for accuracy
-    return date.toUtc().toIso8601String();
   }
 }

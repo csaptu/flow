@@ -11,3 +11,4 @@ export 'src/list.dart';
 export 'src/attachment.dart';
 export 'src/ai.dart';
 export 'src/subscription.dart';
+export 'src/user_ai_profile.dart';

@@ -300,3 +300,19 @@ extension FlowColorSchemeExtension on BuildContext {
   FlowColorScheme get flowColors =>
       Theme.of(this).extension<FlowColorScheme>() ?? FlowColorScheme.light();
 }
+
+/// Helper to show dialogs with constrained max width
+Future<T?> showFlowDialog<T>({
+  required BuildContext context,
+  required Widget Function(BuildContext) builder,
+  bool barrierDismissible = true,
+}) {
+  return showDialog<T>(
+    context: context,
+    barrierDismissible: barrierDismissible,
+    builder: (ctx) => ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: FlowSpacing.dialogMaxWidth),
+      child: builder(ctx),
+    ),
+  );
+}

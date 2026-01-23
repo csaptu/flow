@@ -275,7 +275,7 @@ class _AttachmentPickerDialogState extends State<_AttachmentPickerDialog>
                 ),
               _IconButton(
                 icon: Icons.insert_drive_file_rounded,
-                label: 'File',
+                label: 'Docs',
                 color: Colors.purple,
                 onTap: _pickFile,
               ),

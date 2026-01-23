@@ -38,6 +38,7 @@ const (
 	FeatureAutoGroup          AIFeature = "auto_group"
 	FeatureDraftEmail         AIFeature = "draft_email"
 	FeatureDraftCalendar      AIFeature = "draft_calendar"
+	FeatureDuplicateCheck     AIFeature = "duplicate_check"
 )
 
 // FeatureLimits defines daily limits by tier
@@ -47,6 +48,7 @@ var FeatureLimits = map[UserTier]map[AIFeature]int{
 		FeatureCleanDescription: 20,
 		FeatureSmartDueDate:     -1,
 		FeatureReminder:         -1,
+		FeatureDuplicateCheck:   10,
 	},
 	TierLight: {
 		FeatureCleanTitle:         -1,
@@ -60,6 +62,7 @@ var FeatureLimits = map[UserTier]map[AIFeature]int{
 		FeatureAutoGroup:          10,
 		FeatureDraftEmail:         10,
 		FeatureDraftCalendar:      10,
+		FeatureDuplicateCheck:     -1,
 	},
 	TierPremium: {
 		FeatureCleanTitle:         -1,
@@ -73,6 +76,7 @@ var FeatureLimits = map[UserTier]map[AIFeature]int{
 		FeatureAutoGroup:          -1,
 		FeatureDraftEmail:         -1,
 		FeatureDraftCalendar:      -1,
+		FeatureDuplicateCheck:     -1,
 	},
 }
 
@@ -101,7 +105,8 @@ type AIProcessResult struct {
 	CleanedTitle   *string       `json:"cleaned_title,omitempty"`
 	CleanedDesc    *string       `json:"cleaned_description,omitempty"`
 	Summary        *string       `json:"summary,omitempty"`
-	DueDate        *time.Time    `json:"due_date,omitempty"`
+	DueAt          *time.Time    `json:"due_date,omitempty"` // JSON uses due_date (AI response format)
+	HasDueTime     bool          `json:"has_due_time"`       // true if AI detected specific time
 	ReminderTime   *time.Time    `json:"reminder_time,omitempty"`
 	Complexity     *int          `json:"complexity,omitempty"`
 	Entities       []Entity      `json:"entities,omitempty"`
@@ -387,9 +392,13 @@ func (s *Service) parseAutoProcessResponse(content string, result *AIProcessResu
 	}
 	if parsed.DueDate != "" {
 		if t, err := time.Parse(time.RFC3339, parsed.DueDate); err == nil {
-			result.DueDate = &t
+			result.DueAt = &t
+			// RFC3339 format includes time, so HasDueTime = true
+			result.HasDueTime = true
 		} else if t, err := time.Parse("2006-01-02", parsed.DueDate); err == nil {
-			result.DueDate = &t
+			result.DueAt = &t
+			// Date-only format, so HasDueTime = false
+			result.HasDueTime = false
 		}
 	}
 	if parsed.ReminderTime != "" {
@@ -423,7 +432,7 @@ func (s *Service) trackAutoProcessUsage(ctx context.Context, userID uuid.UUID, t
 	if result.Summary != nil {
 		_ = repository.IncrementAIUsage(ctx, userID, string(FeatureCleanDescription))
 	}
-	if result.DueDate != nil {
+	if result.DueAt != nil {
 		_ = repository.IncrementAIUsage(ctx, userID, string(FeatureSmartDueDate))
 	}
 	if result.ReminderTime != nil {

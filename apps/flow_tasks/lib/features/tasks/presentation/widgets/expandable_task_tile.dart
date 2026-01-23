@@ -283,15 +283,26 @@ class _ExpandableTaskTileState extends ConsumerState<ExpandableTaskTile>
                   ),
                 ),
 
+              // Entity indicator (subtle, similar to subtask indicator) - only for valid types
+              if (task.entities.any((e) => const {'person', 'location', 'place', 'organization'}.contains(e.type)) && !isCompleted)
+                Padding(
+                  padding: const EdgeInsets.only(left: 8),
+                  child: Icon(
+                    Icons.label_outline,
+                    size: 14,
+                    color: colors.textTertiary.withOpacity(0.7),
+                  ),
+                ),
+
               // Date on the right
-              if (task.dueDate != null)
+              if (task.dueAt != null)
                 Padding(
                   padding: const EdgeInsets.only(left: 8),
                   child: Text(
-                    _formatDate(task.dueDate!),
+                    _formatDate(task.dueAt!, task.hasDueTime),
                     style: TextStyle(
                       fontSize: 12,
-                      fontWeight: _isToday(task.dueDate!) ? FontWeight.w600 : FontWeight.w400,
+                      fontWeight: task.isOverdue ? FontWeight.w700 : (_isToday(task.dueAt!) ? FontWeight.w600 : FontWeight.w400),
                       color: task.isOverdue ? colors.error : colors.textTertiary,
                     ),
                   ),
@@ -305,7 +316,7 @@ class _ExpandableTaskTileState extends ConsumerState<ExpandableTaskTile>
 
   Widget _buildContent(FlowColorScheme colors, bool isCompleted) {
     final task = widget.task;
-    final displayTitle = removeHashtags(task.aiSummary ?? task.title);
+    final displayTitle = removeHashtags(task.displayTitle);
     final showStrikethrough = isCompleted || _isAnimatingCompletion;
     final isAdmin = ref.watch(isAdminProvider).valueOrNull ?? false;
 
@@ -335,19 +346,18 @@ class _ExpandableTaskTileState extends ConsumerState<ExpandableTaskTile>
           _buildMetadataRow(colors),
         ],
 
-        // Entity chips (compact mode for list view)
-        if (task.entities.isNotEmpty && !isCompleted) ...[
-          const SizedBox(height: 6),
-          _buildEntityChips(colors),
-        ],
       ],
     );
   }
 
   Widget _buildEntityChips(FlowColorScheme colors) {
     final task = widget.task;
-    // Show up to 3 entities in compact mode
-    final displayEntities = task.entities.take(3).toList();
+    // Show up to 3 entities in compact mode - only person, location, place, organization
+    final validTypes = {'person', 'location', 'place', 'organization'};
+    final displayEntities = task.entities
+        .where((e) => validTypes.contains(e.type))
+        .take(3)
+        .toList();
 
     return Wrap(
       spacing: 4,
@@ -371,8 +381,8 @@ class _ExpandableTaskTileState extends ConsumerState<ExpandableTaskTile>
     // Show first 8 chars of ID for brevity
     final shortId = task.id.length > 8 ? task.id.substring(0, 8) : task.id;
     // Show due date timestamp for debugging
-    final dueDateStr = task.dueDate != null
-        ? ' | due: ${task.dueDate!.toIso8601String()}'
+    final dueDateStr = task.dueAt != null
+        ? ' | due: ${task.dueAt!.toIso8601String()}'
         : '';
 
     return Row(
@@ -457,7 +467,9 @@ class _ExpandableTaskTileState extends ConsumerState<ExpandableTaskTile>
     return dateOnly == today;
   }
 
-  String _formatDate(DateTime date) {
+  /// Format due date for task list display (date only, no time)
+  /// Time is still used for sorting but not displayed in the list view
+  String _formatDate(DateTime date, bool hasDueTime) {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final dateOnly = DateTime(date.year, date.month, date.day);
@@ -651,11 +663,12 @@ class _CompactEntityChip extends StatelessWidget {
           icon: Icons.person_outline,
         );
       case 'location':
+      case 'place': // Normalize place to location
         return _EntityChipColors(
           background: const Color(0xFF10B981).withOpacity(0.1),
           foreground: const Color(0xFF10B981),
           border: const Color(0xFF10B981).withOpacity(0.3),
-          icon: Icons.location_on_outlined,
+          icon: Icons.place, // Google Maps-like icon
         );
       case 'organization':
         return _EntityChipColors(

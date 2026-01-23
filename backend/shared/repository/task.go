@@ -4,7 +4,9 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -72,31 +74,55 @@ func getTasksPool() *pgxpool.Pool {
 // ErrTasksDBNotInitialized is returned when the tasks database is not initialized.
 var ErrTasksDBNotInitialized = fmt.Errorf("tasks database not initialized")
 
+// TaskEntity represents an entity extracted from a task (person, place, etc.)
+type TaskEntity struct {
+	Type  string `json:"type"`
+	Value string `json:"value"`
+	ID    string `json:"id,omitempty"`
+}
+
 // Task represents a task record from the tasks database.
 type Task struct {
 	ID                   uuid.UUID
 	UserID               uuid.UUID
-	Title                string
-	Description          *string
-	AISummary            *string
+	Title                string  // User's original input
+	Description          *string // User's original input
 	Status               string
 	Priority             int
-	DueDate              *time.Time
+	DueAt                *time.Time
+	HasDueTime           bool
 	CompletedAt          *time.Time
 	Tags                 []string
 	ParentID             *uuid.UUID
 	Depth                int
 	Complexity           int
-	AICleanedTitle       bool
-	AICleanedDescription bool
+	AICleanedTitle       *string // AI cleaned version (null = not cleaned)
+	AICleanedDescription *string // AI cleaned version (null = not cleaned)
 	AIExtractedDue       bool
-	OriginalTitle        *string
-	OriginalDescription  *string
 	SkipAutoCleanup      bool
 	ReminderAt           *time.Time
+	Entities             []TaskEntity
+	DuplicateOf          []string
+	DuplicateResolved    bool
 	Version              int
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
+}
+
+// GetDisplayTitle returns the title to display (AI cleaned or user input)
+func (t *Task) GetDisplayTitle() string {
+	if t.AICleanedTitle != nil && *t.AICleanedTitle != "" {
+		return *t.AICleanedTitle
+	}
+	return t.Title
+}
+
+// GetDisplayDescription returns the description to display (AI cleaned or user input)
+func (t *Task) GetDisplayDescription() *string {
+	if t.AICleanedDescription != nil && *t.AICleanedDescription != "" {
+		return t.AICleanedDescription
+	}
+	return t.Description
 }
 
 // GetSubtasks returns all subtasks for a parent task.
@@ -107,11 +133,10 @@ func GetSubtasks(ctx context.Context, parentID, userID uuid.UUID) ([]*Task, erro
 	}
 
 	rows, err := db.Query(ctx, `
-		SELECT id, user_id, title, description, ai_summary, status, priority,
-		       due_date, completed_at, tags, parent_id, depth, COALESCE(complexity, 0),
-		       COALESCE(ai_cleaned_title, false), COALESCE(ai_cleaned_description, false),
-		       COALESCE(ai_extracted_due, false),
-		       original_title, original_description, COALESCE(skip_auto_cleanup, false),
+		SELECT id, user_id, title, description, status, priority,
+		       due_at, has_due_time, completed_at, tags, parent_id, depth, COALESCE(complexity, 0),
+		       ai_cleaned_title, ai_cleaned_description,
+		       COALESCE(ai_extracted_due, false), COALESCE(skip_auto_cleanup, false),
 		       version, created_at, updated_at
 		FROM tasks
 		WHERE parent_id = $1 AND user_id = $2 AND deleted_at IS NULL
@@ -126,11 +151,11 @@ func GetSubtasks(ctx context.Context, parentID, userID uuid.UUID) ([]*Task, erro
 	for rows.Next() {
 		var t Task
 		if err := rows.Scan(
-			&t.ID, &t.UserID, &t.Title, &t.Description, &t.AISummary,
-			&t.Status, &t.Priority, &t.DueDate, &t.CompletedAt, &t.Tags,
+			&t.ID, &t.UserID, &t.Title, &t.Description,
+			&t.Status, &t.Priority, &t.DueAt, &t.HasDueTime, &t.CompletedAt, &t.Tags,
 			&t.ParentID, &t.Depth, &t.Complexity,
 			&t.AICleanedTitle, &t.AICleanedDescription, &t.AIExtractedDue,
-			&t.OriginalTitle, &t.OriginalDescription, &t.SkipAutoCleanup,
+			&t.SkipAutoCleanup,
 			&t.Version, &t.CreatedAt, &t.UpdatedAt,
 		); err != nil {
 			continue
@@ -150,23 +175,26 @@ func GetTaskByID(ctx context.Context, taskID, userID uuid.UUID) (*Task, int, err
 
 	var t Task
 	var childCount int
+	var entitiesJSON []byte
+	var duplicateOfJSON []byte
 
 	err := db.QueryRow(ctx, `
-		SELECT t.id, t.user_id, t.title, t.description, t.ai_summary, t.status, t.priority,
-		       t.due_date, t.completed_at, t.tags, t.parent_id, t.depth, COALESCE(t.complexity, 0),
-		       COALESCE(t.ai_cleaned_title, false), COALESCE(t.ai_cleaned_description, false),
-		       COALESCE(t.ai_extracted_due, false),
-		       t.original_title, t.original_description, COALESCE(t.skip_auto_cleanup, false),
+		SELECT t.id, t.user_id, t.title, t.description, t.status, t.priority,
+		       t.due_at, t.has_due_time, t.completed_at, t.tags, t.parent_id, t.depth, COALESCE(t.complexity, 0),
+		       t.ai_cleaned_title, t.ai_cleaned_description,
+		       COALESCE(t.ai_extracted_due, false), COALESCE(t.skip_auto_cleanup, false),
+		       t.ai_entities, COALESCE(t.duplicate_of, '[]'), COALESCE(t.duplicate_resolved, false),
 		       t.version, t.created_at, t.updated_at,
 		       (SELECT COUNT(*) FROM tasks WHERE parent_id = t.id AND deleted_at IS NULL) as children_count
 		FROM tasks t
 		WHERE t.id = $1 AND t.user_id = $2 AND t.deleted_at IS NULL
 	`, taskID, userID).Scan(
-		&t.ID, &t.UserID, &t.Title, &t.Description, &t.AISummary,
-		&t.Status, &t.Priority, &t.DueDate, &t.CompletedAt, &t.Tags,
+		&t.ID, &t.UserID, &t.Title, &t.Description,
+		&t.Status, &t.Priority, &t.DueAt, &t.HasDueTime, &t.CompletedAt, &t.Tags,
 		&t.ParentID, &t.Depth, &t.Complexity,
 		&t.AICleanedTitle, &t.AICleanedDescription, &t.AIExtractedDue,
-		&t.OriginalTitle, &t.OriginalDescription, &t.SkipAutoCleanup,
+		&t.SkipAutoCleanup,
+		&entitiesJSON, &duplicateOfJSON, &t.DuplicateResolved,
 		&t.Version, &t.CreatedAt, &t.UpdatedAt, &childCount,
 	)
 
@@ -177,7 +205,65 @@ func GetTaskByID(ctx context.Context, taskID, userID uuid.UUID) (*Task, int, err
 		return nil, 0, err
 	}
 
+	// Parse entities from JSON
+	if len(entitiesJSON) > 0 {
+		_ = json.Unmarshal(entitiesJSON, &t.Entities)
+	}
+	if t.Entities == nil {
+		t.Entities = []TaskEntity{}
+	}
+
+	// Parse duplicate_of from JSON
+	if len(duplicateOfJSON) > 0 {
+		_ = json.Unmarshal(duplicateOfJSON, &t.DuplicateOf)
+	}
+	if t.DuplicateOf == nil {
+		t.DuplicateOf = []string{}
+	}
+
 	return &t, childCount, nil
+}
+
+// GetUserTasks returns tasks for a user (for duplicate checking).
+func GetUserTasks(ctx context.Context, userID uuid.UUID, limit int) ([]*Task, error) {
+	db := getTasksPool()
+	if db == nil {
+		return nil, ErrTasksDBNotInitialized
+	}
+
+	rows, err := db.Query(ctx, `
+		SELECT id, user_id, title, description, status, priority,
+		       due_at, has_due_time, completed_at, tags, parent_id, depth, COALESCE(complexity, 0),
+		       ai_cleaned_title, ai_cleaned_description,
+		       COALESCE(ai_extracted_due, false), COALESCE(skip_auto_cleanup, false),
+		       version, created_at, updated_at
+		FROM tasks
+		WHERE user_id = $1 AND deleted_at IS NULL AND status NOT IN ('completed', 'cancelled')
+		ORDER BY created_at DESC
+		LIMIT $2
+	`, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tasks []*Task
+	for rows.Next() {
+		var t Task
+		if err := rows.Scan(
+			&t.ID, &t.UserID, &t.Title, &t.Description,
+			&t.Status, &t.Priority, &t.DueAt, &t.HasDueTime, &t.CompletedAt, &t.Tags,
+			&t.ParentID, &t.Depth, &t.Complexity,
+			&t.AICleanedTitle, &t.AICleanedDescription, &t.AIExtractedDue,
+			&t.SkipAutoCleanup,
+			&t.Version, &t.CreatedAt, &t.UpdatedAt,
+		); err != nil {
+			continue
+		}
+		tasks = append(tasks, &t)
+	}
+
+	return tasks, nil
 }
 
 // UpdateTaskAIFields updates AI-related fields on a task.
@@ -193,18 +279,18 @@ func UpdateTaskAIFields(ctx context.Context, taskID, userID uuid.UUID, updates m
 	argNum := 1
 
 	fieldMap := map[string]string{
-		"title":                   "title",
-		"description":             "description",
-		"ai_summary":              "ai_summary",
-		"original_title":          "original_title",
-		"original_description":    "original_description",
-		"ai_cleaned_title":        "ai_cleaned_title",
-		"ai_cleaned_description":  "ai_cleaned_description",
-		"complexity":              "complexity",
-		"ai_entities":             "ai_entities",
-		"reminder_at":             "reminder_at",
-		"due_date":                "due_date",
-		"ai_extracted_due":        "ai_extracted_due",
+		"title":                  "title",
+		"description":            "description",
+		"ai_cleaned_title":       "ai_cleaned_title",
+		"ai_cleaned_description": "ai_cleaned_description",
+		"complexity":             "complexity",
+		"ai_entities":            "ai_entities",
+		"reminder_at":            "reminder_at",
+		"due_at":                 "due_at",
+		"has_due_time":           "has_due_time",
+		"ai_extracted_due":       "ai_extracted_due",
+		"duplicate_of":           "duplicate_of",
+		"duplicate_resolved":     "duplicate_resolved",
 	}
 
 	for key, dbField := range fieldMap {
@@ -445,6 +531,28 @@ func GetAggregatedEntities(ctx context.Context, userID uuid.UUID) (map[string][]
 		return nil, ErrTasksDBNotInitialized
 	}
 
+	// First, fetch all aliases for this user
+	aliasMap := make(map[string]map[string]string) // type -> (alias_value -> canonical_value)
+	aliasRows, err := db.Query(ctx, `
+		SELECT entity_type, alias_value, canonical_value
+		FROM entity_aliases
+		WHERE user_id = $1
+	`, userID)
+	if err == nil {
+		defer aliasRows.Close()
+		for aliasRows.Next() {
+			var entityType, aliasValue, canonicalValue string
+			if err := aliasRows.Scan(&entityType, &aliasValue, &canonicalValue); err != nil {
+				continue
+			}
+			if aliasMap[entityType] == nil {
+				aliasMap[entityType] = make(map[string]string)
+			}
+			aliasMap[entityType][aliasValue] = canonicalValue
+		}
+	}
+
+	// Fetch raw entity counts (only main tasks, not subtasks)
 	rows, err := db.Query(ctx, `
 		SELECT
 			entity->>'type' as type,
@@ -454,6 +562,7 @@ func GetAggregatedEntities(ctx context.Context, userID uuid.UUID) (map[string][]
 		WHERE t.user_id = $1
 		  AND t.deleted_at IS NULL
 		  AND t.status != 'cancelled'
+		  AND t.parent_id IS NULL
 		  AND entity->>'type' IS NOT NULL
 		  AND entity->>'value' IS NOT NULL
 		  AND entity->>'value' != ''
@@ -465,14 +574,72 @@ func GetAggregatedEntities(ctx context.Context, userID uuid.UUID) (map[string][]
 	}
 	defer rows.Close()
 
-	result := make(map[string][]EntityItem)
+	// Aggregate with alias resolution
+	// key: "type:canonical_value" -> count
+	aggregated := make(map[string]int)
 	for rows.Next() {
-		var item EntityItem
-		if err := rows.Scan(&item.Type, &item.Value, &item.Count); err != nil {
+		var entityType, entityValue string
+		var count int
+		if err := rows.Scan(&entityType, &entityValue, &count); err != nil {
 			continue
 		}
-		result[item.Type] = append(result[item.Type], item)
+
+		// Resolve alias to canonical value
+		canonicalValue := entityValue
+		if typeAliases, ok := aliasMap[entityType]; ok {
+			if canonical, isAlias := typeAliases[entityValue]; isAlias {
+				canonicalValue = canonical
+			}
+		}
+
+		key := entityType + ":" + canonicalValue
+		aggregated[key] += count
+	}
+
+	// Build result, excluding aliased values (they're merged into canonical)
+	result := make(map[string][]EntityItem)
+	for key, count := range aggregated {
+		parts := splitFirst(key, ":")
+		if len(parts) != 2 {
+			continue
+		}
+		entityType, entityValue := parts[0], parts[1]
+
+		// Skip if this value is an alias (it's already counted under canonical)
+		if typeAliases, ok := aliasMap[entityType]; ok {
+			if _, isAlias := typeAliases[entityValue]; isAlias {
+				continue
+			}
+		}
+
+		result[entityType] = append(result[entityType], EntityItem{
+			Type:  entityType,
+			Value: entityValue,
+			Count: count,
+		})
+	}
+
+	// Sort each type by count descending, then by value
+	for entityType := range result {
+		items := result[entityType]
+		sort.Slice(items, func(i, j int) bool {
+			if items[i].Count != items[j].Count {
+				return items[i].Count > items[j].Count
+			}
+			return items[i].Value < items[j].Value
+		})
+		result[entityType] = items
 	}
 
 	return result, nil
+}
+
+// splitFirst splits a string on the first occurrence of sep
+func splitFirst(s, sep string) []string {
+	for i := 0; i <= len(s)-len(sep); i++ {
+		if s[i:i+len(sep)] == sep {
+			return []string{s[:i], s[i+len(sep):]}
+		}
+	}
+	return []string{s}
 }

@@ -15,13 +15,12 @@ type Task struct {
 	models.TaskBase
 
 	// Hierarchy
-	ParentID *uuid.UUID `json:"parent_id,omitempty" db:"parent_id"`
-	Depth    int        `json:"depth" db:"depth"` // 0 = root, 1 = child (max)
+	ParentID  *uuid.UUID `json:"parent_id,omitempty" db:"parent_id"`
+	Depth     int        `json:"depth" db:"depth"`           // 0 = root, 1 = child (max)
+	SortOrder int        `json:"sort_order" db:"sort_order"` // Order within parent (for subtasks)
 
-	// Original text (before AI cleanup) - preserves user input for revert
-	OriginalTitle       *string `json:"original_title,omitempty" db:"original_title"`
-	OriginalDescription *string `json:"original_description,omitempty" db:"original_description"`
-	SkipAutoCleanup     bool    `json:"skip_auto_cleanup" db:"skip_auto_cleanup"`
+	// Skip auto cleanup flag
+	SkipAutoCleanup bool `json:"skip_auto_cleanup" db:"skip_auto_cleanup"`
 
 	// Recurrence
 	RecurrenceRule *string    `json:"recurrence_rule,omitempty" db:"recurrence_rule"` // RRULE format
@@ -31,13 +30,22 @@ type Task struct {
 	// Reminder
 	ReminderAt *time.Time `json:"reminder_at,omitempty" db:"reminder_at"`
 
-	// AI features
-	AICleanedTitle bool `json:"ai_cleaned_title" db:"ai_cleaned_title"`
-	AIExtractedDue bool `json:"ai_extracted_due" db:"ai_extracted_due"`
-	Complexity     int  `json:"complexity" db:"complexity"` // 1-10 scale from AI
+	// AI features - cleaned versions are stored as text, null means not cleaned
+	AICleanedTitle       *string `json:"ai_cleaned_title,omitempty" db:"ai_cleaned_title"`
+	AICleanedDescription *string `json:"ai_cleaned_description,omitempty" db:"ai_cleaned_description"`
+	AIExtractedDue       bool    `json:"ai_extracted_due" db:"ai_extracted_due"`
+	Complexity           int     `json:"complexity" db:"complexity"` // 1-10 scale from AI
+
+	// Display fields (computed, not stored in DB)
+	DisplayTitle       string  `json:"display_title" db:"-"`
+	DisplayDescription *string `json:"display_description,omitempty" db:"-"`
 
 	// Entities extracted by AI
 	Entities []TaskEntity `json:"entities,omitempty" db:"ai_entities"`
+
+	// Duplicate detection
+	DuplicateOf       []string `json:"duplicate_of,omitempty" db:"duplicate_of"`
+	DuplicateResolved bool     `json:"duplicate_resolved" db:"duplicate_resolved"`
 
 	// Project promotion tracking
 	PromotedToProject *uuid.UUID `json:"promoted_to_project,omitempty" db:"promoted_to_project"`
@@ -117,6 +125,49 @@ func (t *Task) Uncomplete() {
 func (t *Task) IncrementVersion() {
 	t.Version++
 	t.UpdatedAt = time.Now()
+}
+
+// ComputeDisplayFields populates DisplayTitle and DisplayDescription based on AI cleaned versions
+func (t *Task) ComputeDisplayFields() {
+	// DisplayTitle: prefer AI cleaned version, fallback to user input
+	if t.AICleanedTitle != nil && *t.AICleanedTitle != "" {
+		t.DisplayTitle = *t.AICleanedTitle
+	} else {
+		t.DisplayTitle = t.Title
+	}
+
+	// DisplayDescription: prefer AI cleaned version, fallback to user input
+	if t.AICleanedDescription != nil && *t.AICleanedDescription != "" {
+		t.DisplayDescription = t.AICleanedDescription
+	} else {
+		t.DisplayDescription = t.Description
+	}
+}
+
+// GetDisplayTitle returns the title to display (AI cleaned or user input)
+func (t *Task) GetDisplayTitle() string {
+	if t.AICleanedTitle != nil && *t.AICleanedTitle != "" {
+		return *t.AICleanedTitle
+	}
+	return t.Title
+}
+
+// GetDisplayDescription returns the description to display (AI cleaned or user input)
+func (t *Task) GetDisplayDescription() *string {
+	if t.AICleanedDescription != nil && *t.AICleanedDescription != "" {
+		return t.AICleanedDescription
+	}
+	return t.Description
+}
+
+// ClearAICleanedTitle clears the AI cleaned title (when user edits)
+func (t *Task) ClearAICleanedTitle() {
+	t.AICleanedTitle = nil
+}
+
+// ClearAICleanedDescription clears the AI cleaned description (when user edits)
+func (t *Task) ClearAICleanedDescription() {
+	t.AICleanedDescription = nil
 }
 
 // ErrMaxDepthExceeded is returned when trying to create a task too deep

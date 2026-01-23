@@ -100,47 +100,48 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     }
 
     return Scaffold(
-      body: Row(
-        children: [
-          // Sidebar (hide on very narrow screens)
-          if (screenWidth >= 450)
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _Sidebar(
-                  selectedIndex: selectedIndex,
-                  width: sidebarWidth,
-                  collapsed: isCollapsed,
-                  onItemTap: (index) {
-                    ref.read(selectedSidebarIndexProvider.notifier).state = index;
-                    ref.read(selectedListIdProvider.notifier).state = null; // Clear list selection
-                  },
-                ),
-                // Resize handle
-                MouseRegion(
-                  cursor: SystemMouseCursors.resizeColumn,
-                  child: GestureDetector(
-                    onHorizontalDragUpdate: (details) {
-                      setState(() {
-                        final currentWidth = _userSidebarWidth ?? sidebarWidth;
-                        _userSidebarWidth = (currentWidth + details.delta.dx)
-                            .clamp(_collapsedSidebarWidth, _maxSidebarWidth);
-                      });
+      body: SafeArea(
+        child: Row(
+          children: [
+            // Sidebar (hide on very narrow screens)
+            if (screenWidth >= 450)
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _Sidebar(
+                    selectedIndex: selectedIndex,
+                    width: sidebarWidth,
+                    collapsed: isCollapsed,
+                    onItemTap: (index) {
+                      ref.read(selectedSidebarIndexProvider.notifier).state = index;
+                      ref.read(selectedListIdProvider.notifier).state = null; // Clear list selection
                     },
-                    child: Container(
-                      width: 4,
-                      color: Colors.transparent,
-                      child: Center(
-                        child: Container(
-                          width: 1,
-                          color: context.flowColors.divider.withOpacity(0.5),
+                  ),
+                  // Resize handle
+                  MouseRegion(
+                    cursor: SystemMouseCursors.resizeColumn,
+                    child: GestureDetector(
+                      onHorizontalDragUpdate: (details) {
+                        setState(() {
+                          final currentWidth = _userSidebarWidth ?? sidebarWidth;
+                          _userSidebarWidth = (currentWidth + details.delta.dx)
+                              .clamp(_collapsedSidebarWidth, _maxSidebarWidth);
+                        });
+                      },
+                      child: Container(
+                        width: 4,
+                        color: Colors.transparent,
+                        child: Center(
+                          child: Container(
+                            width: 1,
+                            color: context.flowColors.divider.withOpacity(0.5),
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
-              ],
-            ),
+                ],
+              ),
 
           // Main content
           Expanded(
@@ -186,7 +187,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 },
               ),
             ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -259,12 +261,21 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 }
 
 /// Task list widget for viewing a specific list's tasks
-class _ListTaskList extends ConsumerWidget {
+/// Groups tasks with completed tasks in a separate section at the end
+class _ListTaskList extends ConsumerStatefulWidget {
   const _ListTaskList();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_ListTaskList> createState() => _ListTaskListState();
+}
+
+class _ListTaskListState extends ConsumerState<_ListTaskList> {
+  bool _completedExpanded = false;
+
+  @override
+  Widget build(BuildContext context) {
     final tasks = ref.watch(selectedListTasksProvider);
+    final colors = context.flowColors;
 
     if (tasks.isEmpty) {
       return Center(
@@ -283,45 +294,103 @@ class _ListTaskList extends ConsumerWidget {
       );
     }
 
-    return ListView.builder(
+    // Separate pending and completed tasks
+    final pendingTasks = tasks.where((t) => !t.isCompleted).toList();
+    final completedTasks = tasks.where((t) => t.isCompleted).toList();
+
+    return ListView(
       padding: const EdgeInsets.symmetric(vertical: 8),
-      itemCount: tasks.length,
-      itemBuilder: (context, index) {
-        final task = tasks[index];
-        return widgets.ExpandableTaskTile(
+      children: [
+        // Pending tasks
+        ...pendingTasks.map((task) => widgets.ExpandableTaskTile(
+          key: ValueKey(task.id),
           task: task,
-          onComplete: () => _completeTask(ref, task),
-          onUncomplete: () => _uncompleteTask(ref, task),
-          onDelete: () => _deleteTask(ref, task),
-        );
-      },
+          onComplete: () => _completeTask(task),
+          onUncomplete: () => _uncompleteTask(task),
+          onDelete: () => _deleteTask(task),
+        )),
+
+        // Completed section (if any)
+        if (completedTasks.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          InkWell(
+            onTap: () => setState(() => _completedExpanded = !_completedExpanded),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Row(
+                children: [
+                  Icon(
+                    _completedExpanded ? Icons.expand_more : Icons.chevron_right,
+                    size: 20,
+                    color: colors.textTertiary,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Completed',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: colors.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    '${completedTasks.length}',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: colors.textTertiary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_completedExpanded)
+            ...completedTasks.map((task) => widgets.ExpandableTaskTile(
+              key: ValueKey(task.id),
+              task: task,
+              onComplete: () => _completeTask(task),
+              onUncomplete: () => _uncompleteTask(task),
+              onDelete: () => _deleteTask(task),
+            )),
+        ],
+      ],
     );
   }
 
-  Future<void> _completeTask(WidgetRef ref, Task task) async {
+  Future<void> _completeTask(Task task) async {
     final actions = ref.read(taskActionsProvider);
     await actions.complete(task.id);
   }
 
-  Future<void> _uncompleteTask(WidgetRef ref, Task task) async {
+  Future<void> _uncompleteTask(Task task) async {
     final actions = ref.read(taskActionsProvider);
     await actions.uncomplete(task.id);
   }
 
-  Future<void> _deleteTask(WidgetRef ref, Task task) async {
+  Future<void> _deleteTask(Task task) async {
     final actions = ref.read(taskActionsProvider);
     await actions.delete(task.id);
   }
 }
 
 /// Task list widget for viewing tasks filtered by Smart List entity
-class _SmartListTaskList extends ConsumerWidget {
+/// Groups tasks with completed tasks in a separate section at the end
+class _SmartListTaskList extends ConsumerStatefulWidget {
   const _SmartListTaskList();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_SmartListTaskList> createState() => _SmartListTaskListState();
+}
+
+class _SmartListTaskListState extends ConsumerState<_SmartListTaskList> {
+  bool _completedExpanded = false;
+
+  @override
+  Widget build(BuildContext context) {
     final tasks = ref.watch(smartListTasksProvider);
     final selection = ref.watch(selectedSmartListProvider);
+    final colors = context.flowColors;
 
     if (tasks.isEmpty) {
       return Center(
@@ -342,32 +411,81 @@ class _SmartListTaskList extends ConsumerWidget {
       );
     }
 
-    return ListView.builder(
+    // Separate pending and completed tasks
+    final pendingTasks = tasks.where((t) => !t.isCompleted).toList();
+    final completedTasks = tasks.where((t) => t.isCompleted).toList();
+
+    return ListView(
       padding: const EdgeInsets.symmetric(vertical: 8),
-      itemCount: tasks.length,
-      itemBuilder: (context, index) {
-        final task = tasks[index];
-        return widgets.ExpandableTaskTile(
+      children: [
+        // Pending tasks
+        ...pendingTasks.map((task) => widgets.ExpandableTaskTile(
+          key: ValueKey(task.id),
           task: task,
-          onComplete: () => _completeTask(ref, task),
-          onUncomplete: () => _uncompleteTask(ref, task),
-          onDelete: () => _deleteTask(ref, task),
-        );
-      },
+          onComplete: () => _completeTask(task),
+          onUncomplete: () => _uncompleteTask(task),
+          onDelete: () => _deleteTask(task),
+        )),
+
+        // Completed section (if any)
+        if (completedTasks.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          InkWell(
+            onTap: () => setState(() => _completedExpanded = !_completedExpanded),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Row(
+                children: [
+                  Icon(
+                    _completedExpanded ? Icons.expand_more : Icons.chevron_right,
+                    size: 20,
+                    color: colors.textTertiary,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Completed',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: colors.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    '${completedTasks.length}',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: colors.textTertiary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_completedExpanded)
+            ...completedTasks.map((task) => widgets.ExpandableTaskTile(
+              key: ValueKey(task.id),
+              task: task,
+              onComplete: () => _completeTask(task),
+              onUncomplete: () => _uncompleteTask(task),
+              onDelete: () => _deleteTask(task),
+            )),
+        ],
+      ],
     );
   }
 
-  Future<void> _completeTask(WidgetRef ref, Task task) async {
+  Future<void> _completeTask(Task task) async {
     final actions = ref.read(taskActionsProvider);
     await actions.complete(task.id);
   }
 
-  Future<void> _uncompleteTask(WidgetRef ref, Task task) async {
+  Future<void> _uncompleteTask(Task task) async {
     final actions = ref.read(taskActionsProvider);
     await actions.uncomplete(task.id);
   }
 
-  Future<void> _deleteTask(WidgetRef ref, Task task) async {
+  Future<void> _deleteTask(Task task) async {
     final actions = ref.read(taskActionsProvider);
     await actions.delete(task.id);
   }
@@ -642,26 +760,17 @@ class _Header extends ConsumerWidget {
                   // Hamburger menu button
                   IconButton(
                     icon: const Icon(Icons.menu),
-                    tooltip: 'Lists',
+                    tooltip: 'My Lists',
                     onPressed: () => _showListsDrawer(context, ref),
                   ),
                   const Spacer(),
                   // Sync indicator
                   const _SyncIndicator(),
-                  // Group by Date toggle (with popup for completed view)
+                  // View options menu (group by, show completed)
                   if (showGroupByDate)
                     selectedIndex == 3 // Completed view
                         ? _CompletedGroupByButton(colors: colors, groupByDate: groupByDate)
-                        : IconButton(
-                            icon: Icon(
-                              Icons.view_agenda_outlined,
-                              color: groupByDate ? colors.primary : colors.textSecondary,
-                            ),
-                            tooltip: groupByDate ? 'Ungroup tasks' : 'Group by date',
-                            onPressed: () {
-                              ref.read(groupByDateProvider.notifier).state = !groupByDate;
-                            },
-                          ),
+                        : _ViewOptionsMenu(colors: colors),
                   // Global search
                   IconButton(
                     icon: const Icon(Icons.search),
@@ -715,22 +824,11 @@ class _Header extends ConsumerWidget {
           const Spacer(),
           // Sync indicator with success animation
           const _SyncIndicator(),
-          // Group by Date toggle (with popup for completed view)
+          // View options menu (group by, show completed)
           if (showGroupByDate)
             selectedIndex == 3 // Completed view
                 ? _CompletedGroupByButton(colors: colors, groupByDate: groupByDate)
-                : Tooltip(
-                    message: groupByDate ? 'Ungroup tasks' : 'Group by date',
-                    child: IconButton(
-                      icon: Icon(
-                        Icons.view_agenda_outlined,
-                        color: groupByDate ? colors.primary : colors.textSecondary,
-                      ),
-                      onPressed: () {
-                        ref.read(groupByDateProvider.notifier).state = !groupByDate;
-                      },
-                    ),
-                  ),
+                : _ViewOptionsMenu(colors: colors),
           // Global search
           Tooltip(
             message: 'Search tasks',
@@ -841,6 +939,83 @@ class _CompletedGroupByButton extends ConsumerWidget {
               ),
               const SizedBox(width: 12),
               const Text('No grouping'),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// View options menu with group by and show completed toggles
+/// For lists and smart lists, uses per-view show completed state (default: true)
+class _ViewOptionsMenu extends ConsumerWidget {
+  final FlowColorScheme colors;
+
+  const _ViewOptionsMenu({required this.colors});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final groupByDate = ref.watch(groupByDateProvider);
+    final selectedListId = ref.watch(selectedListIdProvider);
+    final selectedSmartList = ref.watch(selectedSmartListProvider);
+
+    // Determine view key for per-view completed state
+    String? viewKey;
+    if (selectedListId != null) {
+      viewKey = 'list_$selectedListId';
+    } else if (selectedSmartList != null) {
+      viewKey = 'smart_${selectedSmartList.type}_${selectedSmartList.value}';
+    }
+
+    // Use per-view provider for lists/smart lists (default true), global for others (default false)
+    final showCompleted = viewKey != null
+        ? ref.watch(showCompletedPerViewProvider.select((s) => s[viewKey] ?? true))
+        : ref.watch(showCompletedTasksProvider);
+
+    return PopupMenuButton<String>(
+      icon: Icon(
+        Icons.more_horiz,
+        color: colors.textSecondary,
+      ),
+      tooltip: 'View options',
+      onSelected: (value) {
+        if (value == 'group_by') {
+          ref.read(groupByDateProvider.notifier).state = !groupByDate;
+        } else if (value == 'show_completed') {
+          if (viewKey != null) {
+            ref.read(showCompletedPerViewProvider.notifier).toggle(viewKey);
+          } else {
+            ref.read(showCompletedTasksProvider.notifier).state = !showCompleted;
+          }
+        }
+      },
+      itemBuilder: (context) => [
+        PopupMenuItem<String>(
+          value: 'group_by',
+          child: Row(
+            children: [
+              Icon(
+                groupByDate ? Icons.check_box : Icons.check_box_outline_blank,
+                size: 20,
+                color: groupByDate ? colors.primary : colors.textSecondary,
+              ),
+              const SizedBox(width: 12),
+              const Text('Group by date'),
+            ],
+          ),
+        ),
+        PopupMenuItem<String>(
+          value: 'show_completed',
+          child: Row(
+            children: [
+              Icon(
+                showCompleted ? Icons.check_box : Icons.check_box_outline_blank,
+                size: 20,
+                color: showCompleted ? colors.primary : colors.textSecondary,
+              ),
+              const SizedBox(width: 12),
+              const Text('Show completed'),
             ],
           ),
         ),
@@ -1165,7 +1340,7 @@ class _CollapsibleDrawerListsSectionState extends ConsumerState<_CollapsibleDraw
                       ),
                       const SizedBox(width: 4),
                       Text(
-                        'Lists',
+                        'My Lists',
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w600,
@@ -1765,7 +1940,7 @@ class _AdminBottomItem extends StatelessWidget {
   }
 }
 
-class _ListItem extends ConsumerWidget {
+class _ListItem extends ConsumerStatefulWidget {
   final TaskList list;
   final bool isSelected;
   final VoidCallback onTap;
@@ -1777,56 +1952,100 @@ class _ListItem extends ConsumerWidget {
   });
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_ListItem> createState() => _ListItemState();
+}
+
+class _ListItemState extends ConsumerState<_ListItem> {
+  bool _expanded = false;
+  bool _checkedInitialExpand = false;
+
+  bool _hasSelectedChild(TaskList list, String selectedId) {
+    for (final child in list.children) {
+      if (child.id == selectedId) return true;
+      if (_hasSelectedChild(child, selectedId)) return true;
+    }
+    return false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final colors = context.flowColors;
     final selectedListId = ref.watch(selectedListIdProvider);
+    final hasChildren = widget.list.children.isNotEmpty;
 
-    // Add left indent for nested lists (12px per depth level)
-    final leftIndent = list.depth * 12.0;
+    // Auto-expand if a child is selected (only check once per selection change)
+    if (hasChildren && selectedListId != null && !_expanded) {
+      final hasSelectedChild = _hasSelectedChild(widget.list, selectedListId);
+      if (hasSelectedChild) {
+        // Use post frame callback to avoid setState during build
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && !_expanded) {
+            setState(() => _expanded = true);
+          }
+        });
+      }
+    }
+
+    // Match Smart Lists spacing: parent at left: 12, children at left: 24
+    final leftPadding = widget.list.depth == 0 ? 12.0 : 24.0 + (widget.list.depth - 1) * 12.0;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // List item row
         Padding(
-          padding: EdgeInsets.only(left: leftIndent, bottom: 2),
+          padding: EdgeInsets.only(left: leftPadding, right: 4, top: 2, bottom: 2),
           child: Material(
-            color: isSelected ? colors.sidebarSelected : Colors.transparent,
+            color: widget.isSelected ? colors.sidebarSelected : Colors.transparent,
             borderRadius: BorderRadius.circular(FlowSpacing.radiusSm),
             child: InkWell(
-              onTap: onTap,
+              onTap: () {
+                // If has children, toggle expand/collapse; otherwise just select
+                if (hasChildren) {
+                  setState(() => _expanded = !_expanded);
+                }
+                widget.onTap();
+              },
               borderRadius: BorderRadius.circular(FlowSpacing.radiusSm),
               child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 child: Row(
                   children: [
+                    // Expand/collapse icon for parent lists
+                    if (hasChildren)
+                      Icon(
+                        _expanded ? Icons.expand_more : Icons.chevron_right,
+                        size: 14,
+                        color: colors.textTertiary,
+                      )
+                    else
+                      const SizedBox(width: 14), // Spacer for alignment
+                    const SizedBox(width: 4),
                     Icon(
                       Icons.tag,
-                      size: list.depth > 0 ? 14 : 16, // Smaller icon for sublists
-                      color: isSelected
+                      size: widget.list.depth > 0 ? 14 : 16,
+                      color: widget.isSelected
                           ? colors.primary
-                          : (list.color != null
-                              ? _parseColor(list.color!)
+                          : (widget.list.color != null
+                              ? _parseColor(widget.list.color!)
                               : colors.textSecondary),
                     ),
-                    const SizedBox(width: 10),
+                    const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        list.name,
+                        widget.list.name,
                         style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: isSelected ? FontWeight.w500 : FontWeight.normal,
-                          color: isSelected ? colors.textPrimary : colors.textSecondary,
+                          fontSize: 13,
+                          fontWeight: widget.isSelected ? FontWeight.w500 : FontWeight.normal,
+                          color: widget.isSelected ? colors.textPrimary : colors.textSecondary,
                         ),
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
                     // Task count
-                    if (list.taskCount > 0)
+                    if (widget.list.taskCount > 0)
                       Text(
-                        '${list.taskCount}',
+                        '${widget.list.taskCount}',
                         style: TextStyle(
                           fontSize: 12,
                           color: colors.textTertiary,
@@ -1838,21 +2057,16 @@ class _ListItem extends ConsumerWidget {
             ),
           ),
         ),
-        // Sublists
-        if (list.children.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(left: 20),
-            child: Column(
-              children: list.children.map((sublist) => _ListItem(
-                list: sublist,
-                isSelected: selectedListId == sublist.id,
-                onTap: () {
-                  ref.read(selectedListIdProvider.notifier).state = sublist.id;
-                  ref.read(selectedSidebarIndexProvider.notifier).state = 100; // List mode
-                },
-              )).toList(),
-            ),
-          ),
+        // Sublists (only when expanded)
+        if (hasChildren && _expanded)
+          ...widget.list.children.map((sublist) => _ListItem(
+            list: sublist,
+            isSelected: selectedListId == sublist.id,
+            onTap: () {
+              ref.read(selectedListIdProvider.notifier).state = sublist.id;
+              ref.read(selectedSidebarIndexProvider.notifier).state = 100; // List mode
+            },
+          )),
       ],
     );
   }
@@ -1934,7 +2148,7 @@ class _CollapsibleListsSectionState extends ConsumerState<_CollapsibleListsSecti
                       ),
                       const SizedBox(width: 4),
                       Text(
-                        'Lists',
+                        'My Lists',
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w600,
@@ -2387,7 +2601,7 @@ class _SearchResultItem extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    task.aiSummary ?? task.title,
+                    task.displayTitle,
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w500,
@@ -2654,6 +2868,35 @@ class _AdminAIServicesView extends ConsumerStatefulWidget {
 
 class _AdminAIServicesViewState extends ConsumerState<_AdminAIServicesView> {
   bool _showHelp = false;
+  final Set<String> _expandedServices = {'Clean', 'Decompose', 'Extract'}; // Default expanded
+
+  // AI Service definitions with their config keys
+  static const List<_AIServiceDef> _services = [
+    _AIServiceDef(
+      name: 'Clean',
+      description: 'Clean up task titles and descriptions',
+      icon: Icons.auto_fix_high_outlined,
+      configKeys: ['clean_title_instruction', 'summary_instruction'],
+    ),
+    _AIServiceDef(
+      name: 'Decompose',
+      description: 'Break down tasks into subtasks',
+      icon: Icons.account_tree_outlined,
+      configKeys: ['decompose_rules', 'decompose_step_count'],
+    ),
+    _AIServiceDef(
+      name: 'Extract',
+      description: 'Extract entities (people, places, organizations)',
+      icon: Icons.person_search_outlined,
+      configKeys: ['entities_instruction'],
+    ),
+    _AIServiceDef(
+      name: 'Duplicates',
+      description: 'Detect similar or duplicate tasks',
+      icon: Icons.content_copy_outlined,
+      configKeys: ['duplicate_check_instruction'],
+    ),
+  ];
 
   @override
   Widget build(BuildContext context) {
@@ -2721,6 +2964,9 @@ class _AdminAIServicesViewState extends ConsumerState<_AdminAIServicesView> {
       );
     }
 
+    // Create config map for quick lookup
+    final configMap = {for (var c in configs) c.key: c};
+
     return ListView(
       children: [
         // Help toggle
@@ -2762,11 +3008,120 @@ class _AdminAIServicesViewState extends ConsumerState<_AdminAIServicesView> {
         ),
         // Help section
         if (_showHelp) _buildHelpSection(colors),
-        // Config items
-        ...configs.map((config) => _AdminAIConfigTile(
-          config: config,
-          onTap: () => _showEditDialog(config),
-        )),
+        // Service groups
+        ..._services.map((service) => _buildServiceGroup(colors, service, configMap)),
+      ],
+    );
+  }
+
+  Widget _buildServiceGroup(
+    FlowColorScheme colors,
+    _AIServiceDef service,
+    Map<String, AIPromptConfig> configMap,
+  ) {
+    final isExpanded = _expandedServices.contains(service.name);
+    final serviceConfigs = service.configKeys
+        .map((key) => configMap[key])
+        .where((c) => c != null)
+        .cast<AIPromptConfig>()
+        .toList();
+    final hasConfigs = serviceConfigs.isNotEmpty;
+
+    return Column(
+      children: [
+        // Service header
+        InkWell(
+          onTap: hasConfigs
+              ? () {
+                  setState(() {
+                    if (isExpanded) {
+                      _expandedServices.remove(service.name);
+                    } else {
+                      _expandedServices.add(service.name);
+                    }
+                  });
+                }
+              : null,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: colors.surfaceVariant.withValues(alpha: 0.3),
+              border: Border(
+                bottom: BorderSide(color: colors.divider.withValues(alpha: 0.5), width: 0.5),
+              ),
+            ),
+            child: Row(
+              children: [
+                // Expand/collapse icon
+                if (hasConfigs)
+                  Icon(
+                    isExpanded ? Icons.expand_more : Icons.chevron_right,
+                    size: 20,
+                    color: colors.textSecondary,
+                  )
+                else
+                  const SizedBox(width: 20),
+                const SizedBox(width: 8),
+                // Service icon
+                Icon(service.icon, size: 20, color: colors.primary),
+                const SizedBox(width: 12),
+                // Service info
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        service.name,
+                        style: TextStyle(
+                          color: colors.textPrimary,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 14,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        service.description,
+                        style: TextStyle(color: colors.textTertiary, fontSize: 11),
+                      ),
+                    ],
+                  ),
+                ),
+                // Config count
+                if (hasConfigs)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: colors.primary.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      '${serviceConfigs.length}',
+                      style: TextStyle(
+                        color: colors.primary,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  )
+                else
+                  Text(
+                    'No config',
+                    style: TextStyle(
+                      color: colors.textTertiary.withValues(alpha: 0.6),
+                      fontSize: 11,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        // Config items (when expanded)
+        if (isExpanded && hasConfigs)
+          ...serviceConfigs.map((config) => _AdminAIConfigTile(
+                config: config,
+                onTap: () => _showEditDialog(config),
+                indent: true,
+              )),
       ],
     );
   }
@@ -2849,12 +3204,32 @@ class _AdminAIServicesViewState extends ConsumerState<_AdminAIServicesView> {
   }
 }
 
+/// AI Service definition for grouping configs
+class _AIServiceDef {
+  final String name;
+  final String description;
+  final IconData icon;
+  final List<String> configKeys;
+
+  const _AIServiceDef({
+    required this.name,
+    required this.description,
+    required this.icon,
+    required this.configKeys,
+  });
+}
+
 /// AI Config tile for admin view
 class _AdminAIConfigTile extends StatelessWidget {
   final AIPromptConfig config;
   final VoidCallback onTap;
+  final bool indent;
 
-  const _AdminAIConfigTile({required this.config, required this.onTap});
+  const _AdminAIConfigTile({
+    required this.config,
+    required this.onTap,
+    this.indent = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -2863,24 +3238,30 @@ class _AdminAIConfigTile extends StatelessWidget {
     return InkWell(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        padding: EdgeInsets.only(
+          left: indent ? 52 : 16,
+          right: 16,
+          top: 10,
+          bottom: 10,
+        ),
         decoration: BoxDecoration(
+          color: indent ? colors.background : null,
           border: Border(
-            bottom: BorderSide(color: colors.divider.withValues(alpha: 0.5), width: 0.5),
+            bottom: BorderSide(color: colors.divider.withValues(alpha: 0.3), width: 0.5),
           ),
         ),
         child: Row(
           children: [
             Container(
-              width: 32,
-              height: 32,
+              width: 28,
+              height: 28,
               decoration: BoxDecoration(
-                color: Colors.purple.withValues(alpha: 0.1),
+                color: Colors.purple.withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(6),
               ),
-              child: const Icon(Icons.tune, size: 16, color: Colors.purple),
+              child: const Icon(Icons.tune, size: 14, color: Colors.purple),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 10),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -2890,22 +3271,22 @@ class _AdminAIConfigTile extends StatelessWidget {
                     style: TextStyle(
                       color: colors.textPrimary,
                       fontWeight: FontWeight.w500,
-                      fontSize: 14,
+                      fontSize: 13,
                     ),
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    config.value.length > 60
-                        ? '${config.value.substring(0, 60)}...'
+                    config.value.length > 50
+                        ? '${config.value.substring(0, 50)}...'
                         : config.value,
-                    style: TextStyle(color: colors.textTertiary, fontSize: 12),
+                    style: TextStyle(color: colors.textTertiary, fontSize: 11),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
                 ],
               ),
             ),
-            Icon(Icons.chevron_right, size: 20, color: colors.textTertiary),
+            Icon(Icons.chevron_right, size: 18, color: colors.textTertiary),
           ],
         ),
       ),
@@ -3638,6 +4019,57 @@ class _SmartListsSection extends ConsumerWidget {
 
   const _SmartListsSection({required this.onEntityTap});
 
+  Future<void> _mergeEntities(WidgetRef ref, BuildContext context, String type, String fromValue, String toValue) async {
+    try {
+      final actions = ref.read(taskActionsProvider);
+      await actions.mergeEntities(type, fromValue, toValue);
+      // Clear selection if the merged entity was selected
+      final selectedSmartList = ref.read(selectedSmartListProvider);
+      if (selectedSmartList?.type == type && selectedSmartList?.value.toLowerCase() == fromValue.toLowerCase()) {
+        ref.read(selectedSmartListProvider.notifier).state = (type: type, value: toValue);
+      }
+      // Refresh entities
+      ref.invalidate(smartListsProvider);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Merged "$fromValue" into "$toValue"')),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to merge: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _removeEntity(WidgetRef ref, BuildContext context, String type, String value) async {
+    try {
+      final actions = ref.read(taskActionsProvider);
+      await actions.removeEntity(type, value);
+      // Clear selection if the removed entity was selected
+      final selectedSmartList = ref.read(selectedSmartListProvider);
+      if (selectedSmartList?.type == type && selectedSmartList?.value.toLowerCase() == value.toLowerCase()) {
+        ref.read(selectedSmartListProvider.notifier).state = null;
+        ref.read(selectedSidebarIndexProvider.notifier).state = 1; // Back to Next 7 days
+      }
+      // Refresh entities
+      ref.invalidate(smartListsProvider);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Removed "$value" from all tasks')),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to remove: $e')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final colors = context.flowColors;
@@ -3704,19 +4136,25 @@ class _SmartListsSection extends ConsumerWidget {
                 _SmartListCategory(
                   icon: Icons.person_outline,
                   label: 'People',
+                  entityType: 'person',
                   items: entities['person']!,
                   selectedItem: selectedSmartList?.type == 'person' ? selectedSmartList?.value : null,
                   onItemTap: (value) => onEntityTap('person', value),
+                  onMerge: (from, to) => _mergeEntities(ref, context, 'person', from, to),
+                  onRemove: (value) => _removeEntity(ref, context, 'person', value),
                 ),
 
               // Locations
               if (entities['location']?.isNotEmpty ?? false)
                 _SmartListCategory(
-                  icon: Icons.location_on_outlined,
+                  icon: Icons.place,
                   label: 'Locations',
+                  entityType: 'location',
                   items: entities['location']!,
                   selectedItem: selectedSmartList?.type == 'location' ? selectedSmartList?.value : null,
                   onItemTap: (value) => onEntityTap('location', value),
+                  onMerge: (from, to) => _mergeEntities(ref, context, 'location', from, to),
+                  onRemove: (value) => _removeEntity(ref, context, 'location', value),
                 ),
 
               // Organizations
@@ -3724,9 +4162,12 @@ class _SmartListsSection extends ConsumerWidget {
                 _SmartListCategory(
                   icon: Icons.business_outlined,
                   label: 'Organizations',
+                  entityType: 'organization',
                   items: entities['organization']!,
                   selectedItem: selectedSmartList?.type == 'organization' ? selectedSmartList?.value : null,
                   onItemTap: (value) => onEntityTap('organization', value),
+                  onMerge: (from, to) => _mergeEntities(ref, context, 'organization', from, to),
+                  onRemove: (value) => _removeEntity(ref, context, 'organization', value),
                 ),
             ],
           ],
@@ -3741,16 +4182,22 @@ class _SmartListsSection extends ConsumerWidget {
 class _SmartListCategory extends StatefulWidget {
   final IconData icon;
   final String label;
+  final String entityType; // 'person', 'location', 'organization'
   final List<SmartListItem> items;
   final String? selectedItem;
   final void Function(String) onItemTap;
+  final void Function(String entityValue, String mergeIntoValue) onMerge;
+  final void Function(String entityValue) onRemove;
 
   const _SmartListCategory({
     required this.icon,
     required this.label,
+    required this.entityType,
     required this.items,
     required this.selectedItem,
     required this.onItemTap,
+    required this.onMerge,
+    required this.onRemove,
   });
 
   @override
@@ -3759,6 +4206,251 @@ class _SmartListCategory extends StatefulWidget {
 
 class _SmartListCategoryState extends State<_SmartListCategory> {
   bool _expanded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Auto-expand if an item is already selected
+    _checkAndExpand();
+  }
+
+  @override
+  void didUpdateWidget(_SmartListCategory oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Auto-expand when a new item in this category is selected
+    if (widget.selectedItem != oldWidget.selectedItem && widget.selectedItem != null) {
+      _checkAndExpand();
+    }
+  }
+
+  void _checkAndExpand() {
+    if (widget.selectedItem != null) {
+      final hasSelectedItem = widget.items.any(
+        (item) => item.value.toLowerCase() == widget.selectedItem!.toLowerCase(),
+      );
+      if (hasSelectedItem && !_expanded) {
+        setState(() => _expanded = true);
+      }
+    }
+  }
+
+  void _showMergeDialog(BuildContext context, String entityValue) {
+    final colors = context.flowColors;
+    // Get other items to merge with (exclude current item)
+    final otherItems = widget.items
+        .where((item) => item.value.toLowerCase() != entityValue.toLowerCase())
+        .toList();
+
+    if (otherItems.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No other items to merge with')),
+      );
+      return;
+    }
+
+    String? selectedMergeTarget;
+    final searchController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final searchQuery = searchController.text.toLowerCase();
+          final filteredItems = searchQuery.isEmpty
+              ? otherItems
+              : otherItems.where((item) => item.value.toLowerCase().contains(searchQuery)).toList();
+
+          return AlertDialog(
+            title: Text('Merge "$entityValue" with...'),
+            content: SizedBox(
+              width: 300,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: searchController,
+                    decoration: InputDecoration(
+                      hintText: 'Search...',
+                      prefixIcon: const Icon(Icons.search, size: 20),
+                      isDense: true,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    onChanged: (_) => setDialogState(() {}),
+                  ),
+                  const SizedBox(height: 12),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 200),
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: filteredItems.length,
+                      itemBuilder: (context, index) {
+                        final item = filteredItems[index];
+                        final isSelected = selectedMergeTarget == item.value;
+                        return ListTile(
+                          dense: true,
+                          selected: isSelected,
+                          selectedTileColor: colors.primary.withOpacity(0.1),
+                          title: Text(item.value),
+                          trailing: Text(
+                            '${item.count} tasks',
+                            style: TextStyle(fontSize: 12, color: colors.textTertiary),
+                          ),
+                          onTap: () => setDialogState(() => selectedMergeTarget = item.value),
+                        );
+                      },
+                    ),
+                  ),
+                  if (selectedMergeTarget != null) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: colors.warning.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(Icons.warning_amber_rounded, size: 16, color: colors.warning),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              '"$entityValue" will be merged into "$selectedMergeTarget". This action cannot be undone.',
+                              style: TextStyle(fontSize: 12, color: colors.warning),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: selectedMergeTarget == null
+                    ? null
+                    : () {
+                        Navigator.of(dialogContext).pop();
+                        widget.onMerge(entityValue, selectedMergeTarget!);
+                      },
+                child: const Text('Merge'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  void _showAliasesDialog(BuildContext context, String entityValue) async {
+    final colors = context.flowColors;
+
+    // Fetch aliases from API
+    try {
+      final service = ProviderScope.containerOf(context).read(tasksServiceProvider);
+      final response = await service.getEntityAliases(widget.entityType, entityValue);
+
+      if (!context.mounted) return;
+
+      showDialog(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text('Aliases for "$entityValue"'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (response.aliases.isEmpty)
+                Text(
+                  'No aliases. Other items merged into this one will appear here.',
+                  style: TextStyle(color: colors.textSecondary),
+                )
+              else ...[
+                Text(
+                  'These items have been merged into "$entityValue":',
+                  style: TextStyle(color: colors.textSecondary, fontSize: 13),
+                ),
+                const SizedBox(height: 12),
+                ...response.aliases.map((alias) => Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: Row(
+                        children: [
+                          Icon(Icons.subdirectory_arrow_right,
+                              size: 16, color: colors.textTertiary),
+                          const SizedBox(width: 8),
+                          Text(alias.value),
+                        ],
+                      ),
+                    )),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to load aliases: $e')),
+      );
+    }
+  }
+
+  void _showRemoveConfirmation(BuildContext context, String entityValue) {
+    final colors = context.flowColors;
+    final item = widget.items.firstWhere(
+      (i) => i.value.toLowerCase() == entityValue.toLowerCase(),
+      orElse: () => SmartListItem(type: widget.entityType, value: entityValue, count: 0),
+    );
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Remove "$entityValue"?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'This will remove the "${widget.label.toLowerCase().replaceAll('s', '')}" tag from ${item.count} task${item.count == 1 ? '' : 's'}.',
+              style: TextStyle(color: colors.textSecondary),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'The tasks themselves will not be deleted.',
+              style: TextStyle(fontSize: 12, color: colors.textTertiary),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: colors.error),
+            onPressed: () {
+              Navigator.of(dialogContext).pop();
+              widget.onRemove(entityValue);
+            },
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -3776,6 +4468,7 @@ class _SmartListCategoryState extends State<_SmartListCategory> {
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 4),
               child: Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(
                     _expanded ? Icons.expand_more : Icons.chevron_right,
@@ -3785,12 +4478,15 @@ class _SmartListCategoryState extends State<_SmartListCategory> {
                   const SizedBox(width: 4),
                   Icon(widget.icon, size: 14, color: colors.textTertiary),
                   const SizedBox(width: 6),
-                  Text(
-                    widget.label,
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w500,
-                      color: colors.textTertiary,
+                  Flexible(
+                    child: Text(
+                      widget.label,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                        color: colors.textTertiary,
+                      ),
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                   const SizedBox(width: 4),
@@ -3812,7 +4508,7 @@ class _SmartListCategoryState extends State<_SmartListCategory> {
           ...widget.items.map((item) {
             final isSelected = widget.selectedItem?.toLowerCase() == item.value.toLowerCase();
             return Padding(
-              padding: const EdgeInsets.only(left: 36, right: 12, bottom: 2),
+              padding: const EdgeInsets.only(left: 36, right: 4),
               child: Material(
                 color: isSelected ? colors.sidebarSelected : Colors.transparent,
                 borderRadius: BorderRadius.circular(FlowSpacing.radiusSm),
@@ -3820,7 +4516,7 @@ class _SmartListCategoryState extends State<_SmartListCategory> {
                   onTap: () => widget.onItemTap(item.value),
                   borderRadius: BorderRadius.circular(FlowSpacing.radiusSm),
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                    padding: const EdgeInsets.only(left: 8, top: 2, bottom: 2, right: 2),
                     child: Row(
                       children: [
                         Expanded(
@@ -3848,6 +4544,61 @@ class _SmartListCategoryState extends State<_SmartListCategory> {
                               fontWeight: FontWeight.w500,
                             ),
                           ),
+                        ),
+                        // More options menu
+                        PopupMenuButton<String>(
+                          icon: Icon(
+                            Icons.more_horiz,
+                            size: 16,
+                            color: colors.textTertiary,
+                          ),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+                          tooltip: 'More options',
+                          onSelected: (action) {
+                            if (action == 'merge') {
+                              _showMergeDialog(context, item.value);
+                            } else if (action == 'remove') {
+                              _showRemoveConfirmation(context, item.value);
+                            } else if (action == 'aliases') {
+                              _showAliasesDialog(context, item.value);
+                            }
+                          },
+                          itemBuilder: (context) => [
+                            PopupMenuItem(
+                              value: 'aliases',
+                              height: 40,
+                              child: Row(
+                                children: [
+                                  Icon(Icons.link, size: 18, color: colors.textSecondary),
+                                  const SizedBox(width: 8),
+                                  const Text('View aliases'),
+                                ],
+                              ),
+                            ),
+                            PopupMenuItem(
+                              value: 'merge',
+                              height: 40,
+                              child: Row(
+                                children: [
+                                  Icon(Icons.merge_type, size: 18, color: colors.textSecondary),
+                                  const SizedBox(width: 8),
+                                  const Text('Merge with...'),
+                                ],
+                              ),
+                            ),
+                            PopupMenuItem(
+                              value: 'remove',
+                              height: 40,
+                              child: Row(
+                                children: [
+                                  Icon(Icons.delete_outline, size: 18, color: colors.error),
+                                  const SizedBox(width: 8),
+                                  Text('Remove', style: TextStyle(color: colors.error)),
+                                ],
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),

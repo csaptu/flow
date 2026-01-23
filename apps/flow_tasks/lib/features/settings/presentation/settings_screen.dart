@@ -1183,11 +1183,9 @@ class _AISettingsContent extends ConsumerWidget {
                 subtitle: 'Requires Light subscription',
                 features: [
                   AIFeature.decompose,
-                  AIFeature.complexity,
                   AIFeature.entityExtraction,
-                  AIFeature.reminder,
-                  AIFeature.draftEmail,
-                  AIFeature.draftCalendar,
+                  AIFeature.duplicateCheck,
+                  AIFeature.recurringDetection,
                 ],
                 aiPrefs: aiPrefs,
                 userTier: userTier,

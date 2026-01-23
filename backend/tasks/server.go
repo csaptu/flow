@@ -151,6 +151,7 @@ func (s *Server) registerRoutes() {
 	tasks.Post("/:id/uncomplete", taskHandler.Uncomplete)
 	tasks.Post("/:id/children", taskHandler.CreateChild)
 	tasks.Get("/:id/children", taskHandler.GetChildren)
+	tasks.Put("/:id/children/reorder", taskHandler.ReorderChildren)
 
 	// Note: AI features have been moved to the shared service
 	// See shared/ai/handler.go for AI endpoints
@@ -164,6 +165,11 @@ func (s *Server) registerRoutes() {
 	tasks.Post("/:id/attachments/presign", taskHandler.GetPresignedUploadURL)
 	tasks.Get("/:id/attachments/:attachmentId/download", taskHandler.DownloadAttachment)
 	tasks.Delete("/:id/attachments/:attachmentId", taskHandler.DeleteAttachment)
+
+	// Entity management routes (Smart Lists)
+	tasks.Post("/entities/merge", taskHandler.MergeEntities)                     // Create alias (merge into)
+	tasks.Delete("/entities/:type/:value", taskHandler.RemoveEntityFromAllTasks) // Remove from all tasks
+	tasks.Get("/entities/:type/:value/aliases", taskHandler.GetEntityAliases)    // Get aliases for an entity
 
 	// Subscription routes (payment flows with Paddle integration)
 	subHandler := NewSubscriptionHandler(s.db)

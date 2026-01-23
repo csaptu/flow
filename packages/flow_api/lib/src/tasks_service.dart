@@ -19,7 +19,8 @@ class TasksService {
     String? id, // Client-provided ID for offline-first sync
     required String title,
     String? description,
-    DateTime? dueDate,
+    DateTime? dueAt,
+    bool hasDueTime = false,
     int? priority,
     List<String>? tags,
     String? parentId,
@@ -28,7 +29,8 @@ class TasksService {
       if (id != null) 'id': id,
       'title': title,
       'description': description,
-      'due_date': _formatDueDate(dueDate),
+      'due_at': dueAt?.toUtc().toIso8601String(),
+      'has_due_time': hasDueTime,
       'priority': priority,
       'tags': tags,
       'parent_id': parentId,
@@ -135,26 +137,32 @@ class TasksService {
   }
 
   /// Update a task
+  /// Set clearDueAt to true to remove the due date entirely
   Future<Task> update(String id, {
     String? title,
     String? description,
-    DateTime? dueDate,
+    DateTime? dueAt,
+    bool? hasDueTime,
+    bool clearDueAt = false,
     int? priority,
     String? status,
     List<String>? tags,
     String? groupId,
     String? parentId, // Set to empty string to remove parent
   }) async {
-    final response = await _dio.put('/tasks/$id', data: {
+    final requestData = {
       if (title != null) 'title': title,
       if (description != null) 'description': description,
-      if (dueDate != null) 'due_date': _formatDueDate(dueDate),
+      if (clearDueAt) 'clear_due_at': true,
+      if (dueAt != null && !clearDueAt) 'due_at': dueAt.toUtc().toIso8601String(),
+      if (hasDueTime != null) 'has_due_time': hasDueTime,
       if (priority != null) 'priority': priority,
       if (status != null) 'status': status,
       if (tags != null) 'tags': tags,
       if (groupId != null) 'group_id': groupId,
       if (parentId != null) 'parent_id': parentId,
-    });
+    };
+    final response = await _dio.put('/tasks/$id', data: requestData);
 
     if (response.data['success'] == true) {
       return Task.fromJson(response.data['data']);
@@ -226,6 +234,18 @@ class TasksService {
     throw ApiException.fromResponse(response.data);
   }
 
+  /// Reorder children of a task
+  Future<void> reorderChildren(String parentId, List<String> taskIds) async {
+    final response = await _dio.put(
+      '/tasks/$parentId/children/reorder',
+      data: {'task_ids': taskIds},
+    );
+
+    if (response.data['success'] != true) {
+      throw ApiException.fromResponse(response.data);
+    }
+  }
+
   /// AI: Decompose task into steps
   Future<AIDecomposeResult> aiDecompose(String id) async {
     final response = await _sharedDio.post('/tasks/$id/ai/decompose');
@@ -257,15 +277,29 @@ class TasksService {
     throw ApiException.fromResponse(response.data);
   }
 
-  /// AI: Clean task title and description
-  Future<Task> aiClean(String id) async {
-    final response = await _sharedDio.post('/tasks/$id/ai/clean');
+  /// AI: Clean task title and/or description
+  /// [field] can be 'title', 'description', or 'both' (default)
+  Future<Task> aiClean(String id, {String field = 'both'}) async {
+    final response = await _sharedDio.post(
+      '/tasks/$id/ai/clean',
+      queryParameters: {'field': field},
+    );
 
     if (response.data['success'] == true) {
       return Task.fromJson(response.data['data']);
     }
 
     throw ApiException.fromResponse(response.data);
+  }
+
+  /// AI: Clean just the task title
+  Future<Task> aiCleanTitle(String id) async {
+    return aiClean(id, field: 'title');
+  }
+
+  /// AI: Clean just the task description
+  Future<Task> aiCleanDescription(String id) async {
+    return aiClean(id, field: 'description');
   }
 
   /// AI: Revert to original human-written title
@@ -274,21 +308,6 @@ class TasksService {
 
     if (response.data['success'] == true) {
       return Task.fromJson(response.data['data']);
-    }
-
-    throw ApiException.fromResponse(response.data);
-  }
-
-  /// AI: Rate task complexity (1-10)
-  Future<AIRateResult> aiRate(String id) async {
-    final response = await _sharedDio.post('/tasks/$id/ai/rate');
-
-    if (response.data['success'] == true) {
-      return AIRateResult(
-        task: Task.fromJson(response.data['data']['task']),
-        complexity: response.data['data']['complexity'] as int,
-        reason: response.data['data']['reason'] as String,
-      );
     }
 
     throw ApiException.fromResponse(response.data);
@@ -311,43 +330,105 @@ class TasksService {
     throw ApiException.fromResponse(response.data);
   }
 
-  /// AI: Suggest reminder time for task
+  /// AI: Check for duplicate tasks
+  Future<AIDuplicatesResult> aiCheckDuplicates(String id) async {
+    final response = await _sharedDio.post('/tasks/$id/ai/check-duplicates');
+
+    if (response.data['success'] == true) {
+      return AIDuplicatesResult(
+        task: Task.fromJson(response.data['data']['task']),
+        duplicates: (response.data['data']['duplicates'] as List?)
+                ?.map((e) => Task.fromJson(e as Map<String, dynamic>))
+                .toList() ??
+            [],
+        reason: response.data['data']['reason'] as String?,
+      );
+    }
+
+    throw ApiException.fromResponse(response.data);
+  }
+
+  /// AI: Resolve/dismiss duplicate warning
+  Future<Task> aiResolveDuplicate(String id) async {
+    final response = await _sharedDio.post('/tasks/$id/ai/resolve-duplicate');
+
+    if (response.data['success'] == true) {
+      return Task.fromJson(response.data['data']);
+    }
+
+    throw ApiException.fromResponse(response.data);
+  }
+
+  /// AI: Rate task complexity (1-10)
+  Future<AIRateResult> aiRate(String id) async {
+    final response = await _sharedDio.post('/tasks/$id/ai/rate');
+
+    if (response.data['success'] == true) {
+      final data = response.data['data'] as Map<String, dynamic>;
+      return AIRateResult(
+        task: Task.fromJson(data['task'] as Map<String, dynamic>),
+        complexity: data['complexity'] as int,
+        reason: data['reason'] as String?,
+      );
+    }
+
+    throw ApiException.fromResponse(response.data);
+  }
+
+  /// AI: Suggest reminder time
   Future<AIRemindResult> aiRemind(String id) async {
     final response = await _sharedDio.post('/tasks/$id/ai/remind');
 
     if (response.data['success'] == true) {
+      final data = response.data['data'] as Map<String, dynamic>;
       return AIRemindResult(
-        task: Task.fromJson(response.data['data']['task']),
-        reminderTime: DateTime.parse(response.data['data']['reminder_time']),
-        reason: response.data['data']['reason'] as String,
+        task: Task.fromJson(data['task'] as Map<String, dynamic>),
+        reminderTime: DateTime.parse(data['reminder_time'] as String),
+        reason: data['reason'] as String?,
       );
     }
 
     throw ApiException.fromResponse(response.data);
   }
 
-  /// AI: Draft email based on task
+  /// AI: Draft an email based on task
   Future<AIDraftResult> aiEmail(String id) async {
     final response = await _sharedDio.post('/tasks/$id/ai/email');
 
     if (response.data['success'] == true) {
+      final data = response.data['data'] as Map<String, dynamic>;
+      final draft = data['draft'] as Map<String, dynamic>;
       return AIDraftResult(
-        draftId: response.data['data']['draft_id'] as String?,
-        draft: AIDraftContent.fromJson(response.data['data']['draft']),
+        draftId: data['draft_id']?.toString(),
+        draft: AIDraftContent(
+          type: 'email',
+          to: draft['to'] as String?,
+          subject: draft['subject'] as String?,
+          body: draft['body'] as String?,
+        ),
       );
     }
 
     throw ApiException.fromResponse(response.data);
   }
 
-  /// AI: Draft calendar invite based on task
+  /// AI: Draft a calendar invite based on task
   Future<AIDraftResult> aiInvite(String id) async {
     final response = await _sharedDio.post('/tasks/$id/ai/invite');
 
     if (response.data['success'] == true) {
+      final data = response.data['data'] as Map<String, dynamic>;
+      final draft = data['draft'] as Map<String, dynamic>;
       return AIDraftResult(
-        draftId: response.data['data']['draft_id'] as String?,
-        draft: AIDraftContent.fromJson(response.data['data']['draft']),
+        draftId: data['draft_id']?.toString(),
+        draft: AIDraftContent(
+          type: 'calendar',
+          title: draft['title'] as String?,
+          body: draft['body'] as String?,
+          startTime: draft['start_time'] as String?,
+          endTime: draft['end_time'] as String?,
+          attendees: (draft['attendees'] as List<dynamic>?)?.cast<String>() ?? [],
+        ),
       );
     }
 
@@ -363,8 +444,16 @@ class TasksService {
     final response = await _dio.get('/tasks/$taskId/attachments');
 
     if (response.data['success'] == true) {
+      final baseUrl = _dio.options.baseUrl;
       return (response.data['data'] as List)
-          .map((e) => Attachment.fromJson(e as Map<String, dynamic>))
+          .map((e) {
+            final attachment = Attachment.fromJson(e as Map<String, dynamic>);
+            // Prepend base URL for relative URLs (file/image attachments)
+            if (!attachment.url.startsWith('http') && !attachment.url.startsWith('data:')) {
+              return attachment.copyWith(url: '$baseUrl${attachment.url}');
+            }
+            return attachment;
+          })
           .toList();
     }
 
@@ -392,9 +481,17 @@ class TasksService {
   Future<void> deleteAttachment(String taskId, String attachmentId) async {
     final response = await _dio.delete('/tasks/$taskId/attachments/$attachmentId');
 
-    if (response.data['success'] != true && response.statusCode != 204) {
-      throw ApiException.fromResponse(response.data);
+    // 204 No Content is a success
+    if (response.statusCode == 204) {
+      return;
     }
+
+    // Check for success response with data
+    if (response.data is Map && response.data['success'] == true) {
+      return;
+    }
+
+    throw ApiException.fromResponse(response.data);
   }
 
   /// Get presigned upload URL
@@ -440,6 +537,62 @@ class TasksService {
 
     if (response.data['success'] == true) {
       return Attachment.fromJson(response.data['data']);
+    }
+
+    throw ApiException.fromResponse(response.data);
+  }
+
+  // =====================================================
+  // Entity Management Endpoints
+  // =====================================================
+
+  /// Merge two entities by creating an alias relationship
+  /// The source entity becomes an alias of the target (canonical) entity
+  /// Tasks are NOT modified - the alias is resolved when displaying Smart Lists
+  /// e.g., merge "Nam" into "Nam Tran" -> "Nam" becomes alias of "Nam Tran"
+  Future<void> mergeEntities(String type, String fromValue, String toValue) async {
+    final response = await _dio.post('/tasks/entities/merge', data: {
+      'type': type,
+      'from_value': fromValue,
+      'to_value': toValue,
+    });
+
+    if (response.data['success'] != true) {
+      throw ApiException.fromResponse(response.data);
+    }
+  }
+
+  /// Remove an entity from all tasks that have it
+  /// This actually removes the entity chip from all affected tasks
+  Future<void> removeEntity(String type, String value) async {
+    final encodedValue = Uri.encodeComponent(value);
+    final response = await _dio.delete('/tasks/entities/$type/$encodedValue');
+
+    if (response.data['success'] != true) {
+      throw ApiException.fromResponse(response.data);
+    }
+  }
+
+  /// Get all aliases for a specific canonical entity
+  Future<EntityAliasesResponse> getEntityAliases(String type, String value) async {
+    final encodedValue = Uri.encodeComponent(value);
+    final response = await _dio.get('/tasks/entities/$type/$encodedValue/aliases');
+
+    if (response.data['success'] == true) {
+      return EntityAliasesResponse.fromJson(response.data['data']);
+    }
+
+    throw ApiException.fromResponse(response.data);
+  }
+
+  /// Remove a single entity from a specific task
+  /// Returns the updated task
+  Future<Task> removeEntityFromTask(String taskId, String type, String value) async {
+    final encodedValue = Uri.encodeComponent(value);
+    final response = await _sharedDio.delete('/tasks/$taskId/entities/$type/$encodedValue');
+
+    if (response.data['success'] == true) {
+      return Task.fromJson(response.data['data']);
     }
 
     throw ApiException.fromResponse(response.data);
@@ -705,6 +858,48 @@ class TasksService {
       throw ApiException.fromResponse(response.data);
     }
   }
+
+  // =====================================================
+  // AI Profile Admin Endpoints
+  // =====================================================
+
+  /// Get user's AI profile (admin only)
+  Future<UserAIProfile> getUserAIProfile(String userId) async {
+    final response = await _dio.get('/admin/users/$userId/ai-profile');
+
+    if (response.data['success'] == true) {
+      return UserAIProfile.fromJson(response.data['data']);
+    }
+
+    throw ApiException.fromResponse(response.data);
+  }
+
+  /// Update a single field in user's AI profile (admin only)
+  Future<void> updateUserAIProfileField(
+    String userId,
+    String field,
+    String value,
+  ) async {
+    final response = await _dio.put('/admin/users/$userId/ai-profile', data: {
+      'field': field,
+      'value': value,
+    });
+
+    if (response.data['success'] != true) {
+      throw ApiException.fromResponse(response.data);
+    }
+  }
+
+  /// Trigger AI profile refresh for a user (admin only)
+  Future<UserAIProfile> refreshUserAIProfile(String userId) async {
+    final response = await _dio.post('/admin/users/$userId/ai-profile/refresh');
+
+    if (response.data['success'] == true) {
+      return UserAIProfile.fromJson(response.data['data']);
+    }
+
+    throw ApiException.fromResponse(response.data);
+  }
 }
 
 /// Paginated response
@@ -719,29 +914,4 @@ class PaginatedResponse<T> {
 
   bool get hasMore =>
       meta != null && meta!.page < meta!.totalPages;
-}
-
-/// Format due date for API.
-/// If the date has no specific time (midnight local), send it as local time to preserve the date.
-/// If it has a specific time, send as UTC for accuracy.
-String? _formatDueDate(DateTime? date) {
-  if (date == null) return null;
-
-  // Convert to local time to check if it's midnight
-  final local = date.toLocal();
-  final isDateOnly = local.hour == 0 && local.minute == 0 && local.second == 0;
-
-  if (isDateOnly) {
-    // Send as local midnight to preserve the date across timezones
-    // Format: 2026-01-20T00:00:00+07:00 (with local offset)
-    final offset = local.timeZoneOffset;
-    final sign = offset.isNegative ? '-' : '+';
-    final hours = offset.inHours.abs().toString().padLeft(2, '0');
-    final minutes = (offset.inMinutes.abs() % 60).toString().padLeft(2, '0');
-    final dateStr = '${local.year.toString().padLeft(4, '0')}-${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')}';
-    return '${dateStr}T00:00:00$sign$hours:$minutes';
-  } else {
-    // Has specific time - send as UTC for accuracy
-    return date.toUtc().toIso8601String();
-  }
 }

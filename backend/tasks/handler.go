@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -40,7 +41,8 @@ type CreateRequest struct {
 	ID          *string  `json:"id,omitempty"` // Client-provided ID for offline-first sync
 	Title       string   `json:"title"`
 	Description *string  `json:"description,omitempty"`
-	DueDate     *string  `json:"due_date,omitempty"`
+	DueAt       *string  `json:"due_at,omitempty"`       // Full timestamp: RFC3339 format
+	HasDueTime  *bool    `json:"has_due_time,omitempty"` // true = specific time matters
 	Priority    *int     `json:"priority,omitempty"`
 	Tags        []string `json:"tags,omitempty"`
 	ParentID    *string  `json:"parent_id,omitempty"`
@@ -50,7 +52,9 @@ type CreateRequest struct {
 type UpdateRequest struct {
 	Title       *string  `json:"title,omitempty"`
 	Description *string  `json:"description,omitempty"`
-	DueDate     *string  `json:"due_date,omitempty"`
+	DueAt       *string  `json:"due_at,omitempty"`       // Full timestamp: RFC3339 format (empty string to clear)
+	HasDueTime  *bool    `json:"has_due_time,omitempty"` // true = specific time matters
+	ClearDueAt  *bool    `json:"clear_due_at,omitempty"` // true = clear due_at
 	Priority    *int     `json:"priority,omitempty"`
 	Status      *string  `json:"status,omitempty"`
 	Tags        []string `json:"tags,omitempty"`
@@ -59,22 +63,30 @@ type UpdateRequest struct {
 
 // TaskResponse represents a task in API responses
 type TaskResponse struct {
-	ID            string   `json:"id"`
-	Title         string   `json:"title"`
-	Description   *string  `json:"description,omitempty"`
-	AISummary     *string  `json:"ai_summary,omitempty"`
-	Status        string   `json:"status"`
-	Priority      int      `json:"priority"`
-	DueDate       *string  `json:"due_date,omitempty"`
-	CompletedAt   *string  `json:"completed_at,omitempty"`
-	Tags          []string `json:"tags"`
-	ParentID      *string  `json:"parent_id,omitempty"`
-	Depth         int      `json:"depth"`
-	Complexity    int      `json:"complexity"`
-	HasChildren   bool     `json:"has_children"`
-	ChildrenCount int      `json:"children_count"`
-	CreatedAt     string   `json:"created_at"`
-	UpdatedAt     string   `json:"updated_at"`
+	ID                 string              `json:"id"`
+	Title              string              `json:"title"`                            // User's original input
+	Description        *string             `json:"description,omitempty"`            // User's original input
+	AICleanedTitle     *string             `json:"ai_cleaned_title,omitempty"`       // AI cleaned version (null = not cleaned)
+	AICleanedDesc      *string             `json:"ai_cleaned_description,omitempty"` // AI cleaned version (null = not cleaned)
+	DisplayTitle       string              `json:"display_title"`                    // Computed: ai_cleaned_title ?? title
+	DisplayDescription *string             `json:"display_description,omitempty"`    // Computed: ai_cleaned_description ?? description
+	Status             string              `json:"status"`
+	Priority           int                 `json:"priority"`
+	DueAt              *string             `json:"due_at,omitempty"` // Full timestamp: RFC3339 format
+	HasDueTime         bool                `json:"has_due_time"`     // true = specific time matters
+	CompletedAt        *string             `json:"completed_at,omitempty"`
+	Tags               []string            `json:"tags"`
+	ParentID           *string             `json:"parent_id,omitempty"`
+	Depth              int                 `json:"depth"`
+	SortOrder          int                 `json:"sort_order"`
+	Complexity         int                 `json:"complexity"`
+	HasChildren        bool                `json:"has_children"`
+	ChildrenCount      int                 `json:"children_count"`
+	Entities           []models.TaskEntity `json:"entities"`
+	DuplicateOf        []string            `json:"duplicate_of"`
+	DuplicateResolved  bool                `json:"duplicate_resolved"`
+	CreatedAt          string              `json:"created_at"`
+	UpdatedAt          string              `json:"updated_at"`
 }
 
 // Create handles task creation
@@ -108,12 +120,16 @@ func (h *TaskHandler) Create(c *fiber.Ctx) error {
 
 	task.Description = req.Description
 
-	if req.DueDate != nil {
-		dueDate, err := time.Parse(time.RFC3339, *req.DueDate)
+	if req.DueAt != nil {
+		// Parse RFC3339 timestamp
+		dueAt, err := time.Parse(time.RFC3339, *req.DueAt)
 		if err != nil {
-			return httputil.BadRequest(c, "invalid due_date format")
+			return httputil.BadRequest(c, "invalid due_at format, expected RFC3339 timestamp")
 		}
-		task.DueDate = &dueDate
+		task.DueAt = &dueAt
+		if req.HasDueTime != nil {
+			task.HasDueTime = *req.HasDueTime
+		}
 	}
 
 	if req.Priority != nil {
@@ -153,11 +169,11 @@ func (h *TaskHandler) Create(c *fiber.Ctx) error {
 	entitiesJSON, _ := json.Marshal(task.Entities)
 
 	_, err = h.db.Exec(c.Context(),
-		`INSERT INTO tasks (id, user_id, title, description, status, priority, due_date, tags,
+		`INSERT INTO tasks (id, user_id, title, description, status, priority, due_at, has_due_time, tags,
 		 parent_id, depth, ai_entities, version, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
 		task.ID, task.UserID, task.Title, task.Description, task.Status, task.Priority,
-		task.DueDate, task.Tags, task.ParentID, task.Depth, entitiesJSON,
+		task.DueAt, task.HasDueTime, task.Tags, task.ParentID, task.Depth, entitiesJSON,
 		task.Version, task.CreatedAt, task.UpdatedAt,
 	)
 	if err != nil {
@@ -202,8 +218,9 @@ func (h *TaskHandler) List(c *fiber.Ctx) error {
 
 	// Get all tasks including subtasks (client filters by parent_id)
 	rows, err := h.db.Query(c.Context(),
-		`SELECT t.id, t.title, t.description, t.ai_summary, t.status, t.priority,
-		 t.due_date, t.completed_at, t.tags, t.parent_id, t.depth, t.complexity,
+		`SELECT t.id, t.title, t.description, t.ai_cleaned_title, t.ai_cleaned_description,
+		 t.status, t.priority, t.due_at, t.has_due_time, t.completed_at, t.tags,
+		 t.parent_id, t.depth, t.sort_order, t.complexity, t.ai_entities, COALESCE(t.duplicate_of, '[]'), COALESCE(t.duplicate_resolved, false),
 		 t.created_at, t.updated_at,
 		 (SELECT COUNT(*) FROM tasks WHERE parent_id = t.id AND deleted_at IS NULL) as children_count
 		 FROM tasks t
@@ -247,15 +264,16 @@ func (h *TaskHandler) Today(c *fiber.Ctx) error {
 	tomorrow := today.Add(24 * time.Hour)
 
 	rows, err := h.db.Query(c.Context(),
-		`SELECT t.id, t.title, t.description, t.ai_summary, t.status, t.priority,
-		 t.due_date, t.completed_at, t.tags, t.parent_id, t.depth, t.complexity,
+		`SELECT t.id, t.title, t.description, t.ai_cleaned_title, t.ai_cleaned_description,
+		 t.status, t.priority, t.due_at, t.has_due_time, t.completed_at, t.tags,
+		 t.parent_id, t.depth, t.sort_order, t.complexity, t.ai_entities, COALESCE(t.duplicate_of, '[]'), COALESCE(t.duplicate_resolved, false),
 		 t.created_at, t.updated_at,
 		 (SELECT COUNT(*) FROM tasks WHERE parent_id = t.id AND deleted_at IS NULL) as children_count
 		 FROM tasks t
 		 WHERE t.user_id = $1 AND t.deleted_at IS NULL
-		 AND t.due_date >= $2 AND t.due_date < $3
+		 AND t.due_at >= $2 AND t.due_at < $3
 		 AND t.status != 'completed'
-		 ORDER BY t.priority DESC, t.due_date ASC`,
+		 ORDER BY t.priority DESC, t.due_at ASC`,
 		userID, today, tomorrow,
 	)
 	if err != nil {
@@ -283,13 +301,14 @@ func (h *TaskHandler) Inbox(c *fiber.Ctx) error {
 	}
 
 	rows, err := h.db.Query(c.Context(),
-		`SELECT t.id, t.title, t.description, t.ai_summary, t.status, t.priority,
-		 t.due_date, t.completed_at, t.tags, t.parent_id, t.depth, t.complexity,
+		`SELECT t.id, t.title, t.description, t.ai_cleaned_title, t.ai_cleaned_description,
+		 t.status, t.priority, t.due_at, t.has_due_time, t.completed_at, t.tags,
+		 t.parent_id, t.depth, t.sort_order, t.complexity, t.ai_entities, COALESCE(t.duplicate_of, '[]'), COALESCE(t.duplicate_resolved, false),
 		 t.created_at, t.updated_at,
 		 (SELECT COUNT(*) FROM tasks WHERE parent_id = t.id AND deleted_at IS NULL) as children_count
 		 FROM tasks t
 		 WHERE t.user_id = $1 AND t.deleted_at IS NULL
-		 AND t.due_date IS NULL AND t.status != 'completed'
+		 AND t.due_at IS NULL AND t.status != 'completed'
 		 ORDER BY t.created_at DESC`,
 		userID,
 	)
@@ -320,14 +339,15 @@ func (h *TaskHandler) Upcoming(c *fiber.Ctx) error {
 	tomorrow := time.Now().Truncate(24*time.Hour).Add(24 * time.Hour)
 
 	rows, err := h.db.Query(c.Context(),
-		`SELECT t.id, t.title, t.description, t.ai_summary, t.status, t.priority,
-		 t.due_date, t.completed_at, t.tags, t.parent_id, t.depth, t.complexity,
+		`SELECT t.id, t.title, t.description, t.ai_cleaned_title, t.ai_cleaned_description,
+		 t.status, t.priority, t.due_at, t.has_due_time, t.completed_at, t.tags,
+		 t.parent_id, t.depth, t.sort_order, t.complexity, t.ai_entities, COALESCE(t.duplicate_of, '[]'), COALESCE(t.duplicate_resolved, false),
 		 t.created_at, t.updated_at,
 		 (SELECT COUNT(*) FROM tasks WHERE parent_id = t.id AND deleted_at IS NULL) as children_count
 		 FROM tasks t
 		 WHERE t.user_id = $1 AND t.deleted_at IS NULL
-		 AND t.due_date >= $2 AND t.status != 'completed'
-		 ORDER BY t.due_date ASC
+		 AND t.due_at >= $2 AND t.status != 'completed'
+		 ORDER BY t.due_at ASC
 		 LIMIT 100`,
 		userID, tomorrow,
 	)
@@ -358,8 +378,9 @@ func (h *TaskHandler) Completed(c *fiber.Ctx) error {
 	pagination := httputil.ParsePagination(c)
 
 	rows, err := h.db.Query(c.Context(),
-		`SELECT t.id, t.title, t.description, t.ai_summary, t.status, t.priority,
-		 t.due_date, t.completed_at, t.tags, t.parent_id, t.depth, t.complexity,
+		`SELECT t.id, t.title, t.description, t.ai_cleaned_title, t.ai_cleaned_description,
+		 t.status, t.priority, t.due_at, t.has_due_time, t.completed_at, t.tags,
+		 t.parent_id, t.depth, t.sort_order, t.complexity, t.ai_entities, COALESCE(t.duplicate_of, '[]'), COALESCE(t.duplicate_resolved, false),
 		 t.created_at, t.updated_at,
 		 (SELECT COUNT(*) FROM tasks WHERE parent_id = t.id AND deleted_at IS NULL) as children_count
 		 FROM tasks t
@@ -408,19 +429,55 @@ func (h *TaskHandler) Update(c *fiber.Ctx) error {
 		return err
 	}
 
-	// Apply updates
+	// Apply updates with smart AI field preservation:
+	// Only clear AI-cleaned fields if the user actually changed to something new
+	// (not same as original, not same as AI-cleaned version)
 	if req.Title != nil {
-		task.Title = *req.Title
+		newTitle := *req.Title
+		isSameAsOriginal := newTitle == task.Title
+		isSameAsAiCleaned := task.AICleanedTitle != nil && newTitle == *task.AICleanedTitle
+
+		task.Title = newTitle
+		// Only clear AI cleaned title if user changed to something genuinely new
+		if !isSameAsOriginal && !isSameAsAiCleaned {
+			task.AICleanedTitle = nil
+		}
 	}
 	if req.Description != nil {
-		task.Description = req.Description
-	}
-	if req.DueDate != nil {
-		dueDate, err := time.Parse(time.RFC3339, *req.DueDate)
-		if err != nil {
-			return httputil.BadRequest(c, "invalid due_date format")
+		newDesc := ""
+		if req.Description != nil {
+			newDesc = *req.Description
 		}
-		task.DueDate = &dueDate
+		oldDesc := ""
+		if task.Description != nil {
+			oldDesc = *task.Description
+		}
+		isSameAsOriginal := newDesc == oldDesc
+		isSameAsAiCleaned := task.AICleanedDescription != nil && newDesc == *task.AICleanedDescription
+
+		task.Description = req.Description
+		// Only clear AI cleaned description if user changed to something genuinely new
+		if !isSameAsOriginal && !isSameAsAiCleaned {
+			task.AICleanedDescription = nil
+		}
+	}
+	// Handle clearing due_at
+	if req.ClearDueAt != nil && *req.ClearDueAt {
+		task.DueAt = nil
+		task.HasDueTime = false
+	} else if req.DueAt != nil {
+		// Parse RFC3339 timestamp
+		dueAt, err := time.Parse(time.RFC3339, *req.DueAt)
+		if err != nil {
+			return httputil.BadRequest(c, "invalid due_at format, expected RFC3339 timestamp")
+		}
+		task.DueAt = &dueAt
+		if req.HasDueTime != nil {
+			task.HasDueTime = *req.HasDueTime
+		}
+	} else if req.HasDueTime != nil {
+		// Update just the has_due_time flag without changing due_at
+		task.HasDueTime = *req.HasDueTime
 	}
 	if req.Priority != nil {
 		task.Priority = commonModels.Priority(*req.Priority)
@@ -486,12 +543,12 @@ func (h *TaskHandler) Update(c *fiber.Ctx) error {
 
 	// Update task
 	_, err = h.db.Exec(c.Context(),
-		`UPDATE tasks SET title = $1, description = $2, due_date = $3, priority = $4,
-		 status = $5, completed_at = $6, tags = $7, parent_id = $8, depth = $9,
-		 version = $10, updated_at = $11
-		 WHERE id = $12 AND user_id = $13`,
-		task.Title, task.Description, task.DueDate, task.Priority, task.Status,
-		task.CompletedAt, task.Tags, task.ParentID, task.Depth,
+		`UPDATE tasks SET title = $1, description = $2, due_at = $3, has_due_time = $4, priority = $5,
+		 status = $6, completed_at = $7, tags = $8, parent_id = $9, depth = $10,
+		 ai_cleaned_title = $11, ai_cleaned_description = $12, version = $13, updated_at = $14
+		 WHERE id = $15 AND user_id = $16`,
+		task.Title, task.Description, task.DueAt, task.HasDueTime, task.Priority, task.Status,
+		task.CompletedAt, task.Tags, task.ParentID, task.Depth, task.AICleanedTitle, task.AICleanedDescription,
 		task.Version, task.UpdatedAt,
 		taskID, userID,
 	)
@@ -499,10 +556,9 @@ func (h *TaskHandler) Update(c *fiber.Ctx) error {
 		return httputil.InternalError(c, "failed to update task")
 	}
 
-	// Auto-process with AI if title or description changed (async)
-	if req.Title != nil || req.Description != nil {
-		go h.autoProcessTaskWithAI(c.Context(), userID, task)
-	}
+	// Note: Don't auto-process with AI on updates - only on create.
+	// User edits should not trigger auto-cleanup. AI features are manual-only
+	// after initial task creation (clean button, extract button, etc.)
 
 	return httputil.Success(c, toTaskResponse(task, childCount))
 }
@@ -627,10 +683,21 @@ func (h *TaskHandler) CreateChild(c *fiber.Ctx) error {
 		return httputil.BadRequest(c, "maximum task depth exceeded (2 layers max)")
 	}
 
+	// Get max sort_order of existing children
+	var maxSortOrder int
+	err = h.db.QueryRow(c.Context(),
+		`SELECT COALESCE(MAX(sort_order), -1) FROM tasks WHERE parent_id = $1 AND user_id = $2 AND deleted_at IS NULL`,
+		parentID, userID,
+	).Scan(&maxSortOrder)
+	if err != nil {
+		maxSortOrder = -1
+	}
+
 	task := models.NewTask(userID, req.Title)
 	task.Description = req.Description
 	task.ParentID = &parentID
 	task.Depth = parentDepth + 1
+	task.SortOrder = maxSortOrder + 1
 
 	if req.Priority != nil {
 		task.Priority = commonModels.Priority(*req.Priority)
@@ -639,11 +706,11 @@ func (h *TaskHandler) CreateChild(c *fiber.Ctx) error {
 	entitiesJSON, _ := json.Marshal(task.Entities)
 
 	_, err = h.db.Exec(c.Context(),
-		`INSERT INTO tasks (id, user_id, title, description, status, priority, due_date, tags,
-		 parent_id, depth, ai_entities, version, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+		`INSERT INTO tasks (id, user_id, title, description, status, priority, due_at, has_due_time, tags,
+		 parent_id, depth, sort_order, ai_entities, version, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
 		task.ID, task.UserID, task.Title, task.Description, task.Status, task.Priority,
-		task.DueDate, task.Tags, task.ParentID, task.Depth, entitiesJSON,
+		task.DueAt, task.HasDueTime, task.Tags, task.ParentID, task.Depth, task.SortOrder, entitiesJSON,
 		task.Version, task.CreatedAt, task.UpdatedAt,
 	)
 	if err != nil {
@@ -666,13 +733,14 @@ func (h *TaskHandler) GetChildren(c *fiber.Ctx) error {
 	}
 
 	rows, err := h.db.Query(c.Context(),
-		`SELECT t.id, t.title, t.description, t.ai_summary, t.status, t.priority,
-		 t.due_date, t.completed_at, t.tags, t.parent_id, t.depth, t.complexity,
+		`SELECT t.id, t.title, t.description, t.ai_cleaned_title, t.ai_cleaned_description,
+		 t.status, t.priority, t.due_at, t.has_due_time, t.completed_at, t.tags,
+		 t.parent_id, t.depth, t.sort_order, t.complexity, t.ai_entities, COALESCE(t.duplicate_of, '[]'), COALESCE(t.duplicate_resolved, false),
 		 t.created_at, t.updated_at,
 		 0 as children_count
 		 FROM tasks t
 		 WHERE t.user_id = $1 AND t.parent_id = $2 AND t.deleted_at IS NULL
-		 ORDER BY t.created_at ASC`,
+		 ORDER BY t.sort_order ASC, t.created_at ASC`,
 		userID, parentID,
 	)
 	if err != nil {
@@ -690,6 +758,63 @@ func (h *TaskHandler) GetChildren(c *fiber.Ctx) error {
 	}
 
 	return httputil.Success(c, tasks)
+}
+
+// ReorderRequest is the request body for reordering subtasks
+type ReorderRequest struct {
+	TaskIDs []string `json:"task_ids"` // Ordered list of subtask IDs
+}
+
+// ReorderChildren reorders subtasks within a parent task
+func (h *TaskHandler) ReorderChildren(c *fiber.Ctx) error {
+	userID, err := middleware.GetUserID(c)
+	if err != nil {
+		return httputil.Unauthorized(c, "")
+	}
+
+	parentID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return httputil.BadRequest(c, "invalid parent ID")
+	}
+
+	var req ReorderRequest
+	if err := c.BodyParser(&req); err != nil {
+		return httputil.BadRequest(c, "invalid request body")
+	}
+
+	if len(req.TaskIDs) == 0 {
+		return httputil.BadRequest(c, "task_ids is required")
+	}
+
+	// Verify parent task exists and belongs to user
+	var exists bool
+	err = h.db.QueryRow(c.Context(),
+		`SELECT EXISTS(SELECT 1 FROM tasks WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL)`,
+		parentID, userID,
+	).Scan(&exists)
+	if err != nil || !exists {
+		return httputil.NotFound(c, "parent task")
+	}
+
+	// Update sort_order for each task in the new order
+	for i, taskIDStr := range req.TaskIDs {
+		taskID, err := uuid.Parse(taskIDStr)
+		if err != nil {
+			continue
+		}
+
+		_, err = h.db.Exec(c.Context(),
+			`UPDATE tasks SET sort_order = $1, updated_at = NOW()
+			 WHERE id = $2 AND parent_id = $3 AND user_id = $4 AND deleted_at IS NULL`,
+			i, taskID, parentID, userID,
+		)
+		if err != nil {
+			// Log but continue with other updates
+			continue
+		}
+	}
+
+	return httputil.Success(c, map[string]string{"status": "ok"})
 }
 
 // AIDecompose uses AI to break down a task into subtasks
@@ -858,29 +983,15 @@ Return ONLY a JSON object:
 		return httputil.InternalError(c, "failed to parse AI response")
 	}
 
-	// Store original values before cleanup (for revert functionality)
-	// Only store original if it differs from cleaned version
-	if cleaned.Title != task.Title {
-		task.OriginalTitle = &task.Title
-	}
-	if task.Description != nil && cleaned.Summary != "" && cleaned.Summary != *task.Description {
-		task.OriginalDescription = task.Description
-	}
-
-	// Update with cleaned values
-	task.Title = cleaned.Title
-	if cleaned.Summary != "" {
-		task.AISummary = &cleaned.Summary
-	}
-	task.AICleanedTitle = true
+	// Store AI cleaned version (don't modify original title)
+	// ai_cleaned_title stores the cleaned text, title remains as user input
+	task.AICleanedTitle = &cleaned.Title
 	task.IncrementVersion()
 
 	_, err = h.db.Exec(c.Context(),
-		`UPDATE tasks SET title = $1, ai_summary = $2, original_title = $3, original_description = $4,
-		 ai_cleaned_title = true, version = $5, updated_at = $6
-		 WHERE id = $7 AND user_id = $8`,
-		task.Title, task.AISummary, task.OriginalTitle, task.OriginalDescription,
-		task.Version, task.UpdatedAt, taskID, userID,
+		`UPDATE tasks SET ai_cleaned_title = $1, version = $2, updated_at = $3
+		 WHERE id = $4 AND user_id = $5`,
+		task.AICleanedTitle, task.Version, task.UpdatedAt, taskID, userID,
 	)
 	if err != nil {
 		return httputil.InternalError(c, "failed to update task")
@@ -1100,8 +1211,8 @@ func (h *TaskHandler) AIRemind(c *fiber.Ctx) error {
 
 	now := time.Now()
 	dueInfo := ""
-	if task.DueDate != nil {
-		dueInfo = fmt.Sprintf("Due date: %s", task.DueDate.Format("2006-01-02 15:04"))
+	if task.DueAt != nil {
+		dueInfo = fmt.Sprintf("Due date: %s", task.DueAt.Format("2006-01-02 15:04"))
 	}
 
 	prompt := fmt.Sprintf(`Suggest an appropriate reminder time for this task.
@@ -1282,8 +1393,8 @@ func (h *TaskHandler) AIInvite(c *fiber.Ctx) error {
 
 	now := time.Now()
 	dueInfo := ""
-	if task.DueDate != nil {
-		dueInfo = fmt.Sprintf("Due/scheduled: %s", task.DueDate.Format("2006-01-02 15:04"))
+	if task.DueAt != nil {
+		dueInfo = fmt.Sprintf("Due/scheduled: %s", task.DueAt.Format("2006-01-02 15:04"))
 	}
 
 	prompt := fmt.Sprintf(`Create a calendar event based on this task.
@@ -1355,22 +1466,25 @@ func (h *TaskHandler) Sync(c *fiber.Ctx) error {
 func (h *TaskHandler) getTask(ctx context.Context, taskID, userID uuid.UUID) (*models.Task, int, error) {
 	var task models.Task
 	var childCount int
+	var entitiesJSON []byte
+	var duplicateOfJSON []byte
 
 	err := h.db.QueryRow(ctx,
-		`SELECT t.id, t.user_id, t.title, t.description, t.ai_summary, t.status, t.priority,
-		 t.due_date, t.completed_at, t.tags, t.parent_id, t.depth, COALESCE(t.complexity, 0),
-		 COALESCE(t.ai_cleaned_title, false), COALESCE(t.ai_extracted_due, false),
-		 t.original_title, t.original_description, COALESCE(t.skip_auto_cleanup, false), t.version, t.created_at, t.updated_at,
+		`SELECT t.id, t.user_id, t.title, t.description, t.ai_cleaned_title, t.ai_cleaned_description,
+		 t.status, t.priority, t.due_at, t.has_due_time, t.completed_at, t.tags,
+		 t.parent_id, t.depth, COALESCE(t.complexity, 0), COALESCE(t.ai_extracted_due, false),
+		 COALESCE(t.skip_auto_cleanup, false), t.ai_entities, COALESCE(t.duplicate_of, '[]'), COALESCE(t.duplicate_resolved, false),
+		 t.version, t.created_at, t.updated_at,
 		 (SELECT COUNT(*) FROM tasks WHERE parent_id = t.id AND deleted_at IS NULL) as children_count
 		 FROM tasks t
 		 WHERE t.id = $1 AND t.user_id = $2 AND t.deleted_at IS NULL`,
 		taskID, userID,
 	).Scan(
-		&task.ID, &task.UserID, &task.Title, &task.Description, &task.AISummary,
-		&task.Status, &task.Priority, &task.DueDate, &task.CompletedAt, &task.Tags,
-		&task.ParentID, &task.Depth, &task.Complexity,
-		&task.AICleanedTitle, &task.AIExtractedDue,
-		&task.OriginalTitle, &task.OriginalDescription, &task.SkipAutoCleanup, &task.Version, &task.CreatedAt, &task.UpdatedAt, &childCount,
+		&task.ID, &task.UserID, &task.Title, &task.Description, &task.AICleanedTitle, &task.AICleanedDescription,
+		&task.Status, &task.Priority, &task.DueAt, &task.HasDueTime, &task.CompletedAt, &task.Tags,
+		&task.ParentID, &task.Depth, &task.Complexity, &task.AIExtractedDue,
+		&task.SkipAutoCleanup, &entitiesJSON, &duplicateOfJSON, &task.DuplicateResolved,
+		&task.Version, &task.CreatedAt, &task.UpdatedAt, &childCount,
 	)
 
 	if err == pgx.ErrNoRows {
@@ -1380,46 +1494,105 @@ func (h *TaskHandler) getTask(ctx context.Context, taskID, userID uuid.UUID) (*m
 		return nil, 0, fiber.NewError(fiber.StatusInternalServerError, "database error")
 	}
 
+	// Parse entities from JSON
+	if len(entitiesJSON) > 0 {
+		_ = json.Unmarshal(entitiesJSON, &task.Entities)
+	}
+	if task.Entities == nil {
+		task.Entities = []models.TaskEntity{}
+	}
+
+	// Parse duplicate_of from JSON
+	if len(duplicateOfJSON) > 0 {
+		_ = json.Unmarshal(duplicateOfJSON, &task.DuplicateOf)
+	}
+	if task.DuplicateOf == nil {
+		task.DuplicateOf = []string{}
+	}
+
 	return &task, childCount, nil
 }
 
 func scanTask(rows pgx.Rows) (*models.Task, int, error) {
 	var task models.Task
 	var childCount int
+	var entitiesJSON []byte
+	var duplicateOfJSON []byte
 
 	err := rows.Scan(
-		&task.ID, &task.Title, &task.Description, &task.AISummary,
-		&task.Status, &task.Priority, &task.DueDate, &task.CompletedAt, &task.Tags,
-		&task.ParentID, &task.Depth, &task.Complexity,
+		&task.ID, &task.Title, &task.Description, &task.AICleanedTitle, &task.AICleanedDescription,
+		&task.Status, &task.Priority, &task.DueAt, &task.HasDueTime, &task.CompletedAt, &task.Tags,
+		&task.ParentID, &task.Depth, &task.SortOrder, &task.Complexity,
+		&entitiesJSON, &duplicateOfJSON, &task.DuplicateResolved,
 		&task.CreatedAt, &task.UpdatedAt, &childCount,
 	)
 	if err != nil {
 		return nil, 0, err
 	}
 
+	// Parse entities from JSON
+	if len(entitiesJSON) > 0 {
+		_ = json.Unmarshal(entitiesJSON, &task.Entities)
+	}
+	if task.Entities == nil {
+		task.Entities = []models.TaskEntity{}
+	}
+
+	// Parse duplicate_of from JSON
+	if len(duplicateOfJSON) > 0 {
+		_ = json.Unmarshal(duplicateOfJSON, &task.DuplicateOf)
+	}
+	if task.DuplicateOf == nil {
+		task.DuplicateOf = []string{}
+	}
+
+	// Compute display fields
+	task.ComputeDisplayFields()
+
 	return &task, childCount, nil
 }
 
 func toTaskResponse(t *models.Task, childCount int) TaskResponse {
-	resp := TaskResponse{
-		ID:            t.ID.String(),
-		Title:         t.Title,
-		Description:   t.Description,
-		AISummary:     t.AISummary,
-		Status:        string(t.Status),
-		Priority:      int(t.Priority),
-		Tags:          t.Tags,
-		Depth:         t.Depth,
-		Complexity:    t.Complexity,
-		HasChildren:   childCount > 0,
-		ChildrenCount: childCount,
-		CreatedAt:     t.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:     t.UpdatedAt.Format(time.RFC3339),
+	entities := t.Entities
+	if entities == nil {
+		entities = []models.TaskEntity{}
 	}
 
-	if t.DueDate != nil {
-		d := t.DueDate.Format(time.RFC3339)
-		resp.DueDate = &d
+	duplicateOf := t.DuplicateOf
+	if duplicateOf == nil {
+		duplicateOf = []string{}
+	}
+
+	// Ensure display fields are computed
+	t.ComputeDisplayFields()
+
+	resp := TaskResponse{
+		ID:                 t.ID.String(),
+		Title:              t.Title,
+		Description:        t.Description,
+		AICleanedTitle:     t.AICleanedTitle,
+		AICleanedDesc:      t.AICleanedDescription,
+		DisplayTitle:       t.DisplayTitle,
+		DisplayDescription: t.DisplayDescription,
+		Status:             string(t.Status),
+		Priority:           int(t.Priority),
+		HasDueTime:         t.HasDueTime,
+		Tags:               t.Tags,
+		Depth:              t.Depth,
+		SortOrder:          t.SortOrder,
+		Complexity:         t.Complexity,
+		HasChildren:        childCount > 0,
+		ChildrenCount:      childCount,
+		Entities:           entities,
+		DuplicateOf:        duplicateOf,
+		DuplicateResolved:  t.DuplicateResolved,
+		CreatedAt:          t.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:          t.UpdatedAt.Format(time.RFC3339),
+	}
+
+	if t.DueAt != nil {
+		d := t.DueAt.Format(time.RFC3339)
+		resp.DueAt = &d
 	}
 	if t.CompletedAt != nil {
 		d := t.CompletedAt.Format(time.RFC3339)
@@ -1567,8 +1740,8 @@ func (h *TaskHandler) createFileAttachment(c *fiber.Ctx, taskID, userID uuid.UUI
 		return httputil.InternalError(c, "failed to create attachment")
 	}
 
-	// Set URL to download endpoint
-	attachment.URL = fmt.Sprintf("/api/tasks/%s/attachments/%s/download", taskID.String(), attachment.ID.String())
+	// Set URL to download endpoint (relative to API base /api/v1)
+	attachment.URL = fmt.Sprintf("/tasks/%s/attachments/%s/download", taskID.String(), attachment.ID.String())
 	attachment.Data = nil // Don't return data in response
 
 	return httputil.Created(c, toAttachmentResponse(attachment))
@@ -1628,7 +1801,7 @@ func (h *TaskHandler) GetAttachments(c *fiber.Ctx) error {
 	}
 
 	rows, err := h.db.Query(c.Context(),
-		`SELECT id, task_id, user_id, type, name, url, mime_type, size_bytes, thumbnail_url, metadata, created_at
+		`SELECT id, task_id, user_id, type, name, url, mime_type, size_bytes, thumbnail_url, metadata, created_at, data
 		 FROM task_attachments
 		 WHERE task_id = $1 AND user_id = $2 AND deleted_at IS NULL
 		 ORDER BY created_at DESC`,
@@ -1643,14 +1816,30 @@ func (h *TaskHandler) GetAttachments(c *fiber.Ctx) error {
 	for rows.Next() {
 		var a models.Attachment
 		var metadataJSON []byte
+		var data []byte
 
 		if err := rows.Scan(&a.ID, &a.TaskID, &a.UserID, &a.Type, &a.Name, &a.URL,
-			&a.MimeType, &a.SizeBytes, &a.ThumbnailURL, &metadataJSON, &a.CreatedAt); err != nil {
+			&a.MimeType, &a.SizeBytes, &a.ThumbnailURL, &metadataJSON, &a.CreatedAt, &data); err != nil {
 			continue
 		}
 
 		if metadataJSON != nil {
 			_ = json.Unmarshal(metadataJSON, &a.Metadata)
+		}
+
+		// For images and documents stored in DB, return data as base64 data URL for direct display
+		// This avoids auth issues when opening in browser or external apps
+		if data != nil && (a.Type == models.AttachmentTypeImage || a.Type == models.AttachmentTypeDocument) {
+			mimeType := "application/octet-stream"
+			if a.MimeType != nil {
+				mimeType = *a.MimeType
+			} else if a.Type == models.AttachmentTypeImage {
+				mimeType = "image/png"
+			}
+			a.URL = fmt.Sprintf("data:%s;base64,%s", mimeType, base64.StdEncoding.EncodeToString(data))
+		} else if a.URL == "" && (a.Type == models.AttachmentTypeImage || a.Type == models.AttachmentTypeDocument) {
+			// Fallback: construct the download URL (relative to API base /api/v1)
+			a.URL = fmt.Sprintf("/tasks/%s/attachments/%s/download", a.TaskID.String(), a.ID.String())
 		}
 
 		attachments = append(attachments, toAttachmentResponse(&a))
@@ -1788,28 +1977,20 @@ func (h *TaskHandler) applyAIResultsToTask(ctx context.Context, userID, taskID u
 	args := []interface{}{}
 	argNum := 1
 
+	// Store cleaned title in ai_cleaned_title (don't modify original title)
 	if result.CleanedTitle != nil {
-		updates = append(updates, fmt.Sprintf("title = $%d", argNum))
+		updates = append(updates, fmt.Sprintf("ai_cleaned_title = $%d", argNum))
 		args = append(args, *result.CleanedTitle)
 		argNum++
-
-		// Store original title
-		updates = append(updates, fmt.Sprintf("original_text = (SELECT title FROM tasks WHERE id = $%d)", argNum))
-		args = append(args, taskID)
-		argNum++
-
-		updates = append(updates, "ai_cleaned_title = true")
 	}
 
-	if result.Summary != nil {
-		updates = append(updates, fmt.Sprintf("ai_summary = $%d", argNum))
-		args = append(args, *result.Summary)
+	if result.DueAt != nil {
+		updates = append(updates, fmt.Sprintf("due_at = $%d", argNum))
+		args = append(args, *result.DueAt)
 		argNum++
-	}
-
-	if result.DueDate != nil {
-		updates = append(updates, fmt.Sprintf("due_date = $%d", argNum))
-		args = append(args, *result.DueDate)
+		// AI extraction sets has_due_time based on whether time was extracted
+		updates = append(updates, fmt.Sprintf("has_due_time = $%d", argNum))
+		args = append(args, result.HasDueTime)
 		argNum++
 		updates = append(updates, "ai_extracted_due = true")
 	}
@@ -1981,5 +2162,177 @@ func (h *TaskHandler) GetUserTier(c *fiber.Ctx) error {
 	return httputil.Success(c, map[string]interface{}{
 		"tier": tier,
 		"limits": featureLimits[tier],
+	})
+}
+
+// =====================================================
+// Entity Management Endpoints
+// =====================================================
+
+// MergeEntities creates an alias relationship between two entities
+// The source entity becomes an alias of the target (canonical) entity
+// Tasks are NOT modified - the alias is resolved when aggregating entities
+func (h *TaskHandler) MergeEntities(c *fiber.Ctx) error {
+	userID, err := middleware.GetUserID(c)
+	if err != nil {
+		return httputil.Unauthorized(c, "")
+	}
+
+	var req struct {
+		Type      string `json:"type"`
+		FromValue string `json:"from_value"`
+		ToValue   string `json:"to_value"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return httputil.BadRequest(c, "invalid request body")
+	}
+
+	if req.Type == "" || req.FromValue == "" || req.ToValue == "" {
+		return httputil.BadRequest(c, "type, from_value, and to_value are required")
+	}
+
+	if req.FromValue == req.ToValue {
+		return httputil.BadRequest(c, "cannot merge entity with itself")
+	}
+
+	// Insert alias (upsert - update if exists)
+	_, err = h.db.Exec(c.Context(),
+		`INSERT INTO entity_aliases (user_id, entity_type, alias_value, canonical_value)
+		 VALUES ($1, $2, $3, $4)
+		 ON CONFLICT (user_id, entity_type, alias_value)
+		 DO UPDATE SET canonical_value = $4`,
+		userID, req.Type, req.FromValue, req.ToValue,
+	)
+	if err != nil {
+		return httputil.InternalError(c, "failed to create entity alias")
+	}
+
+	return httputil.Success(c, map[string]interface{}{
+		"message": fmt.Sprintf("'%s' is now an alias of '%s'", req.FromValue, req.ToValue),
+	})
+}
+
+// RemoveEntityFromAllTasks removes an entity from all tasks that have it
+// This actually modifies the ai_entities field of affected tasks
+func (h *TaskHandler) RemoveEntityFromAllTasks(c *fiber.Ctx) error {
+	userID, err := middleware.GetUserID(c)
+	if err != nil {
+		return httputil.Unauthorized(c, "")
+	}
+
+	entityType := c.Params("type")
+	entityValue := c.Params("value")
+
+	if entityType == "" || entityValue == "" {
+		return httputil.BadRequest(c, "entity type and value are required")
+	}
+
+	// Find all tasks that have this entity
+	rows, err := h.db.Query(c.Context(),
+		`SELECT id, ai_entities FROM tasks
+		 WHERE user_id = $1 AND deleted_at IS NULL
+		 AND ai_entities @> $2::jsonb`,
+		userID, fmt.Sprintf(`[{"type":"%s","value":"%s"}]`, entityType, entityValue),
+	)
+	if err != nil {
+		return httputil.InternalError(c, "database error")
+	}
+	defer rows.Close()
+
+	updatedCount := 0
+	for rows.Next() {
+		var taskID uuid.UUID
+		var entitiesJSON []byte
+		if err := rows.Scan(&taskID, &entitiesJSON); err != nil {
+			continue
+		}
+
+		// Parse entities and filter out the one to remove
+		var entities []models.TaskEntity
+		if err := json.Unmarshal(entitiesJSON, &entities); err != nil {
+			continue
+		}
+
+		newEntities := make([]models.TaskEntity, 0, len(entities))
+		for _, e := range entities {
+			if !(strings.EqualFold(e.Type, entityType) && strings.EqualFold(e.Value, entityValue)) {
+				newEntities = append(newEntities, e)
+			}
+		}
+
+		// Update task with new entities
+		newEntitiesJSON, _ := json.Marshal(newEntities)
+		_, err = h.db.Exec(c.Context(),
+			`UPDATE tasks SET ai_entities = $1, version = version + 1, updated_at = NOW()
+			 WHERE id = $2 AND user_id = $3`,
+			newEntitiesJSON, taskID, userID,
+		)
+		if err == nil {
+			updatedCount++
+		}
+	}
+
+	// Also remove any aliases where this entity is the canonical value
+	_, _ = h.db.Exec(c.Context(),
+		`DELETE FROM entity_aliases
+		 WHERE user_id = $1 AND entity_type = $2 AND canonical_value = $3`,
+		userID, entityType, entityValue,
+	)
+
+	// Also remove alias if this entity was an alias
+	_, _ = h.db.Exec(c.Context(),
+		`DELETE FROM entity_aliases
+		 WHERE user_id = $1 AND entity_type = $2 AND alias_value = $3`,
+		userID, entityType, entityValue,
+	)
+
+	return httputil.Success(c, map[string]interface{}{
+		"message":       fmt.Sprintf("Removed '%s' from %d tasks", entityValue, updatedCount),
+		"updated_count": updatedCount,
+	})
+}
+
+// GetEntityAliases returns all aliases for a specific canonical entity
+func (h *TaskHandler) GetEntityAliases(c *fiber.Ctx) error {
+	userID, err := middleware.GetUserID(c)
+	if err != nil {
+		return httputil.Unauthorized(c, "")
+	}
+
+	entityType := c.Params("type")
+	entityValue := c.Params("value")
+
+	if entityType == "" || entityValue == "" {
+		return httputil.BadRequest(c, "entity type and value are required")
+	}
+
+	rows, err := h.db.Query(c.Context(),
+		`SELECT alias_value, created_at FROM entity_aliases
+		 WHERE user_id = $1 AND entity_type = $2 AND canonical_value = $3
+		 ORDER BY created_at DESC`,
+		userID, entityType, entityValue,
+	)
+	if err != nil {
+		return httputil.InternalError(c, "database error")
+	}
+	defer rows.Close()
+
+	aliases := make([]map[string]interface{}, 0)
+	for rows.Next() {
+		var aliasValue string
+		var createdAt time.Time
+		if err := rows.Scan(&aliasValue, &createdAt); err != nil {
+			continue
+		}
+		aliases = append(aliases, map[string]interface{}{
+			"value":      aliasValue,
+			"created_at": createdAt.Format(time.RFC3339),
+		})
+	}
+
+	return httputil.Success(c, map[string]interface{}{
+		"canonical": entityValue,
+		"type":      entityType,
+		"aliases":   aliases,
 	})
 }

@@ -29,52 +29,72 @@ func NewHandler(llmClient *llm.MultiClient) *Handler {
 
 // TaskResponse represents a task in API responses
 type TaskResponse struct {
-	ID                    string   `json:"id"`
-	Title                 string   `json:"title"`
-	OriginalTitle         *string  `json:"original_title,omitempty"`
-	AICleanedTitle        bool     `json:"ai_cleaned_title"`
-	Description           *string  `json:"description,omitempty"`
-	OriginalDescription   *string  `json:"original_description,omitempty"`
-	AICleanedDescription  bool     `json:"ai_cleaned_description"`
-	AISummary             *string  `json:"ai_summary,omitempty"`
-	Status          string   `json:"status"`
-	Priority        int      `json:"priority"`
-	DueDate         *string  `json:"due_date,omitempty"`
-	CompletedAt     *string  `json:"completed_at,omitempty"`
-	Tags            []string `json:"tags"`
-	ParentID        *string  `json:"parent_id,omitempty"`
-	Depth           int      `json:"depth"`
-	Complexity      int      `json:"complexity"`
-	HasChildren     bool     `json:"has_children"`
-	ChildrenCount   int      `json:"children_count"`
-	CreatedAt       string   `json:"created_at"`
-	UpdatedAt       string   `json:"updated_at"`
+	ID                 string                  `json:"id"`
+	Title              string                  `json:"title"`                            // User's original input
+	Description        *string                 `json:"description,omitempty"`            // User's original input
+	AICleanedTitle     *string                 `json:"ai_cleaned_title,omitempty"`       // AI cleaned version (null = not cleaned)
+	AICleanedDesc      *string                 `json:"ai_cleaned_description,omitempty"` // AI cleaned version (null = not cleaned)
+	DisplayTitle       string                  `json:"display_title"`                    // Computed: ai_cleaned_title ?? title
+	DisplayDescription *string                 `json:"display_description,omitempty"`    // Computed: ai_cleaned_description ?? description
+	Status             string                  `json:"status"`
+	Priority           int                     `json:"priority"`
+	DueAt              *string                 `json:"due_at,omitempty"`
+	HasDueTime         bool                    `json:"has_due_time"`
+	CompletedAt        *string                 `json:"completed_at,omitempty"`
+	Tags               []string                `json:"tags"`
+	ParentID           *string                 `json:"parent_id,omitempty"`
+	Depth              int                     `json:"depth"`
+	Complexity         int                     `json:"complexity"`
+	HasChildren        bool                    `json:"has_children"`
+	ChildrenCount      int                     `json:"children_count"`
+	Entities           []repository.TaskEntity `json:"entities"`
+	DuplicateOf        []string                `json:"duplicate_of"`
+	DuplicateResolved  bool                    `json:"duplicate_resolved"`
+	CreatedAt          string                  `json:"created_at"`
+	UpdatedAt          string                  `json:"updated_at"`
 }
 
 func toTaskResponse(t *repository.Task, childCount int) TaskResponse {
-	resp := TaskResponse{
-		ID:                   t.ID.String(),
-		Title:                t.Title,
-		OriginalTitle:        t.OriginalTitle,
-		AICleanedTitle:       t.AICleanedTitle,
-		Description:          t.Description,
-		OriginalDescription:  t.OriginalDescription,
-		AICleanedDescription: t.AICleanedDescription,
-		AISummary:            t.AISummary,
-		Status:         t.Status,
-		Priority:       t.Priority,
-		Tags:           t.Tags,
-		Depth:          t.Depth,
-		Complexity:     t.Complexity,
-		HasChildren:    childCount > 0,
-		ChildrenCount:  childCount,
-		CreatedAt:      t.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:      t.UpdatedAt.Format(time.RFC3339),
+	entities := t.Entities
+	if entities == nil {
+		entities = []repository.TaskEntity{}
 	}
 
-	if t.DueDate != nil {
-		d := t.DueDate.Format(time.RFC3339)
-		resp.DueDate = &d
+	// Compute display fields
+	displayTitle := t.GetDisplayTitle()
+	displayDesc := t.GetDisplayDescription()
+
+	resp := TaskResponse{
+		ID:                 t.ID.String(),
+		Title:              t.Title,
+		Description:        t.Description,
+		AICleanedTitle:     t.AICleanedTitle,
+		AICleanedDesc:      t.AICleanedDescription,
+		DisplayTitle:       displayTitle,
+		DisplayDescription: displayDesc,
+		Status:             t.Status,
+		Priority:           t.Priority,
+		HasDueTime:         t.HasDueTime,
+		Tags:               t.Tags,
+		Depth:              t.Depth,
+		Complexity:         t.Complexity,
+		HasChildren:        childCount > 0,
+		ChildrenCount:      childCount,
+		Entities:           entities,
+		DuplicateOf:        t.DuplicateOf,
+		DuplicateResolved:  t.DuplicateResolved,
+		CreatedAt:          t.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:          t.UpdatedAt.Format(time.RFC3339),
+	}
+
+	// Ensure DuplicateOf is not nil for JSON serialization
+	if resp.DuplicateOf == nil {
+		resp.DuplicateOf = []string{}
+	}
+
+	if t.DueAt != nil {
+		d := t.DueAt.Format(time.RFC3339)
+		resp.DueAt = &d
 	}
 	if t.CompletedAt != nil {
 		d := t.CompletedAt.Format(time.RFC3339)
@@ -229,7 +249,8 @@ Each subtask should be:
 	})
 }
 
-// AIClean cleans up a task title and description
+// AIClean cleans up a task title and/or description
+// Query param: field=title|description|both (default: both)
 func (h *Handler) AIClean(c *fiber.Ctx) error {
 	if !h.service.IsAvailable() {
 		return httputil.ServiceUnavailable(c, "AI service not available")
@@ -245,6 +266,9 @@ func (h *Handler) AIClean(c *fiber.Ctx) error {
 		return httputil.BadRequest(c, "invalid task ID")
 	}
 
+	// Get which field to clean (title, description, or both)
+	field := c.Query("field", "both")
+
 	task, childCount, err := repository.GetTaskByID(c.Context(), taskID, userID)
 	if err != nil {
 		return httputil.InternalError(c, "database error")
@@ -253,12 +277,55 @@ func (h *Handler) AIClean(c *fiber.Ctx) error {
 		return httputil.NotFound(c, "task")
 	}
 
-	// Build prompt based on what fields have content
+	// Build prompt based on which field to clean
 	hasDescription := task.Description != nil && *task.Description != ""
 
 	var prompt string
-	if hasDescription {
-		prompt = fmt.Sprintf(`Fix spelling and grammar in this task title and description. Use simple words (a 10 year old should understand).
+	switch field {
+	case "title":
+		prompt = fmt.Sprintf(`Fix spelling and grammar in this task title. Use simple words (a 10 year old should understand).
+
+RULES:
+1. Keep the SAME meaning - don't change what the task is about
+2. If already clear and correct, return UNCHANGED
+3. Use simple everyday words, not fancy/academic words
+4. Max 10 words, NO period at the end, lowercase unless proper noun
+5. DO NOT change: names, emails, URLs, code, numbers, dates
+6. DO NOT add filler words like "a", "the", "dish" - keep it minimal
+
+Original title: %s
+
+Return ONLY this JSON format:
+{"title": "cleaned or original title", "title_changed": true/false}
+
+Set title_changed to false if no changes needed.`,
+			task.Title)
+
+	case "description":
+		if !hasDescription {
+			return httputil.BadRequest(c, "task has no description to clean")
+		}
+		prompt = fmt.Sprintf(`Fix spelling and grammar in this task description. Use simple words (a 10 year old should understand).
+
+RULES:
+1. Keep the SAME meaning - don't change what the task is about
+2. If already clear and correct, return UNCHANGED
+3. Use simple everyday words, not fancy/academic words
+4. DO NOT change: names, emails, URLs, code, numbers, dates
+5. DO NOT add info that wasn't there
+6. Short descriptions (1-3 words) usually need no changes
+
+Original description: %s
+
+Return ONLY this JSON format:
+{"description": "cleaned or original description", "description_changed": true/false}
+
+Set description_changed to false if no changes needed.`,
+			*task.Description)
+
+	default: // "both"
+		if hasDescription {
+			prompt = fmt.Sprintf(`Fix spelling and grammar in this task title and description. Use simple words (a 10 year old should understand).
 
 RULES:
 1. Keep the SAME meaning - don't change what the task is about
@@ -277,9 +344,9 @@ Return ONLY this JSON format:
 {"title": "cleaned or original title", "title_changed": true/false, "description": "cleaned or original description", "description_changed": true/false}
 
 Set _changed to false if no changes needed. Return original text when not changing.`,
-			task.Title, *task.Description)
-	} else {
-		prompt = fmt.Sprintf(`Fix spelling and grammar in this task title. Use simple words (a 10 year old should understand).
+				task.Title, *task.Description)
+		} else {
+			prompt = fmt.Sprintf(`Fix spelling and grammar in this task title. Use simple words (a 10 year old should understand).
 
 RULES:
 1. Keep the SAME meaning - don't change what the task is about
@@ -295,7 +362,8 @@ Return ONLY this JSON format:
 {"title": "cleaned or original title", "title_changed": true/false}
 
 Set title_changed to false if no changes needed.`,
-			task.Title)
+				task.Title)
+		}
 	}
 
 	resp, err := h.service.LLM().Complete(c.Context(), llm.CompletionRequest{
@@ -349,21 +417,25 @@ Set title_changed to false if no changes needed.`,
 	updates := map[string]interface{}{}
 
 	// Validate title change - reject if too different (AI might be hallucinating)
+	// Store AI cleaned version in ai_cleaned_title, don't modify original title
 	if cleaned.TitleChanged && cleaned.Title != "" && cleaned.Title != task.Title {
+		// Post-process: remove trailing period (not suitable for todo list titles)
+		cleanedTitle := strings.TrimSuffix(cleaned.Title, ".")
+
 		// Basic sanity check: new title shouldn't be wildly different in length
-		lenDiff := len(cleaned.Title) - len(task.Title)
+		lenDiff := len(cleanedTitle) - len(task.Title)
 		if lenDiff < 0 {
 			lenDiff = -lenDiff
 		}
 		// Allow change if length difference is reasonable (not more than 2x or adding 50+ chars)
 		if lenDiff < len(task.Title) && lenDiff < 50 {
-			updates["title"] = cleaned.Title
-			updates["original_title"] = task.Title
-			updates["ai_cleaned_title"] = true
+			// Store cleaned version in ai_cleaned_title (original title remains unchanged)
+			updates["ai_cleaned_title"] = cleanedTitle
 		}
 	}
 
 	// Validate description change
+	// Store AI cleaned version in ai_cleaned_description, don't modify original description
 	if cleaned.DescriptionChanged && cleaned.Description != "" {
 		currentDesc := ""
 		if task.Description != nil {
@@ -377,9 +449,8 @@ Set title_changed to false if no changes needed.`,
 			}
 			// Allow change if length difference is reasonable
 			if lenDiff < len(currentDesc)+50 && lenDiff < 200 {
-				updates["description"] = cleaned.Description
-				updates["original_description"] = currentDesc
-				updates["ai_cleaned_description"] = true
+				// Store cleaned version in ai_cleaned_description (original description remains unchanged)
+				updates["ai_cleaned_description"] = cleaned.Description
 			}
 		}
 	}
@@ -399,6 +470,8 @@ Set title_changed to false if no changes needed.`,
 }
 
 // AIRevert reverts AI-cleaned title and/or description back to the original human-written version
+// With the new schema, this simply clears ai_cleaned_title/ai_cleaned_description
+// The original is always preserved in title/description
 func (h *Handler) AIRevert(c *fiber.Ctx) error {
 	userID, err := middleware.GetUserID(c)
 	if err != nil {
@@ -418,27 +491,26 @@ func (h *Handler) AIRevert(c *fiber.Ctx) error {
 		return httputil.NotFound(c, "task")
 	}
 
-	// Check if there's anything to revert
-	hasOriginalTitle := task.OriginalTitle != nil && *task.OriginalTitle != ""
-	hasOriginalDescription := task.OriginalDescription != nil && *task.OriginalDescription != ""
+	// Check if there's anything to revert (AI cleaned versions exist)
+	hasCleanedTitle := task.AICleanedTitle != nil && *task.AICleanedTitle != ""
+	hasCleanedDescription := task.AICleanedDescription != nil && *task.AICleanedDescription != ""
 
-	if !hasOriginalTitle && !hasOriginalDescription {
-		return httputil.BadRequest(c, "no original content to revert to")
+	if !hasCleanedTitle && !hasCleanedDescription {
+		return httputil.BadRequest(c, "no AI-cleaned content to revert")
 	}
 
-	// Revert to original values
-	updates := map[string]interface{}{}
-
-	if hasOriginalTitle {
-		updates["title"] = *task.OriginalTitle
-		updates["original_title"] = nil // Clear the original
-		updates["ai_cleaned_title"] = false
+	// Revert by clearing AI cleaned versions (original is always in title/description)
+	// Also set skip_auto_cleanup to prevent AI from auto-cleaning again
+	updates := map[string]interface{}{
+		"skip_auto_cleanup": true,
 	}
 
-	if hasOriginalDescription {
-		updates["description"] = *task.OriginalDescription
-		updates["original_description"] = nil // Clear the original
-		updates["ai_cleaned_description"] = false
+	if hasCleanedTitle {
+		updates["ai_cleaned_title"] = nil
+	}
+
+	if hasCleanedDescription {
+		updates["ai_cleaned_description"] = nil
 	}
 
 	if err := repository.UpdateTaskAIFields(c.Context(), taskID, userID, updates); err != nil {
@@ -820,8 +892,8 @@ func (h *Handler) AIRemind(c *fiber.Ctx) error {
 
 	now := time.Now()
 	dueInfo := ""
-	if task.DueDate != nil {
-		dueInfo = fmt.Sprintf("Due date: %s", task.DueDate.Format("2006-01-02 15:04"))
+	if task.DueAt != nil {
+		dueInfo = fmt.Sprintf("Due date: %s", task.DueAt.Format("2006-01-02 15:04"))
 	}
 
 	prompt := fmt.Sprintf(`Suggest an appropriate reminder time for this task.
@@ -991,8 +1063,8 @@ func (h *Handler) AIInvite(c *fiber.Ctx) error {
 
 	now := time.Now()
 	dueInfo := ""
-	if task.DueDate != nil {
-		dueInfo = fmt.Sprintf("Due/scheduled: %s", task.DueDate.Format("2006-01-02 15:04"))
+	if task.DueAt != nil {
+		dueInfo = fmt.Sprintf("Due/scheduled: %s", task.DueAt.Format("2006-01-02 15:04"))
 	}
 
 	prompt := fmt.Sprintf(`Create a calendar event based on this task.
@@ -1044,6 +1116,237 @@ Guidelines:
 		"draft_id": draftID,
 		"draft":    draft,
 	})
+}
+
+// AICheckDuplicates checks for duplicate/similar tasks
+func (h *Handler) AICheckDuplicates(c *fiber.Ctx) error {
+	if !h.service.IsAvailable() {
+		return httputil.ServiceUnavailable(c, "AI service not available")
+	}
+
+	userID, err := middleware.GetUserID(c)
+	if err != nil {
+		return httputil.Unauthorized(c, "")
+	}
+
+	taskID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return httputil.BadRequest(c, "invalid task ID")
+	}
+
+	task, childCount, err := repository.GetTaskByID(c.Context(), taskID, userID)
+	if err != nil {
+		return httputil.InternalError(c, "database error")
+	}
+	if task == nil {
+		return httputil.NotFound(c, "task")
+	}
+
+	canUse, _ := h.service.CheckAndIncrementUsage(c.Context(), userID, FeatureDuplicateCheck)
+	if !canUse {
+		return httputil.PaymentRequired(c, "Daily limit reached for duplicate check")
+	}
+
+	// Get user's other tasks for comparison
+	otherTasks, err := repository.GetUserTasks(c.Context(), userID, 100)
+	if err != nil {
+		return httputil.InternalError(c, "failed to fetch tasks")
+	}
+
+	// Build list of other task titles (excluding current task and its subtasks)
+	// Use AI-cleaned versions if available for better comparison
+	var taskList strings.Builder
+	for i, t := range otherTasks {
+		if t.ID == taskID {
+			continue
+		}
+		// Skip subtasks of the current task - they're not duplicates, they're children
+		if t.ParentID != nil && *t.ParentID == taskID {
+			continue
+		}
+		// Skip if current task is a subtask and this is its parent
+		if task.ParentID != nil && t.ID == *task.ParentID {
+			continue
+		}
+		// Use display title (AI-cleaned if available, otherwise original)
+		displayTitle := t.Title
+		if t.AICleanedTitle != nil && *t.AICleanedTitle != "" {
+			displayTitle = *t.AICleanedTitle
+		}
+		taskList.WriteString(fmt.Sprintf("%d. [%s] %s\n", i+1, t.ID.String(), displayTitle))
+	}
+
+	// Use AI-cleaned versions for current task if available
+	currentTitle := task.Title
+	if task.AICleanedTitle != nil && *task.AICleanedTitle != "" {
+		currentTitle = *task.AICleanedTitle
+	}
+	currentDesc := ""
+	if task.AICleanedDescription != nil && *task.AICleanedDescription != "" {
+		currentDesc = "Description: " + *task.AICleanedDescription
+	} else if task.Description != nil && *task.Description != "" {
+		currentDesc = "Description: " + *task.Description
+	}
+
+	prompt := fmt.Sprintf(`Find tasks that are TRUE DUPLICATES of this task (same task written differently).
+
+CURRENT TASK: "%s"
+%s
+
+OTHER TASKS (format: NUMBER. [UUID] Title):
+%s
+
+Return ONLY a JSON object:
+{
+  "duplicates": [
+    {"id": "copy-the-exact-uuid-from-brackets", "reason": "why it's the same task"}
+  ],
+  "reason": "Brief explanation"
+}
+
+STRICT RULES:
+- A duplicate means THE SAME TASK written with different words
+- MUST involve the same people/entities AND the same action/goal
+- "Inform Alice about X" and "Notify Alice about X" = DUPLICATE (same person, same action)
+- "Cook beef" and "Tell Alice about onboarding" = NOT DUPLICATE (completely different)
+- Return EMPTY duplicates array [] if no true duplicates exist
+- Copy the UUID exactly from the [brackets] - do not make up UUIDs`,
+		currentTitle, currentDesc, taskList.String())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	resp, err := h.service.LLM().Complete(ctx, llm.CompletionRequest{
+		Messages: []llm.Message{
+			{Role: "user", Content: prompt},
+		},
+		MaxTokens:   500,
+		Temperature: 0.2,
+	})
+	if err != nil {
+		return httputil.Success(c, map[string]interface{}{
+			"task":       toTaskResponse(task, childCount),
+			"duplicates": []interface{}{},
+			"reason":     "AI service temporarily unavailable",
+		})
+	}
+
+	var result struct {
+		Duplicates []struct {
+			ID     string `json:"id"`
+			Reason string `json:"reason"`
+		} `json:"duplicates"`
+		Reason string `json:"reason"`
+	}
+
+	content := strings.TrimSpace(resp.Content)
+	if strings.HasPrefix(content, "```") {
+		lines := strings.Split(content, "\n")
+		var jsonLines []string
+		inBlock := false
+		for _, line := range lines {
+			if strings.HasPrefix(line, "```") {
+				inBlock = !inBlock
+				continue
+			}
+			if inBlock {
+				jsonLines = append(jsonLines, line)
+			}
+		}
+		content = strings.Join(jsonLines, "\n")
+	}
+
+	if err := json.Unmarshal([]byte(content), &result); err != nil {
+		return httputil.Success(c, map[string]interface{}{
+			"task":       toTaskResponse(task, childCount),
+			"duplicates": []interface{}{},
+			"reason":     "No duplicates found",
+		})
+	}
+
+	// Convert duplicate IDs to full task objects and collect valid IDs
+	var duplicateTasks []TaskResponse
+	var validDuplicateIDs []string
+	for _, dup := range result.Duplicates {
+		dupID, err := uuid.Parse(dup.ID)
+		if err != nil {
+			continue
+		}
+		// Skip if AI returned the current task as a duplicate of itself
+		if dupID == taskID {
+			continue
+		}
+		dupTask, dupChildCount, err := repository.GetTaskByID(c.Context(), dupID, userID)
+		if err != nil || dupTask == nil {
+			continue
+		}
+		// Skip cancelled tasks - they shouldn't be shown as duplicates
+		if dupTask.Status == "cancelled" {
+			continue
+		}
+		// Skip subtasks of the current task - they're children, not duplicates
+		if dupTask.ParentID != nil && *dupTask.ParentID == taskID {
+			continue
+		}
+		// Skip if current task is a subtask and this is its parent
+		if task.ParentID != nil && dupID == *task.ParentID {
+			continue
+		}
+		duplicateTasks = append(duplicateTasks, toTaskResponse(dupTask, dupChildCount))
+		validDuplicateIDs = append(validDuplicateIDs, dup.ID)
+	}
+
+	// Save duplicate IDs to the task if any were found
+	if len(validDuplicateIDs) > 0 {
+		duplicateJSON, _ := json.Marshal(validDuplicateIDs)
+		_ = repository.UpdateTaskAIFields(c.Context(), taskID, userID, map[string]interface{}{
+			"duplicate_of":       duplicateJSON,
+			"duplicate_resolved": false,
+		})
+		// Update task object for response
+		task.DuplicateOf = validDuplicateIDs
+		task.DuplicateResolved = false
+	}
+
+	return httputil.Success(c, map[string]interface{}{
+		"task":       toTaskResponse(task, childCount),
+		"duplicates": duplicateTasks,
+		"reason":     result.Reason,
+	})
+}
+
+// AIResolveDuplicate marks a duplicate as resolved/dismissed
+func (h *Handler) AIResolveDuplicate(c *fiber.Ctx) error {
+	userID, err := middleware.GetUserID(c)
+	if err != nil {
+		return httputil.Unauthorized(c, "")
+	}
+
+	taskID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return httputil.BadRequest(c, "invalid task ID")
+	}
+
+	task, childCount, err := repository.GetTaskByID(c.Context(), taskID, userID)
+	if err != nil {
+		return httputil.InternalError(c, "database error")
+	}
+	if task == nil {
+		return httputil.NotFound(c, "task")
+	}
+
+	// Mark duplicate as resolved
+	err = repository.UpdateTaskAIFields(c.Context(), taskID, userID, map[string]interface{}{
+		"duplicate_resolved": true,
+	})
+	if err != nil {
+		return httputil.InternalError(c, "failed to resolve duplicate")
+	}
+
+	// Update task object for response
+	task.DuplicateResolved = true
+
+	return httputil.Success(c, toTaskResponse(task, childCount))
 }
 
 // GetAIUsage returns AI usage stats for the current user
@@ -1145,6 +1448,63 @@ func (h *Handler) DeleteDraft(c *fiber.Ctx) error {
 	}
 
 	return httputil.NoContent(c)
+}
+
+// RemoveEntityFromTask removes a single entity from a specific task
+func (h *Handler) RemoveEntityFromTask(c *fiber.Ctx) error {
+	userID, err := middleware.GetUserID(c)
+	if err != nil {
+		return httputil.Unauthorized(c, "")
+	}
+
+	taskID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return httputil.BadRequest(c, "invalid task ID")
+	}
+
+	entityType := c.Params("type")
+	entityValue := c.Params("value")
+
+	if entityType == "" || entityValue == "" {
+		return httputil.BadRequest(c, "entity type and value are required")
+	}
+
+	// Get the task
+	task, childCount, err := repository.GetTaskByID(c.Context(), taskID, userID)
+	if err != nil {
+		return httputil.InternalError(c, "database error")
+	}
+	if task == nil {
+		return httputil.NotFound(c, "task")
+	}
+
+	// Filter out the entity to remove
+	newEntities := make([]repository.TaskEntity, 0, len(task.Entities))
+	found := false
+	for _, e := range task.Entities {
+		if strings.EqualFold(e.Type, entityType) && strings.EqualFold(e.Value, entityValue) {
+			found = true
+			continue // Skip this entity
+		}
+		newEntities = append(newEntities, e)
+	}
+
+	if !found {
+		return httputil.NotFound(c, "entity")
+	}
+
+	// Update the task with the new entities list
+	entitiesJSON, _ := json.Marshal(newEntities)
+	updates := map[string]interface{}{
+		"ai_entities": entitiesJSON,
+	}
+	if err := repository.UpdateTaskAIFields(c.Context(), taskID, userID, updates); err != nil {
+		return httputil.InternalError(c, "failed to update task")
+	}
+
+	// Get updated task
+	task, childCount, _ = repository.GetTaskByID(c.Context(), taskID, userID)
+	return httputil.Success(c, toTaskResponse(task, childCount))
 }
 
 // Service returns the underlying AI service (for use by other handlers)

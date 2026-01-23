@@ -1,7 +1,19 @@
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flow_models/flow_models.dart';
 import 'package:flow_tasks/core/theme/flow_theme.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:open_filex/open_filex.dart';
+
+// Web-specific imports for download
+// ignore: avoid_web_libraries_in_flutter
+import 'dart:html' as html if (dart.library.io) 'package:flow_tasks/core/utils/html_stub.dart';
+
+// Platform-specific imports for file handling
+import 'dart:io' if (dart.library.html) 'package:flow_tasks/core/utils/io_stub.dart' as io;
 
 /// Displays a list of task attachments
 class AttachmentList extends StatelessWidget {
@@ -51,7 +63,7 @@ class AttachmentList extends StatelessWidget {
   }
 }
 
-/// Grid of image thumbnails
+/// Grid of image thumbnails - 4 per row
 class _ImageGrid extends StatelessWidget {
   final List<Attachment> images;
   final ValueChanged<Attachment>? onDelete;
@@ -61,108 +73,208 @@ class _ImageGrid extends StatelessWidget {
     this.onDelete,
   });
 
+  // Thumbnail size: smaller to fit 4 per row with spacing
+  static const double _thumbnailSize = 56.0;
+
   @override
   Widget build(BuildContext context) {
     final colors = context.flowColors;
 
-    return SizedBox(
-      height: 80,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: images.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
-        itemBuilder: (context, index) {
-          final image = images[index];
-          return GestureDetector(
-            onTap: () => _viewImage(context, image),
-            child: Stack(
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: image.thumbnailUrl != null
-                      ? Image.network(
-                          image.thumbnailUrl!,
-                          width: 80,
-                          height: 80,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => _buildPlaceholder(colors),
-                        )
-                      : Image.network(
-                          image.url,
-                          width: 80,
-                          height: 80,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => _buildPlaceholder(colors),
-                        ),
-                ),
-                if (onDelete != null)
-                  Positioned(
-                    top: 4,
-                    right: 4,
-                    child: GestureDetector(
-                      onTap: () => onDelete!(image),
-                      child: Container(
-                        padding: const EdgeInsets.all(4),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withOpacity(0.6),
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(
-                          Icons.close,
-                          size: 12,
-                          color: Colors.white,
-                        ),
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: images.map((image) {
+        return GestureDetector(
+          onTap: () => _viewImage(context, image),
+          child: Stack(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: _buildImageWidget(image, colors),
+              ),
+              if (onDelete != null)
+                Positioned(
+                  top: 2,
+                  right: 2,
+                  child: GestureDetector(
+                    onTap: () => onDelete!(image),
+                    child: Container(
+                      padding: const EdgeInsets.all(2),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.6),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.close,
+                        size: 10,
+                        color: Colors.white,
                       ),
                     ),
                   ),
-              ],
-            ),
+                ),
+            ],
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  Widget _buildImageWidget(Attachment image, FlowColorScheme colors) {
+    final url = image.thumbnailUrl ?? image.url;
+
+    // Handle data URLs (base64 encoded images)
+    if (url.startsWith('data:')) {
+      try {
+        // Extract base64 data from data URL
+        final parts = url.split(',');
+        if (parts.length == 2) {
+          final bytes = base64Decode(parts[1]);
+          return Image.memory(
+            bytes,
+            width: _thumbnailSize,
+            height: _thumbnailSize,
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => _buildPlaceholder(colors),
           );
-        },
-      ),
+        }
+      } catch (_) {
+        return _buildPlaceholder(colors);
+      }
+    }
+
+    // Handle HTTP URLs
+    return Image.network(
+      url,
+      width: _thumbnailSize,
+      height: _thumbnailSize,
+      fit: BoxFit.cover,
+      errorBuilder: (_, __, ___) => _buildPlaceholder(colors),
     );
   }
 
   Widget _buildPlaceholder(FlowColorScheme colors) {
     return Container(
-      width: 80,
-      height: 80,
+      width: _thumbnailSize,
+      height: _thumbnailSize,
       decoration: BoxDecoration(
         color: colors.border.withOpacity(0.3),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(6),
       ),
       child: Icon(
         Icons.image_rounded,
+        size: 20,
         color: colors.textTertiary,
       ),
     );
   }
 
   void _viewImage(BuildContext context, Attachment image) {
+    Widget imageWidget;
+    final url = image.url;
+
+    // Handle data URLs (base64 encoded images)
+    if (url.startsWith('data:')) {
+      try {
+        final parts = url.split(',');
+        if (parts.length == 2) {
+          final bytes = base64Decode(parts[1]);
+          imageWidget = Image.memory(bytes, fit: BoxFit.contain);
+        } else {
+          imageWidget = const Center(child: Text('Failed to load image', style: TextStyle(color: Colors.white)));
+        }
+      } catch (_) {
+        imageWidget = const Center(child: Text('Failed to load image', style: TextStyle(color: Colors.white)));
+      }
+    } else {
+      imageWidget = Image.network(url, fit: BoxFit.contain);
+    }
+
     showDialog(
       context: context,
       builder: (context) => Dialog(
         backgroundColor: Colors.transparent,
         child: Stack(
           children: [
-            InteractiveViewer(
-              child: Image.network(
-                image.url,
-                fit: BoxFit.contain,
-              ),
-            ),
+            InteractiveViewer(child: imageWidget),
+            // Top bar with close and download buttons
             Positioned(
               top: 8,
               right: 8,
-              child: IconButton(
-                icon: const Icon(Icons.close, color: Colors.white),
-                onPressed: () => Navigator.of(context).pop(),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Download button
+                  Container(
+                    decoration: BoxDecoration(
+                      color: Colors.black54,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: IconButton(
+                      icon: const Icon(Icons.download, color: Colors.white),
+                      tooltip: 'Download',
+                      onPressed: () => _downloadImage(image),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  // Close button
+                  Container(
+                    decoration: BoxDecoration(
+                      color: Colors.black54,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: IconButton(
+                      icon: const Icon(Icons.close, color: Colors.white),
+                      onPressed: () => Navigator.of(context).pop(),
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _downloadImage(Attachment image) async {
+    final url = image.url;
+
+    if (kIsWeb) {
+      try {
+        final anchor = html.AnchorElement()
+          ..href = url
+          ..download = image.name;
+        html.document.body?.append(anchor);
+        anchor.click();
+        anchor.remove();
+      } catch (e) {
+        debugPrint('Failed to download image: $e');
+      }
+    } else {
+      // Native platforms: save to temp and open
+      try {
+        List<int> bytes;
+
+        if (url.startsWith('data:')) {
+          // Data URL: decode base64
+          final parts = url.split(',');
+          if (parts.length != 2) return;
+          bytes = base64Decode(parts[1]);
+        } else {
+          // HTTP URL: would need to download - skip for now
+          debugPrint('HTTP image download not implemented for native');
+          return;
+        }
+
+        final tempDir = await getTemporaryDirectory();
+        final filePath = '${tempDir.path}/${image.name}';
+        final file = io.File(filePath);
+        await file.writeAsBytes(bytes);
+        await OpenFilex.open(filePath);
+      } catch (e) {
+        debugPrint('Failed to download image: $e');
+      }
+    }
   }
 }
 
@@ -448,9 +560,62 @@ class _DocumentTile extends StatelessWidget {
   }
 
   Future<void> _openDocument(String url) async {
+    // Handle data URLs (base64 encoded files)
+    if (url.startsWith('data:')) {
+      if (kIsWeb) {
+        _downloadDataUrlWeb(url, attachment.name);
+      } else {
+        await _openDataUrlNative(url, attachment.name);
+      }
+      return;
+    }
+
+    // Handle regular HTTP URLs
     final uri = Uri.parse(url);
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  void _downloadDataUrlWeb(String dataUrl, String filename) {
+    if (!kIsWeb) return;
+
+    try {
+      // Create a download link and trigger it
+      final anchor = html.AnchorElement()
+        ..href = dataUrl
+        ..download = filename;
+      html.document.body?.append(anchor);
+      anchor.click();
+      anchor.remove();
+    } catch (e) {
+      debugPrint('Failed to download: $e');
+    }
+  }
+
+  Future<void> _openDataUrlNative(String dataUrl, String filename) async {
+    if (kIsWeb) return;
+
+    try {
+      // Extract base64 data from data URL
+      final parts = dataUrl.split(',');
+      if (parts.length != 2) {
+        debugPrint('Invalid data URL format');
+        return;
+      }
+
+      final bytes = base64Decode(parts[1]);
+
+      // Get temp directory and save file
+      final tempDir = await getTemporaryDirectory();
+      final filePath = '${tempDir.path}/$filename';
+      final file = io.File(filePath);
+      await file.writeAsBytes(bytes);
+
+      // Open the file with system default app
+      await OpenFilex.open(filePath);
+    } catch (e) {
+      debugPrint('Failed to open document: $e');
     }
   }
 }

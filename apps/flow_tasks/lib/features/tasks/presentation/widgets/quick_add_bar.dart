@@ -40,15 +40,27 @@ class _QuickAddBarState extends ConsumerState<QuickAddBar> {
     setState(() => _isSubmitting = true);
 
     try {
+      // Check if we're in a List or Smart List view (task won't appear there immediately)
+      final inListView = ref.read(selectedListIdProvider) != null;
+      final inSmartListView = ref.read(selectedSmartListProvider) != null;
+      final shouldNavigateAway = inListView || inSmartListView;
+
       // Use optimistic task actions - instant UI update
       // Auto-add to "today" by setting due date to start of today (no specific time)
       final now = DateTime.now();
       final today = DateTime(now.year, now.month, now.day);
       final actions = ref.read(taskActionsProvider);
-      final newTask = await actions.create(title: text.trim(), dueDate: today);
+      final newTask = await actions.create(title: text.trim(), dueAt: today);
 
       _controller.clear();
       _focusNode.unfocus();
+
+      // If created from List/Smart List view, navigate to Next 7 days to show the task
+      if (shouldNavigateAway) {
+        ref.read(selectedListIdProvider.notifier).state = null;
+        ref.read(selectedSmartListProvider.notifier).state = null;
+        ref.read(selectedSidebarIndexProvider.notifier).state = 1; // Next 7 days
+      }
 
       // Open the task detail panel for the new task
       ref.read(selectedTaskIdProvider.notifier).state = newTask.id;

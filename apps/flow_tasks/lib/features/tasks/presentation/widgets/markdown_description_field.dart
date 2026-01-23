@@ -6,6 +6,7 @@ import 'package:flow_models/flow_models.dart';
 import 'package:flow_tasks/core/providers/providers.dart';
 import 'package:flow_tasks/core/theme/flow_theme.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:pasteboard/pasteboard.dart';
 
 /// Live markdown TextEditingController that styles text in real-time
 /// Key: ALL characters are preserved (no hiding), only styling changes
@@ -96,6 +97,17 @@ class LiveMarkdownController extends TextEditingController {
             style: baseStyle.copyWith(color: hashtagColor),
           ));
           break;
+
+        case _PatternType.image:
+          // Image reference in muted color with icon indicator
+          spans.add(TextSpan(
+            text: pattern.fullMatch,
+            style: baseStyle.copyWith(
+              color: markerColor,
+              backgroundColor: markerColor.withAlpha(30),
+            ),
+          ));
+          break;
       }
 
       currentIndex = pattern.end;
@@ -167,13 +179,50 @@ class LiveMarkdownController extends TextEditingController {
       }
     }
 
+    // Image references: [img1], [img2], etc. or [img...]
+    final imageRegex = RegExp(r'\[img(\d+|\.\.\.)\]');
+    for (final match in imageRegex.allMatches(text)) {
+      // Check no overlap
+      final overlaps = patterns.any((p) =>
+          (match.start >= p.start && match.start < p.end) ||
+          (match.end > p.start && match.end <= p.end));
+      if (!overlaps) {
+        patterns.add(_MarkdownPattern(
+          type: _PatternType.image,
+          start: match.start,
+          end: match.end,
+          content: match.group(1)!, // The number or "..."
+          fullMatch: match.group(0)!,
+        ));
+      }
+    }
+
     // Sort by start position
     patterns.sort((a, b) => a.start.compareTo(b.start));
     return patterns;
   }
 }
 
-enum _PatternType { bold, italic, hashtag }
+enum _PatternType { bold, italic, hashtag, image }
+
+/// For matching in rendered body
+enum _MatchType { hashtag, image }
+
+class _SpecialMatch {
+  final _MatchType type;
+  final int start;
+  final int end;
+  final String content;
+  final String id;
+
+  _SpecialMatch({
+    required this.type,
+    required this.start,
+    required this.end,
+    required this.content,
+    required this.id,
+  });
+}
 
 class _MarkdownPattern {
   final _PatternType type;
@@ -191,6 +240,12 @@ class _MarkdownPattern {
   });
 }
 
+/// Callback for image paste - returns the image index (1-based) after upload
+typedef ImagePasteCallback = Future<int?> Function(Uint8List imageBytes, String mimeType);
+
+/// Callback to get image URL by index (1-based)
+typedef ImageUrlResolver = String? Function(int imageIndex);
+
 /// Bear-style markdown description field with live rendering
 class MarkdownDescriptionField extends ConsumerStatefulWidget {
   final String? initialValue;
@@ -198,6 +253,10 @@ class MarkdownDescriptionField extends ConsumerStatefulWidget {
   final ValueChanged<String>? onChanged;
   final VoidCallback? onEditingComplete;
   final bool readOnly;
+  /// Called when user pastes an image - should upload and return attachment ID
+  final ImagePasteCallback? onImagePaste;
+  /// Called to resolve [img-{id}] to actual image URL
+  final ImageUrlResolver? imageUrlResolver;
 
   const MarkdownDescriptionField({
     super.key,
@@ -206,6 +265,8 @@ class MarkdownDescriptionField extends ConsumerStatefulWidget {
     this.onChanged,
     this.onEditingComplete,
     this.readOnly = false,
+    this.onImagePaste,
+    this.imageUrlResolver,
   });
 
   @override
@@ -229,6 +290,10 @@ class _MarkdownDescriptionFieldState extends ConsumerState<MarkdownDescriptionFi
   String _currentHashtagQuery = '';
   Offset _hashtagOffset = Offset.zero; // Position for dropdown
   int _dropdownSelectedIndex = 0; // Keyboard navigation index
+
+  // Image paste state
+  bool _isUploadingImage = false;
+  String? _uploadingPlaceholder; // Temporary placeholder while uploading
 
   @override
   void initState() {
@@ -514,10 +579,86 @@ class _MarkdownDescriptionFieldState extends ConsumerState<MarkdownDescriptionFi
         _toggleItalic();
         return;
       }
+      if (event.logicalKey == LogicalKeyboardKey.keyV) {
+        // Check for image paste
+        _handleImagePaste();
+        // Don't return - let the default paste happen for text
+      }
     }
 
     if (event.logicalKey == LogicalKeyboardKey.enter) {
       _handleEnterKey();
+    }
+  }
+
+  /// Handle pasting images from clipboard
+  Future<void> _handleImagePaste() async {
+    if (widget.onImagePaste == null || _isUploadingImage) return;
+
+    try {
+      // Check for image in clipboard using pasteboard
+      final imageBytes = await Pasteboard.image;
+      if (imageBytes == null || imageBytes.isEmpty) return;
+
+      // Default to PNG since pasteboard returns PNG format
+      const mimeType = 'image/png';
+
+      // We have an image - upload it
+      setState(() => _isUploadingImage = true);
+
+      // Insert a placeholder at cursor position
+      final selection = _controller!.selection;
+      final cursorPos = selection.isValid ? selection.start : _controller!.text.length;
+      const placeholder = '[img...]';
+      _uploadingPlaceholder = placeholder;
+
+      final text = _controller!.text;
+      final newText = '${text.substring(0, cursorPos)}$placeholder${text.substring(cursorPos)}';
+
+      _controller!.value = TextEditingValue(
+        text: newText,
+        selection: TextSelection.collapsed(offset: cursorPos + placeholder.length),
+      );
+      widget.onChanged?.call(newText);
+
+      // Upload the image - returns the 1-based index of the new image
+      final imageIndex = await widget.onImagePaste!(imageBytes, mimeType);
+
+      if (imageIndex != null && mounted) {
+        // Replace placeholder with actual image reference [img1], [img2], etc.
+        final currentText = _controller!.text;
+        final imageRef = '[img$imageIndex]';
+        final updatedText = currentText.replaceFirst(placeholder, imageRef);
+
+        _controller!.value = TextEditingValue(
+          text: updatedText,
+          selection: TextSelection.collapsed(
+            offset: _controller!.selection.start + (imageRef.length - placeholder.length),
+          ),
+        );
+        widget.onChanged?.call(updatedText);
+      } else if (mounted) {
+        // Upload failed - remove placeholder
+        final currentText = _controller!.text;
+        final updatedText = currentText.replaceFirst(placeholder, '');
+        _controller!.text = updatedText;
+        widget.onChanged?.call(updatedText);
+      }
+    } catch (e) {
+      // Silently fail - might just be text paste
+      if (_uploadingPlaceholder != null && mounted) {
+        final currentText = _controller!.text;
+        final updatedText = currentText.replaceFirst(_uploadingPlaceholder!, '');
+        _controller!.text = updatedText;
+        widget.onChanged?.call(updatedText);
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isUploadingImage = false;
+          _uploadingPlaceholder = null;
+        });
+      }
     }
   }
 
@@ -800,6 +941,10 @@ class _MarkdownDescriptionFieldState extends ConsumerState<MarkdownDescriptionFi
         child: _BearMarkdownBody(
           data: controller.text,
           colors: colors,
+          imageUrlResolver: widget.imageUrlResolver,
+          onImageTap: (attachmentId) {
+            // TODO: Open full-size image viewer
+          },
           onCheckboxTap: (checkboxStart) {
             _toggleCheckbox(controller.text, checkboxStart);
           },
@@ -985,19 +1130,28 @@ class _BearMarkdownBody extends StatelessWidget {
   final String data;
   final FlowColorScheme colors;
   final void Function(int checkboxStart)? onCheckboxTap;
+  final ImageUrlResolver? imageUrlResolver;
+  final void Function(String attachmentId)? onImageTap;
 
   const _BearMarkdownBody({
     required this.data,
     required this.colors,
     this.onCheckboxTap,
+    this.imageUrlResolver,
+    this.onImageTap,
   });
 
   static final _hashtagRegex = RegExp(r'#([A-Za-z0-9_]+(?:/[A-Za-z0-9_]+)?)');
+  static final _imageRegex = RegExp(r'\[img(\d+|\.\.\.)\]');
 
   @override
   Widget build(BuildContext context) {
-    if (_hashtagRegex.hasMatch(data)) {
-      return _buildRichTextWithHashtags(context);
+    // Check for special patterns that need custom rendering
+    final hasHashtags = _hashtagRegex.hasMatch(data);
+    final hasImages = _imageRegex.hasMatch(data);
+
+    if (hasHashtags || hasImages) {
+      return _buildRichContent(context);
     }
 
     return MarkdownBody(
@@ -1010,52 +1164,237 @@ class _BearMarkdownBody extends StatelessWidget {
     );
   }
 
-  Widget _buildRichTextWithHashtags(BuildContext context) {
-    final spans = <InlineSpan>[];
+  /// Build rich content with hashtags, images, and markdown
+  /// Images are displayed as block elements (own line)
+  Widget _buildRichContent(BuildContext context) {
+    final widgets = <Widget>[];
     final text = data;
-    var lastEnd = 0;
+
+    // Combine all special patterns and sort by position
+    final allMatches = <_SpecialMatch>[];
 
     for (final match in _hashtagRegex.allMatches(text)) {
+      allMatches.add(_SpecialMatch(
+        type: _MatchType.hashtag,
+        start: match.start,
+        end: match.end,
+        content: match.group(0)!,
+        id: match.group(1)!,
+      ));
+    }
+
+    for (final match in _imageRegex.allMatches(text)) {
+      allMatches.add(_SpecialMatch(
+        type: _MatchType.image,
+        start: match.start,
+        end: match.end,
+        content: match.group(0)!,
+        id: match.group(1)!, // The number or "..."
+      ));
+    }
+
+    allMatches.sort((a, b) => a.start.compareTo(b.start));
+
+    // Track current inline content for proper block layout
+    var lastEnd = 0;
+    List<Widget> currentInlineWidgets = [];
+
+    void flushInlineWidgets() {
+      if (currentInlineWidgets.isNotEmpty) {
+        widgets.add(Wrap(
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: currentInlineWidgets,
+        ));
+        currentInlineWidgets = [];
+      }
+    }
+
+    for (final match in allMatches) {
+      // Add text before this match
       if (match.start > lastEnd) {
         final beforeText = text.substring(lastEnd, match.start);
-        spans.addAll(_parseTextSegment(beforeText));
+        if (beforeText.trim().isNotEmpty) {
+          currentInlineWidgets.add(_buildTextSegmentWidget(beforeText));
+        }
       }
 
-      final hashtag = match.group(0)!;
-      spans.add(WidgetSpan(
-        alignment: PlaceholderAlignment.middle,
-        child: Container(
-          margin: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-          decoration: BoxDecoration(
-            color: colors.surfaceVariant,
-            borderRadius: BorderRadius.circular(4),
-          ),
-          child: Text(
-            hashtag,
-            style: TextStyle(
-              fontSize: 14,
-              color: colors.textSecondary,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ),
-      ));
+      // Add the special element
+      if (match.type == _MatchType.hashtag) {
+        currentInlineWidgets.add(_buildHashtagWidget(match.content));
+      } else if (match.type == _MatchType.image) {
+        // Images are block-level - flush any inline content first
+        flushInlineWidgets();
+        widgets.add(_buildBlockImage(context, match.id));
+      }
 
       lastEnd = match.end;
     }
 
+    // Add remaining text
     if (lastEnd < text.length) {
       final afterText = text.substring(lastEnd);
-      spans.addAll(_parseTextSegment(afterText));
+      if (afterText.trim().isNotEmpty) {
+        currentInlineWidgets.add(_buildTextSegmentWidget(afterText));
+      }
     }
 
+    // Flush any remaining inline content
+    flushInlineWidgets();
+
+    // Use Column for block layout (images on their own lines)
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: widgets,
+    );
+  }
+
+  Widget _buildTextSegmentWidget(String text) {
     return Text.rich(
-      TextSpan(children: spans),
+      TextSpan(children: _parseTextSegment(text)),
       style: TextStyle(
         fontSize: 15,
         color: colors.textSecondary,
         height: 1.5,
+      ),
+    );
+  }
+
+  Widget _buildHashtagWidget(String hashtag) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: colors.surfaceVariant,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        hashtag,
+        style: TextStyle(
+          fontSize: 14,
+          color: colors.textSecondary,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+    );
+  }
+
+  /// Build a block-level image (displayed on its own line)
+  /// indexStr is "1", "2", etc. or "..." for uploading
+  Widget _buildBlockImage(BuildContext context, String indexStr) {
+    // Handle uploading placeholder
+    if (indexStr == '...') {
+      return Container(
+        width: 120,
+        height: 90,
+        margin: const EdgeInsets.symmetric(vertical: 8),
+        decoration: BoxDecoration(
+          color: colors.surfaceVariant,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Center(
+          child: SizedBox(
+            width: 24,
+            height: 24,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              valueColor: AlwaysStoppedAnimation(colors.textTertiary),
+            ),
+          ),
+        ),
+      );
+    }
+
+    // Parse the index (1-based)
+    final imageIndex = int.tryParse(indexStr);
+    if (imageIndex == null) {
+      return _buildBrokenImagePlaceholder();
+    }
+
+    // Get the image URL from resolver using index
+    final imageUrl = imageUrlResolver?.call(imageIndex);
+
+    if (imageUrl == null) {
+      return _buildBrokenImagePlaceholder();
+    }
+
+    // Render actual image with block layout and 400px max
+    return GestureDetector(
+      onTap: () => onImageTap?.call(imageIndex.toString()),
+      child: Container(
+        constraints: const BoxConstraints(
+          maxWidth: 400,
+          maxHeight: 400,
+        ),
+        margin: const EdgeInsets.symmetric(vertical: 8),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: Image.network(
+            imageUrl,
+            fit: BoxFit.contain,
+            loadingBuilder: (context, child, loadingProgress) {
+              if (loadingProgress == null) return child;
+              return Container(
+                width: 120,
+                height: 90,
+                decoration: BoxDecoration(
+                  color: colors.surfaceVariant,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Center(
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    value: loadingProgress.expectedTotalBytes != null
+                        ? loadingProgress.cumulativeBytesLoaded /
+                            loadingProgress.expectedTotalBytes!
+                        : null,
+                    valueColor: AlwaysStoppedAnimation(colors.textTertiary),
+                  ),
+                ),
+              );
+            },
+            errorBuilder: (context, error, stackTrace) {
+              return _buildBrokenImagePlaceholder();
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBrokenImagePlaceholder() {
+    return Container(
+      width: 72,
+      height: 48,
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: colors.surfaceVariant.withOpacity(0.5),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+          color: colors.border.withOpacity(0.5),
+          width: 1,
+        ),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.image_not_supported_outlined,
+            color: colors.textTertiary,
+            size: 16,
+          ),
+          const SizedBox(height: 2),
+          Text(
+            'Removed',
+            style: TextStyle(
+              fontSize: 9,
+              color: colors.textTertiary,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
       ),
     );
   }

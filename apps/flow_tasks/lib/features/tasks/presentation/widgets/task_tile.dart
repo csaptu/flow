@@ -56,7 +56,7 @@ class TaskTile extends StatelessWidget {
                     children: [
                       // Title
                       Text(
-                        task.aiSummary ?? task.title,
+                        task.displayTitle,
                         style: TextStyle(
                           fontSize: 16,
                           fontWeight: isCompleted ? FontWeight.w400 : FontWeight.w500,
@@ -117,7 +117,7 @@ class TaskTile extends StatelessWidget {
     return tile;
   }
 
-  // Always show metadata row since we show createdAt when no dueDate
+  // Always show metadata row since we show createdAt when no dueAt
   bool get _hasMetadata => true;
 
   Widget _buildMetadataRow(BuildContext context) {
@@ -125,7 +125,7 @@ class TaskTile extends StatelessWidget {
     final parts = <Widget>[];
 
     // Due date or created date
-    if (task.dueDate != null) {
+    if (task.dueAt != null) {
       final isOverdue = task.isOverdue;
       parts.add(Row(
         mainAxisSize: MainAxisSize.min,
@@ -137,7 +137,7 @@ class TaskTile extends StatelessWidget {
           ),
           const SizedBox(width: 4),
           Text(
-            _formatDate(task.dueDate!),
+            _formatDueDate(task.dueAt!, task.hasDueTime),
             style: TextStyle(
               fontSize: 12,
               color: isOverdue ? colors.error : colors.textTertiary,
@@ -195,7 +195,9 @@ class TaskTile extends StatelessWidget {
     );
   }
 
-  String _formatDate(DateTime date) {
+  /// Format due date for task list display (date only, no time)
+  /// Time is still used for sorting but not displayed in the list view
+  String _formatDueDate(DateTime date, bool hasDueTime) {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final dateOnly = DateTime(date.year, date.month, date.day);
@@ -208,6 +210,23 @@ class TaskTile extends StatelessWidget {
       return 'Yesterday';
     } else {
       // All other dates: "Jan 15" format
+      return DateFormat('MMM d').format(date);
+    }
+  }
+
+  /// Format date for created timestamp (no time needed)
+  String _formatDate(DateTime date) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final dateOnly = DateTime(date.year, date.month, date.day);
+
+    if (dateOnly == today) {
+      return 'Today';
+    } else if (dateOnly == today.add(const Duration(days: 1))) {
+      return 'Tomorrow';
+    } else if (dateOnly == today.subtract(const Duration(days: 1))) {
+      return 'Yesterday';
+    } else {
       return DateFormat('MMM d').format(date);
     }
   }

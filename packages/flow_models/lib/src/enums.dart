@@ -164,10 +164,11 @@ enum SubscriptionTier {
 /// AI setting for each feature
 enum AISetting {
   auto,
-  ask,
-  off;
+  ask;
 
   static AISetting fromString(String value) {
+    // Handle legacy "off" values by treating them as "ask"
+    if (value == 'off') return AISetting.ask;
     return AISetting.values.firstWhere(
       (s) => s.name == value,
       orElse: () => AISetting.auto,
@@ -177,11 +178,9 @@ enum AISetting {
   String get label {
     switch (this) {
       case AISetting.auto:
-        return 'Auto';
+        return 'Automatic';
       case AISetting.ask:
         return 'Manual';
-      case AISetting.off:
-        return 'Off';
     }
   }
 }

@@ -18,10 +18,12 @@ class TaskDateTimePicker extends StatefulWidget {
 
   /// Shows the date picker dialog and returns the selected date
   /// If onClear is provided, it will be called when the user clicks Clear
+  /// [hasTime] indicates if the task has a due time set (authoritative flag from backend)
   static Future<DateTime?> show(
     BuildContext context, {
     DateTime? initialDate,
     TimeOfDay? initialTime,
+    bool? hasTime,
     VoidCallback? onClear,
   }) async {
     return showDialog<DateTime?>(
@@ -30,6 +32,7 @@ class TaskDateTimePicker extends StatefulWidget {
       builder: (context) => _DatePickerDialog(
         initialDate: initialDate,
         initialTime: initialTime,
+        hasTime: hasTime,
         onClear: onClear,
       ),
     );
@@ -69,11 +72,13 @@ class _TaskDateTimePickerState extends State<TaskDateTimePicker> {
 class _DatePickerDialog extends StatefulWidget {
   final DateTime? initialDate;
   final TimeOfDay? initialTime;
+  final bool? hasTime;
   final VoidCallback? onClear;
 
   const _DatePickerDialog({
     this.initialDate,
     this.initialTime,
+    this.hasTime,
     this.onClear,
   });
 
@@ -95,8 +100,10 @@ class _DatePickerDialogState extends State<_DatePickerDialog> {
     _displayMonth = widget.initialDate ?? now;
 
     if (widget.initialDate != null) {
-      final hasTime =
-          widget.initialDate!.hour != 0 || widget.initialDate!.minute != 0;
+      // Use the authoritative hasTime flag if provided, otherwise fall back to
+      // checking time components (for backwards compatibility)
+      final hasTime = widget.hasTime ??
+          (widget.initialDate!.hour != 0 || widget.initialDate!.minute != 0);
       if (hasTime) {
         _showTime = true;
         _selectedTime = TimeOfDay(
@@ -166,7 +173,8 @@ class _DatePickerDialogState extends State<_DatePickerDialog> {
 
   void _showTimeWheelPicker() {
     final colors = context.flowColors;
-    var tempTime = _selectedTime ?? const TimeOfDay(hour: 9, minute: 0);
+    // Default to current time instead of 9:00 AM
+    var tempTime = _selectedTime ?? TimeOfDay.now();
 
     showModalBottomSheet(
       context: context,
@@ -402,8 +410,8 @@ class _DatePickerDialogState extends State<_DatePickerDialog> {
                         setState(() {
                           _showTime = value;
                           if (value) {
-                            _selectedTime ??=
-                                const TimeOfDay(hour: 9, minute: 0);
+                            // Default to current time instead of 9:00 AM
+                            _selectedTime ??= TimeOfDay.now();
                           }
                         });
                       },
