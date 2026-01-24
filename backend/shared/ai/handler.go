@@ -1206,8 +1206,11 @@ Return ONLY a JSON object:
 
 STRICT RULES:
 - A duplicate means THE SAME TASK written with different words
-- MUST involve the same people/entities AND the same action/goal
-- "Inform Alice about X" and "Notify Alice about X" = DUPLICATE (same person, same action)
+- MUST involve the same people/entities AND the same action/goal AND the same subject/topic
+- Different project names = DIFFERENT tasks (e.g., "project IPP" vs "project Prep" = NOT duplicate)
+- Different topics/subjects = DIFFERENT tasks even with same person
+- "Email Jane about project IPP" vs "Text Jane about project Prep" = NOT duplicate (different projects)
+- "Inform Alice about X" and "Notify Alice about X" = DUPLICATE (same person, same action, same topic)
 - "Cook beef" and "Tell Alice about onboarding" = NOT DUPLICATE (completely different)
 - Return EMPTY duplicates array [] if no true duplicates exist
 - Copy the UUID exactly from the [brackets] - do not make up UUIDs`,

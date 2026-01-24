@@ -460,6 +460,7 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
             onClose: widget.onClose,
             localDueDate: _localDueDate,
             onDateChanged: (date) => setState(() => _localDueDate = date),
+            isBottomSheet: widget.isBottomSheet,
           ),
         ],
       ),
@@ -945,12 +946,14 @@ class _AIToolbar extends ConsumerStatefulWidget {
   final VoidCallback onClose;
   final DateTime? localDueDate;
   final ValueChanged<DateTime?> onDateChanged;
+  final bool isBottomSheet;
 
   const _AIToolbar({
     required this.task,
     required this.onClose,
     required this.localDueDate,
     required this.onDateChanged,
+    this.isBottomSheet = false,
   });
 
   @override
@@ -1311,6 +1314,10 @@ class _AIToolbarState extends ConsumerState<_AIToolbar> {
     final task = ref.watch(selectedTaskProvider) ?? widget.task;
     // Watch online status for AI buttons
     final isOnline = ref.watch(isOnlineProvider);
+    // Get keyboard height for bottom sheet padding
+    final keyboardHeight = widget.isBottomSheet
+        ? MediaQuery.of(context).viewInsets.bottom
+        : 0.0;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -1497,6 +1504,10 @@ class _AIToolbarState extends ConsumerState<_AIToolbar> {
             ],
           ),
         ),
+
+        // Keyboard padding for bottom sheet
+        if (keyboardHeight > 0)
+          SizedBox(height: keyboardHeight),
       ],
     );
   }

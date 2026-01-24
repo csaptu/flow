@@ -283,17 +283,6 @@ class _ExpandableTaskTileState extends ConsumerState<ExpandableTaskTile>
                   ),
                 ),
 
-              // Entity indicator (subtle, similar to subtask indicator) - only for valid types
-              if (task.entities.any((e) => const {'person', 'location', 'place', 'organization'}.contains(e.type)) && !isCompleted)
-                Padding(
-                  padding: const EdgeInsets.only(left: 8),
-                  child: Icon(
-                    Icons.label_outline,
-                    size: 14,
-                    color: colors.textTertiary.withOpacity(0.7),
-                  ),
-                ),
-
               // Date on the right
               if (task.dueAt != null)
                 Padding(
@@ -451,7 +440,9 @@ class _ExpandableTaskTileState extends ConsumerState<ExpandableTaskTile>
   }
 
   String _getDescriptionPreview(String description) {
-    final cleaned = removeHashtags(description).trim();
+    // Remove hashtags and image tags [img1], [img2], etc.
+    var cleaned = removeHashtags(description).trim();
+    cleaned = cleaned.replaceAll(RegExp(r'\[img\d+\]'), '').trim();
     if (cleaned.isEmpty) return '';
     final lines = cleaned.split('\n').take(2).join(' ').trim();
     if (lines.length > 120) {

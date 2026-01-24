@@ -935,16 +935,6 @@ class _EditUserDialogState extends ConsumerState<_EditUserDialog> {
     });
   }
 
-  void _updateStartFromExpiry() {
-    if (_expiresAt == null || _selectedPlanId == null) return;
-    setState(() {
-      if (_billingPeriod == 'yearly') {
-        _startsAt = DateTime(_expiresAt!.year - 1, _expiresAt!.month, _expiresAt!.day);
-      } else {
-        _startsAt = DateTime(_expiresAt!.year, _expiresAt!.month - 1, _expiresAt!.day);
-      }
-    });
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -1164,40 +1154,33 @@ class _EditUserDialogState extends ConsumerState<_EditUserDialog> {
                 ),
               ),
 
-              // Expiration date
+              // Expiration date (auto-calculated, read-only)
               const SizedBox(height: 16),
               Text(
-                'Expires',
+                'Expires (auto-calculated)',
                 style: TextStyle(color: colors.textSecondary, fontSize: 12, fontWeight: FontWeight.w500),
               ),
               const SizedBox(height: 6),
-              InkWell(
-                onTap: _selectExpirationDate,
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    border: Border.all(color: colors.border),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.calendar_today, size: 16, color: colors.textSecondary),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          _expiresAt != null
-                              ? DateFormat('MMM d, yyyy').format(_expiresAt!)
-                              : 'No expiration',
-                          style: TextStyle(color: colors.textPrimary, fontSize: 14),
-                        ),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: colors.background,
+                  border: Border.all(color: colors.border),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.calendar_today, size: 16, color: colors.textTertiary),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _expiresAt != null
+                            ? DateFormat('MMM d, yyyy').format(_expiresAt!)
+                            : 'Select a plan first',
+                        style: TextStyle(color: colors.textSecondary, fontSize: 14),
                       ),
-                      if (_expiresAt != null)
-                        GestureDetector(
-                          onTap: () => setState(() => _expiresAt = null),
-                          child: Icon(Icons.clear, size: 16, color: colors.textTertiary),
-                        ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -1233,18 +1216,6 @@ class _EditUserDialogState extends ConsumerState<_EditUserDialog> {
     }
   }
 
-  Future<void> _selectExpirationDate() async {
-    final date = await showDatePicker(
-      context: context,
-      initialDate: _expiresAt ?? DateTime.now().add(const Duration(days: 30)),
-      firstDate: DateTime.now(),
-      lastDate: DateTime.now().add(const Duration(days: 365 * 5)),
-    );
-    if (date != null) {
-      setState(() => _expiresAt = date);
-      _updateStartFromExpiry(); // Auto-update start
-    }
-  }
 
   Future<void> _saveChanges() async {
     setState(() {
