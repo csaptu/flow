@@ -236,8 +236,9 @@ class _DatePickerDialogState extends State<_DatePickerDialog> {
     final colors = context.flowColors;
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
+    final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
 
-    return Dialog(
+    Widget dialog = Dialog(
       backgroundColor: colors.surface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       insetPadding: const EdgeInsets.all(24),
@@ -476,6 +477,17 @@ class _DatePickerDialogState extends State<_DatePickerDialog> {
         ),
       ),
     );
+
+    // This dialog has no text input, so center on full screen (ignore keyboard)
+    if (keyboardHeight > 0) {
+      return MediaQuery.removeViewInsets(
+        context: context,
+        removeBottom: true,
+        child: dialog,
+      );
+    }
+
+    return dialog;
   }
 
   Widget _buildCalendarGrid(FlowColorScheme colors, DateTime today) {

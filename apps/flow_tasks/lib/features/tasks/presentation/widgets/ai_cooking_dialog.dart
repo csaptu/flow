@@ -214,8 +214,9 @@ class _AICookingDialogState extends State<AICookingDialog>
   @override
   Widget build(BuildContext context) {
     final colors = context.flowColors;
+    final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
 
-    return Dialog(
+    Widget dialog = Dialog(
       backgroundColor: colors.surface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: ConstrainedBox(
@@ -234,6 +235,17 @@ class _AICookingDialogState extends State<AICookingDialog>
         ),
       ),
     );
+
+    // This dialog has no text input, so center on full screen (ignore keyboard)
+    if (keyboardHeight > 0) {
+      return MediaQuery.removeViewInsets(
+        context: context,
+        removeBottom: true,
+        child: dialog,
+      );
+    }
+
+    return dialog;
   }
 
   Widget _buildProcessingState(FlowColorScheme colors) {

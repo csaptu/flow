@@ -196,22 +196,47 @@ class _AttachmentPickerDialogState extends State<_AttachmentPickerDialog>
   @override
   Widget build(BuildContext context) {
     final colors = context.flowColors;
+    final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
+    final hasKeyboard = keyboardHeight > 0;
 
+    // For dialogs without text input, center on full screen (ignore keyboard)
+    // For dialogs with text input, center on visible area (above keyboard)
+    Widget dialogContent = AnimatedSize(
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOutCubic,
+      child: _isLoading
+          ? _buildLoading(colors)
+          : _showLinkInput
+              ? _buildLinkInput(colors)
+              : _buildOptions(colors),
+    );
+
+    // When showing options (no text input) and keyboard is visible,
+    // remove view insets so dialog centers on full screen
+    if (!_showLinkInput && hasKeyboard) {
+      return FadeTransition(
+        opacity: _fadeAnimation,
+        child: MediaQuery.removeViewInsets(
+          context: context,
+          removeBottom: true,
+          child: Dialog(
+            backgroundColor: colors.surface,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            insetPadding: const EdgeInsets.all(24),
+            child: dialogContent,
+          ),
+        ),
+      );
+    }
+
+    // Default behavior for link input or when no keyboard
     return FadeTransition(
       opacity: _fadeAnimation,
       child: Dialog(
         backgroundColor: colors.surface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         insetPadding: const EdgeInsets.all(24),
-        child: AnimatedSize(
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOutCubic,
-          child: _isLoading
-              ? _buildLoading(colors)
-              : _showLinkInput
-                  ? _buildLinkInput(colors)
-                  : _buildOptions(colors),
-        ),
+        child: dialogContent,
       ),
     );
   }

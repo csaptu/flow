@@ -924,9 +924,10 @@ class _MarkdownDescriptionFieldState extends ConsumerState<MarkdownDescriptionFi
     }
 
     // Rendered markdown view (when blurred with content)
+    // Use double-tap to enter edit mode, allowing single tap for text selection
     return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTapUp: (details) {
+      behavior: HitTestBehavior.translucent,
+      onDoubleTapDown: (details) {
         final tapPosition = _estimateCursorPosition(context, details.localPosition);
         setState(() => _isEditing = true);
         WidgetsBinding.instance.addPostFrameCallback((_) {

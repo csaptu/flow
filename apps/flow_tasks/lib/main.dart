@@ -36,13 +36,15 @@ class FlowTasksApp extends ConsumerWidget {
     final router = ref.watch(routerProvider);
     final themeMode = ref.watch(themeModeProvider);
 
-    return MaterialApp.router(
-      title: 'Flow Tasks',
-      debugShowCheckedModeBanner: false,
-      theme: FlowTheme.light(),
-      darkTheme: FlowTheme.dark(),
-      themeMode: themeMode,
-      routerConfig: router,
+    return SelectionArea(
+      child: MaterialApp.router(
+        title: 'Flow Tasks',
+        debugShowCheckedModeBanner: false,
+        theme: FlowTheme.light(),
+        darkTheme: FlowTheme.dark(),
+        themeMode: themeMode,
+        routerConfig: router,
+      ),
     );
   }
 }

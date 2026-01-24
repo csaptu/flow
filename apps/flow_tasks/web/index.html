@@ -36,6 +36,26 @@
 
   <title>Flow Tasks</title>
   <link rel="manifest" href="manifest.json">
+
+  <!-- Fix text selection on mobile Safari -->
+  <style>
+    /* Enable text selection globally */
+    * {
+      -webkit-user-select: text;
+      user-select: text;
+    }
+
+    /* Enable context menu (copy/paste) on long press */
+    body {
+      -webkit-touch-callout: default;
+    }
+
+    /* Ensure inputs work properly */
+    input, textarea {
+      -webkit-user-select: auto;
+      user-select: auto;
+    }
+  </style>
 </head>
 <body>
   <!-- Google Identity Services -->
