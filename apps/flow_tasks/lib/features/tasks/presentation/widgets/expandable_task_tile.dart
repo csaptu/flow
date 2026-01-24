@@ -223,81 +223,80 @@ class _ExpandableTaskTileState extends ConsumerState<ExpandableTaskTile>
 
   /// Build the main tile content (used in draggable and non-draggable states)
   Widget _buildTileContent(FlowColorScheme colors, Task task, bool isCompleted, bool isSelected) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: () {
-          ref.read(isNewlyCreatedTaskProvider.notifier).state = false;
-          ref.read(selectedTaskIdProvider.notifier).state = task.id;
-        },
-        borderRadius: BorderRadius.circular(FlowSpacing.radiusSm),
-        child: Padding(
-          padding: FlowSpacing.listItemPadding,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              // Drag handle (only visible when dragging)
-              if (_isDragging) ...[
-                Icon(
-                  Icons.drag_indicator,
-                  size: 18,
-                  color: colors.textTertiary,
-                ),
-                const SizedBox(width: 4),
-              ],
-
-              // Checkbox
-              _BearCheckbox(
-                isChecked: isCompleted || _isAnimatingCompletion,
-                onTap: isCompleted ? widget.onUncomplete : _handleComplete,
-                priority: task.priority.value,
+    // Use GestureDetector instead of InkWell for precise mobile touch handling
+    // The selection highlight is handled by the parent Container, not InkWell ripple
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque, // Ensures tap is captured within bounds
+      onTap: () {
+        ref.read(isNewlyCreatedTaskProvider.notifier).state = false;
+        ref.read(selectedTaskIdProvider.notifier).state = task.id;
+      },
+      child: Padding(
+        padding: FlowSpacing.listItemPadding,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            // Drag handle (only visible when dragging)
+            if (_isDragging) ...[
+              Icon(
+                Icons.drag_indicator,
+                size: 18,
+                color: colors.textTertiary,
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 4),
+            ],
 
-              // Content with animated strikethrough
-              Expanded(
-                child: _buildContent(colors, isCompleted),
-              ),
+            // Checkbox
+            _BearCheckbox(
+              isChecked: isCompleted || _isAnimatingCompletion,
+              onTap: isCompleted ? widget.onUncomplete : _handleComplete,
+              priority: task.priority.value,
+            ),
+            const SizedBox(width: 12),
 
-              // Subtask count indicator
-              if (task.childrenCount > 0)
-                Padding(
-                  padding: const EdgeInsets.only(left: 8),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.checklist_rounded,
-                        size: 14,
+            // Content with animated strikethrough
+            Expanded(
+              child: _buildContent(colors, isCompleted),
+            ),
+
+            // Subtask count indicator
+            if (task.childrenCount > 0)
+              Padding(
+                padding: const EdgeInsets.only(left: 8),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.checklist_rounded,
+                      size: 14,
+                      color: colors.textTertiary,
+                    ),
+                    const SizedBox(width: 2),
+                    Text(
+                      '${task.childrenCount}',
+                      style: TextStyle(
+                        fontSize: 12,
                         color: colors.textTertiary,
                       ),
-                      const SizedBox(width: 2),
-                      Text(
-                        '${task.childrenCount}',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: colors.textTertiary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-
-              // Date on the right
-              if (task.dueAt != null)
-                Padding(
-                  padding: const EdgeInsets.only(left: 8),
-                  child: Text(
-                    _formatDate(task.dueAt!, task.hasDueTime),
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: task.isOverdue ? FontWeight.w700 : (_isToday(task.dueAt!) ? FontWeight.w600 : FontWeight.w400),
-                      color: task.isOverdue ? colors.error : colors.textTertiary,
                     ),
+                  ],
+                ),
+              ),
+
+            // Date on the right
+            if (task.dueAt != null)
+              Padding(
+                padding: const EdgeInsets.only(left: 8),
+                child: Text(
+                  _formatDate(task.dueAt!, task.hasDueTime),
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: task.isOverdue ? FontWeight.w700 : (_isToday(task.dueAt!) ? FontWeight.w600 : FontWeight.w400),
+                    color: task.isOverdue ? colors.error : colors.textTertiary,
                   ),
                 ),
-            ],
-          ),
+              ),
+          ],
         ),
       ),
     );
