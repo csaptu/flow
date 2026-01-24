@@ -37,7 +37,7 @@
   <title>Flow Tasks</title>
   <link rel="manifest" href="manifest.json">
 
-  <!-- Fix text selection on mobile Safari -->
+  <!-- Fix text selection and scrolling on mobile Safari -->
   <style>
     /* Enable text selection globally */
     * {
@@ -54,6 +54,23 @@
     input, textarea {
       -webkit-user-select: auto;
       user-select: auto;
+    }
+
+    /* Smooth scrolling for mobile web */
+    html, body {
+      scroll-behavior: smooth;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior: contain;
+    }
+
+    /* Prevent pull-to-refresh interfering with scroll */
+    body {
+      overscroll-behavior-y: contain;
+    }
+
+    /* Flutter canvas scrolling optimization */
+    flt-glass-pane {
+      -webkit-overflow-scrolling: touch;
     }
   </style>
 </head>

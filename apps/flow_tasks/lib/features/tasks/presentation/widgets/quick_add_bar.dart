@@ -124,17 +124,10 @@ class _QuickAddBarState extends ConsumerState<QuickAddBar> {
                 filled: false,
               ),
               onSubmitted: _handleSubmit,
+              onChanged: (_) => setState(() {}), // Rebuild to show/hide send button
             ),
           ),
-          if (_controller.text.isNotEmpty && !_isSubmitting)
-            IconButton(
-              icon: Icon(
-                Icons.send_rounded,
-                color: colors.primary,
-                size: 20,
-              ),
-              onPressed: () => _handleSubmit(_controller.text),
-            ),
+          // Send button - always on the right, visible when there's text
           if (_isSubmitting)
             const Padding(
               padding: EdgeInsets.all(12),
@@ -143,8 +136,18 @@ class _QuickAddBarState extends ConsumerState<QuickAddBar> {
                 height: 20,
                 child: CircularProgressIndicator(strokeWidth: 2),
               ),
-            ),
-          const SizedBox(width: 8),
+            )
+          else if (_controller.text.isNotEmpty)
+            IconButton(
+              icon: Icon(
+                Icons.arrow_forward_rounded,
+                color: colors.primary,
+                size: 22,
+              ),
+              onPressed: () => _handleSubmit(_controller.text),
+            )
+          else
+            const SizedBox(width: 8), // Padding when no button
         ],
       ),
     );

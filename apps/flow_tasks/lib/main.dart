@@ -1,8 +1,29 @@
+import 'dart:ui' show PointerDeviceKind;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flow_tasks/core/router/app_router.dart';
 import 'package:flow_tasks/core/theme/flow_theme.dart';
 import 'package:flow_tasks/core/providers/providers.dart';
+
+/// Custom scroll behavior for smoother scrolling on web
+class SmoothScrollBehavior extends MaterialScrollBehavior {
+  @override
+  ScrollPhysics getScrollPhysics(BuildContext context) {
+    // Use bouncing physics for smoother feel on all platforms
+    return const BouncingScrollPhysics(
+      parent: AlwaysScrollableScrollPhysics(),
+    );
+  }
+
+  @override
+  Set<PointerDeviceKind> get dragDevices => {
+    PointerDeviceKind.touch,
+    PointerDeviceKind.mouse,
+    PointerDeviceKind.stylus,
+    PointerDeviceKind.trackpad,
+  };
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -44,6 +65,8 @@ class FlowTasksApp extends ConsumerWidget {
         darkTheme: FlowTheme.dark(),
         themeMode: themeMode,
         routerConfig: router,
+        // Use smooth scrolling on web for better mobile experience
+        scrollBehavior: kIsWeb ? SmoothScrollBehavior() : null,
       ),
     );
   }

@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -13,16 +14,19 @@ import 'package:pasteboard/pasteboard.dart';
 /// - Markers (**, *) shown in subtle gray
 /// - Content styled appropriately (bold, italic)
 /// - Hashtags styled in accent color
+/// - URLs styled as clickable links
 class LiveMarkdownController extends TextEditingController {
   final Color textColor;
   final Color markerColor;
   final Color hashtagColor;
+  final Color urlColor;
 
   LiveMarkdownController({
     String? text,
     required this.textColor,
     required this.markerColor,
     required this.hashtagColor,
+    required this.urlColor,
   }) : super(text: text);
 
   @override
@@ -105,6 +109,18 @@ class LiveMarkdownController extends TextEditingController {
             style: baseStyle.copyWith(
               color: markerColor,
               backgroundColor: markerColor.withAlpha(30),
+            ),
+          ));
+          break;
+
+        case _PatternType.url:
+          // URL styled as clickable link
+          spans.add(TextSpan(
+            text: pattern.fullMatch,
+            style: baseStyle.copyWith(
+              color: urlColor,
+              decoration: TextDecoration.underline,
+              decorationColor: urlColor,
             ),
           ));
           break;
@@ -197,13 +213,34 @@ class LiveMarkdownController extends TextEditingController {
       }
     }
 
+    // URLs: http://, https://, or www.
+    final urlRegex = RegExp(
+      r'(?:https?://|www\.)[^\s\[\]<>"\x00-\x1f]+',
+      caseSensitive: false,
+    );
+    for (final match in urlRegex.allMatches(text)) {
+      // Check no overlap
+      final overlaps = patterns.any((p) =>
+          (match.start >= p.start && match.start < p.end) ||
+          (match.end > p.start && match.end <= p.end));
+      if (!overlaps) {
+        patterns.add(_MarkdownPattern(
+          type: _PatternType.url,
+          start: match.start,
+          end: match.end,
+          content: match.group(0)!,
+          fullMatch: match.group(0)!,
+        ));
+      }
+    }
+
     // Sort by start position
     patterns.sort((a, b) => a.start.compareTo(b.start));
     return patterns;
   }
 }
 
-enum _PatternType { bold, italic, hashtag, image }
+enum _PatternType { bold, italic, hashtag, image, url }
 
 /// For matching in rendered body
 enum _MatchType { hashtag, image }
@@ -246,6 +283,9 @@ typedef ImagePasteCallback = Future<int?> Function(Uint8List imageBytes, String 
 /// Callback to get image URL by index (1-based)
 typedef ImageUrlResolver = String? Function(int imageIndex);
 
+/// Callback when a URL is detected in the description
+typedef UrlDetectedCallback = void Function(String url);
+
 /// Bear-style markdown description field with live rendering
 class MarkdownDescriptionField extends ConsumerStatefulWidget {
   final String? initialValue;
@@ -257,6 +297,8 @@ class MarkdownDescriptionField extends ConsumerStatefulWidget {
   final ImagePasteCallback? onImagePaste;
   /// Called to resolve [img-{id}] to actual image URL
   final ImageUrlResolver? imageUrlResolver;
+  /// Called when a new URL is detected (typed or pasted)
+  final UrlDetectedCallback? onUrlDetected;
 
   const MarkdownDescriptionField({
     super.key,
@@ -267,6 +309,7 @@ class MarkdownDescriptionField extends ConsumerStatefulWidget {
     this.readOnly = false,
     this.onImagePaste,
     this.imageUrlResolver,
+    this.onUrlDetected,
   });
 
   @override
@@ -295,6 +338,9 @@ class _MarkdownDescriptionFieldState extends ConsumerState<MarkdownDescriptionFi
   bool _isUploadingImage = false;
   String? _uploadingPlaceholder; // Temporary placeholder while uploading
 
+  // URL detection state - track URLs we've already reported
+  Set<String> _knownUrls = {};
+
   @override
   void initState() {
     super.initState();
@@ -312,9 +358,11 @@ class _MarkdownDescriptionFieldState extends ConsumerState<MarkdownDescriptionFi
         textColor: colors.textSecondary,
         markerColor: colors.textTertiary.withAlpha(120),
         hashtagColor: colors.primary,
+        urlColor: Colors.blue,
       );
       _controller!.addListener(_onSelectionChanged);
       _controller!.addListener(_onTextChangedForHashtag);
+      _controller!.addListener(_onTextChangedForUrls);
     }
   }
 
@@ -340,10 +388,41 @@ class _MarkdownDescriptionFieldState extends ConsumerState<MarkdownDescriptionFi
     _focusNode.removeListener(_onFocusChanged);
     _controller?.removeListener(_onSelectionChanged);
     _controller?.removeListener(_onTextChangedForHashtag);
+    _controller?.removeListener(_onTextChangedForUrls);
     _removeOverlay();
     _focusNode.dispose();
     _controller?.dispose();
     super.dispose();
+  }
+
+  // URL detection - notify when new URLs are typed/pasted
+  void _onTextChangedForUrls() {
+    if (widget.onUrlDetected == null) return;
+
+    final text = _controller!.text;
+    final urlRegex = RegExp(
+      r'(?:https?://|www\.)[^\s\[\]<>"\x00-\x1f]+',
+      caseSensitive: false,
+    );
+
+    final currentUrls = <String>{};
+    for (final match in urlRegex.allMatches(text)) {
+      var url = match.group(0)!;
+      // Normalize www. URLs to https://
+      if (url.startsWith('www.')) {
+        url = 'https://$url';
+      }
+      currentUrls.add(url);
+    }
+
+    // Find new URLs (not seen before)
+    for (final url in currentUrls) {
+      if (!_knownUrls.contains(url)) {
+        widget.onUrlDetected!(url);
+      }
+    }
+
+    _knownUrls = currentUrls;
   }
 
   void _onFocusChanged() {
@@ -1402,34 +1481,86 @@ class _BearMarkdownBody extends StatelessWidget {
 
   List<InlineSpan> _parseTextSegment(String text) {
     final spans = <InlineSpan>[];
+
+    // Combined regex for bold/italic and URLs
     final boldItalicRegex = RegExp(r'\*\*\*(.+?)\*\*\*|\*\*(.+?)\*\*|\*(.+?)\*|_(.+?)_');
-    var lastEnd = 0;
+    final urlRegex = RegExp(r'(?:https?://|www\.)[^\s\[\]<>"\x00-\x1f]+', caseSensitive: false);
+
+    // Find all matches and sort by position
+    final allMatches = <({int start, int end, String type, String content})>[];
 
     for (final match in boldItalicRegex.allMatches(text)) {
+      String type;
+      String content;
+      if (match.group(1) != null) {
+        type = 'bolditalic';
+        content = match.group(1)!;
+      } else if (match.group(2) != null) {
+        type = 'bold';
+        content = match.group(2)!;
+      } else if (match.group(3) != null) {
+        type = 'italic';
+        content = match.group(3)!;
+      } else {
+        type = 'italic';
+        content = match.group(4)!;
+      }
+      allMatches.add((start: match.start, end: match.end, type: type, content: content));
+    }
+
+    for (final match in urlRegex.allMatches(text)) {
+      // Check no overlap with existing matches
+      final overlaps = allMatches.any((m) =>
+          (match.start >= m.start && match.start < m.end) ||
+          (match.end > m.start && match.end <= m.end));
+      if (!overlaps) {
+        allMatches.add((start: match.start, end: match.end, type: 'url', content: match.group(0)!));
+      }
+    }
+
+    allMatches.sort((a, b) => a.start.compareTo(b.start));
+
+    var lastEnd = 0;
+    for (final match in allMatches) {
       if (match.start > lastEnd) {
         spans.add(TextSpan(text: text.substring(lastEnd, match.start)));
       }
 
-      if (match.group(1) != null) {
-        spans.add(TextSpan(
-          text: match.group(1),
-          style: const TextStyle(fontWeight: FontWeight.bold, fontStyle: FontStyle.italic),
-        ));
-      } else if (match.group(2) != null) {
-        spans.add(TextSpan(
-          text: match.group(2),
-          style: const TextStyle(fontWeight: FontWeight.bold),
-        ));
-      } else if (match.group(3) != null) {
-        spans.add(TextSpan(
-          text: match.group(3),
-          style: const TextStyle(fontStyle: FontStyle.italic),
-        ));
-      } else if (match.group(4) != null) {
-        spans.add(TextSpan(
-          text: match.group(4),
-          style: const TextStyle(fontStyle: FontStyle.italic),
-        ));
+      switch (match.type) {
+        case 'bolditalic':
+          spans.add(TextSpan(
+            text: match.content,
+            style: const TextStyle(fontWeight: FontWeight.bold, fontStyle: FontStyle.italic),
+          ));
+          break;
+        case 'bold':
+          spans.add(TextSpan(
+            text: match.content,
+            style: const TextStyle(fontWeight: FontWeight.bold),
+          ));
+          break;
+        case 'italic':
+          spans.add(TextSpan(
+            text: match.content,
+            style: const TextStyle(fontStyle: FontStyle.italic),
+          ));
+          break;
+        case 'url':
+          var url = match.content;
+          // Normalize www. URLs for launching
+          final launchUrl = url.startsWith('www.') ? 'https://$url' : url;
+          spans.add(TextSpan(
+            text: url,
+            style: const TextStyle(
+              color: Colors.blue,
+              decoration: TextDecoration.underline,
+              decorationColor: Colors.blue,
+            ),
+            recognizer: TapGestureRecognizer()..onTap = () {
+              launchUrl_(Uri.parse(launchUrl));
+            },
+          ));
+          break;
       }
 
       lastEnd = match.end;
@@ -1444,6 +1575,10 @@ class _BearMarkdownBody extends StatelessWidget {
     }
 
     return spans;
+  }
+
+  void launchUrl_(Uri uri) {
+    launchUrl(uri);
   }
 
   MarkdownStyleSheet _buildStyleSheet(BuildContext context) {

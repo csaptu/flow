@@ -359,7 +359,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     const SizedBox(height: FlowSpacing.xxl),
                     // Version info
                     Text(
-                      'v2026-01-24 16:00 GMT+7',
+                      'v2026-01-24 15:22 GMT+7',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                             color: FlowColors.lightTextSecondary.withOpacity(0.5),
                           ),
@@ -367,7 +367,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Subscription auto-expiry; Mobile: toolbar above keyboard, dialogs centered',
+                      'Clickable URL links; Smooth mobile scrolling; AI indicators improved',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                             color: FlowColors.lightTextSecondary.withOpacity(0.4),
                             fontSize: 10,

@@ -110,6 +110,28 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
     );
   }
 
+  /// Handle URL detected in description - add as link attachment if not already added
+  void _handleUrlDetected(String url) async {
+    // Check if this URL is already an attachment
+    final attachmentsAsync = ref.read(taskAttachmentsProvider(widget.task.id));
+    final existingUrls = attachmentsAsync.whenOrNull(
+      data: (attachments) => attachments
+          .where((a) => a.type == 'link')
+          .map((a) => a.url)
+          .toSet(),
+    ) ?? <String>{};
+
+    if (existingUrls.contains(url)) return;
+
+    try {
+      final attachActions = ref.read(attachmentActionsProvider(widget.task.id));
+      await attachActions.addLink(url);
+    } catch (e) {
+      // Silently fail - don't interrupt user's typing
+      debugPrint('Failed to auto-add URL attachment: $e');
+    }
+  }
+
   /// Handle pasted image - upload as attachment and return the 1-based image index
   Future<int?> _handleImagePaste(Uint8List imageBytes, String mimeType) async {
     try {
@@ -252,23 +274,10 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
                     const SizedBox(height: 16),
                   ],
 
-                  // Title with inline clean/revert button and cleaned indicator
+                  // Title with inline clean/revert button
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Subtle cleaned indicator
-                      if (task.titleWasCleaned)
-                        Padding(
-                          padding: const EdgeInsets.only(right: 6, top: 6),
-                          child: Tooltip(
-                            message: 'AI cleaned',
-                            child: Icon(
-                              Icons.brush_rounded,
-                              size: 12,
-                              color: colors.textTertiary.withAlpha(120),
-                            ),
-                          ),
-                        ),
                       Expanded(
                         child: TextField(
                           controller: _titleController,
@@ -291,22 +300,42 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
                           onTapOutside: (_) => _updateTitle(),
                         ),
                       ),
-                      // Inline clean/revert title button
+                      // Right side: AI cleaned indicator with sparkles + revert, OR clean button
                       if (task.titleWasCleaned)
-                        Tooltip(
-                          message: 'Restore your input',
-                          child: InkWell(
-                            onTap: _revertTitle,
-                            borderRadius: BorderRadius.circular(4),
-                            child: Padding(
-                              padding: const EdgeInsets.only(left: 8, top: 4),
-                              child: Icon(
-                                Icons.undo_rounded,
-                                size: 16,
-                                color: colors.textTertiary,
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            // Sparkle indicator showing AI magic happened
+                            Tooltip(
+                              message: 'AI improved',
+                              child: Padding(
+                                padding: const EdgeInsets.only(left: 8, top: 4),
+                                child: Text(
+                                  '✨',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    color: colors.textTertiary,
+                                  ),
+                                ),
                               ),
                             ),
-                          ),
+                            // Revert button
+                            Tooltip(
+                              message: 'Restore original',
+                              child: InkWell(
+                                onTap: _revertTitle,
+                                borderRadius: BorderRadius.circular(4),
+                                child: Padding(
+                                  padding: const EdgeInsets.only(left: 4, top: 4),
+                                  child: Icon(
+                                    Icons.undo_rounded,
+                                    size: 16,
+                                    color: colors.textTertiary,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         )
                       else
                         InkWell(
@@ -315,7 +344,7 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
                           child: Padding(
                             padding: const EdgeInsets.only(left: 8, top: 4),
                             child: Icon(
-                              Icons.brush_rounded,
+                              Icons.auto_fix_high_rounded,
                               size: 16,
                               color: colors.textTertiary,
                             ),
@@ -393,6 +422,7 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
                           onEditingComplete: _updateDescription,
                           onImagePaste: (imageBytes, mimeType) => _handleImagePaste(imageBytes, mimeType),
                           imageUrlResolver: (attachmentId) => _resolveImageUrl(attachmentId),
+                          onUrlDetected: _handleUrlDetected,
                         ),
                       ),
                       // Inline clean/revert description button

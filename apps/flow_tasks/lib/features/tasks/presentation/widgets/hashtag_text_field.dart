@@ -168,6 +168,7 @@ class _HashtagTextFieldState extends ConsumerState<HashtagTextField> {
         focusNode: _focusNode,
         autofocus: widget.autofocus,
         maxLines: widget.maxLines,
+        textInputAction: TextInputAction.done,
         decoration: widget.decoration ??
             InputDecoration(
               hintText: widget.hintText,
