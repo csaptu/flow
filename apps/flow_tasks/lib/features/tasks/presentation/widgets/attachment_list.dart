@@ -64,7 +64,7 @@ class AttachmentList extends StatelessWidget {
 }
 
 /// Grid of image thumbnails - 4 per row
-class _ImageGrid extends StatelessWidget {
+class _ImageGrid extends StatefulWidget {
   final List<Attachment> images;
   final ValueChanged<Attachment>? onDelete;
 
@@ -73,8 +73,33 @@ class _ImageGrid extends StatelessWidget {
     this.onDelete,
   });
 
+  @override
+  State<_ImageGrid> createState() => _ImageGridState();
+}
+
+class _ImageGridState extends State<_ImageGrid> {
+  // Track which image is pending delete confirmation
+  String? _pendingDeleteId;
+
   // Thumbnail size: smaller to fit 4 per row with spacing
   static const double _thumbnailSize = 56.0;
+
+  void _onDeleteTap(Attachment image) {
+    if (_pendingDeleteId == image.id) {
+      // Second tap - confirm delete
+      widget.onDelete?.call(image);
+      setState(() => _pendingDeleteId = null);
+    } else {
+      // First tap - show confirmation
+      setState(() => _pendingDeleteId = image.id);
+      // Auto-reset after 3 seconds
+      Future.delayed(const Duration(seconds: 3), () {
+        if (mounted && _pendingDeleteId == image.id) {
+          setState(() => _pendingDeleteId = null);
+        }
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -83,35 +108,57 @@ class _ImageGrid extends StatelessWidget {
     return Wrap(
       spacing: 8,
       runSpacing: 8,
-      children: images.map((image) {
+      children: widget.images.map((image) {
+        final isPendingDelete = _pendingDeleteId == image.id;
         return GestureDetector(
-          onTap: () => _viewImage(context, image),
+          onTap: isPendingDelete ? null : () => _viewImage(context, image),
           child: Stack(
             children: [
               ClipRRect(
                 borderRadius: BorderRadius.circular(6),
                 child: _buildImageWidget(image, colors),
               ),
-              if (onDelete != null)
-                Positioned(
-                  top: 2,
-                  right: 2,
-                  child: GestureDetector(
-                    onTap: () => onDelete!(image),
-                    child: Container(
-                      padding: const EdgeInsets.all(2),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withOpacity(0.6),
-                        shape: BoxShape.circle,
+              // Delete confirmation overlay - covers entire thumbnail
+              if (widget.onDelete != null)
+                if (isPendingDelete)
+                  Positioned.fill(
+                    child: GestureDetector(
+                      onTap: () => _onDeleteTap(image),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.red.withAlpha(180),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: const Center(
+                          child: Icon(
+                            Icons.close_rounded,
+                            size: 28,
+                            color: Colors.white,
+                          ),
+                        ),
                       ),
-                      child: const Icon(
-                        Icons.close,
-                        size: 10,
-                        color: Colors.white,
+                    ),
+                  )
+                else
+                  Positioned(
+                    top: 2,
+                    right: 2,
+                    child: GestureDetector(
+                      onTap: () => _onDeleteTap(image),
+                      child: Container(
+                        padding: const EdgeInsets.all(2),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withAlpha(150),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.close,
+                          size: 10,
+                          color: Colors.white,
+                        ),
                       ),
                     ),
                   ),
-                ),
             ],
           ),
         );
@@ -278,8 +325,8 @@ class _ImageGrid extends StatelessWidget {
   }
 }
 
-/// Link attachment tile
-class _LinkTile extends StatelessWidget {
+/// Link attachment tile with two-tap delete confirmation
+class _LinkTile extends StatefulWidget {
   final Attachment attachment;
   final VoidCallback? onDelete;
   final bool compact;
@@ -291,31 +338,55 @@ class _LinkTile extends StatelessWidget {
   });
 
   @override
+  State<_LinkTile> createState() => _LinkTileState();
+}
+
+class _LinkTileState extends State<_LinkTile> {
+  bool _pendingDelete = false;
+
+  void _onDeleteTap() {
+    if (_pendingDelete) {
+      // Second tap - confirm delete
+      widget.onDelete?.call();
+      setState(() => _pendingDelete = false);
+    } else {
+      // First tap - show confirmation
+      setState(() => _pendingDelete = true);
+      // Auto-reset after 3 seconds
+      Future.delayed(const Duration(seconds: 3), () {
+        if (mounted && _pendingDelete) {
+          setState(() => _pendingDelete = false);
+        }
+      });
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final colors = context.flowColors;
-    final metadata = attachment.metadata;
-    final title = metadata['title'] as String? ?? attachment.name;
+    final metadata = widget.attachment.metadata;
+    final title = metadata['title'] as String? ?? widget.attachment.name;
     final favicon = metadata['favicon'] as String?;
-    final host = _extractHost(attachment.url);
+    final host = _extractHost(widget.attachment.url);
 
     return Padding(
-      padding: EdgeInsets.only(bottom: compact ? 4 : 8),
+      padding: EdgeInsets.only(bottom: widget.compact ? 4 : 8),
       child: InkWell(
-        onTap: () => _openUrl(attachment.url),
+        onTap: () => _openUrl(widget.attachment.url),
         borderRadius: BorderRadius.circular(8),
         child: Container(
           padding: EdgeInsets.symmetric(
-            horizontal: compact ? 8 : 12,
-            vertical: compact ? 6 : 8,
+            horizontal: widget.compact ? 8 : 12,
+            vertical: widget.compact ? 6 : 8,
           ),
           child: Row(
             children: [
               // Favicon or icon
               Container(
-                width: compact ? 24 : 32,
-                height: compact ? 24 : 32,
+                width: widget.compact ? 24 : 32,
+                height: widget.compact ? 24 : 32,
                 decoration: BoxDecoration(
-                  color: Colors.blue.withOpacity(0.1),
+                  color: Colors.blue.withAlpha(25),
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: favicon != null
@@ -326,18 +397,18 @@ class _LinkTile extends StatelessWidget {
                           fit: BoxFit.cover,
                           errorBuilder: (_, __, ___) => Icon(
                             Icons.link_rounded,
-                            size: compact ? 14 : 18,
+                            size: widget.compact ? 14 : 18,
                             color: Colors.blue,
                           ),
                         ),
                       )
                     : Icon(
                         Icons.link_rounded,
-                        size: compact ? 14 : 18,
+                        size: widget.compact ? 14 : 18,
                         color: Colors.blue,
                       ),
               ),
-              SizedBox(width: compact ? 8 : 12),
+              SizedBox(width: widget.compact ? 8 : 12),
               // Title and URL
               Expanded(
                 child: Column(
@@ -347,14 +418,14 @@ class _LinkTile extends StatelessWidget {
                     Text(
                       title,
                       style: TextStyle(
-                        fontSize: compact ? 13 : 14,
+                        fontSize: widget.compact ? 13 : 14,
                         fontWeight: FontWeight.w500,
                         color: colors.textPrimary,
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
-                    if (!compact) ...[
+                    if (!widget.compact) ...[
                       const SizedBox(height: 2),
                       Text(
                         host,
@@ -369,26 +440,31 @@ class _LinkTile extends StatelessWidget {
                   ],
                 ),
               ),
-              // Delete button
-              if (onDelete != null)
-                IconButton(
-                  icon: Icon(
-                    Icons.close,
-                    size: compact ? 16 : 18,
-                    color: colors.textTertiary,
-                  ),
-                  onPressed: onDelete,
-                  visualDensity: VisualDensity.compact,
-                  padding: EdgeInsets.zero,
-                  constraints: BoxConstraints(
-                    minWidth: compact ? 24 : 32,
-                    minHeight: compact ? 24 : 32,
+              // Delete button with two-tap confirmation
+              if (widget.onDelete != null)
+                GestureDetector(
+                  onTap: _onDeleteTap,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 150),
+                    padding: EdgeInsets.symmetric(
+                      horizontal: _pendingDelete ? 12 : 6,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: _pendingDelete ? Colors.red : Colors.transparent,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Icon(
+                      Icons.close_rounded,
+                      size: _pendingDelete ? 18 : (widget.compact ? 16 : 18),
+                      color: _pendingDelete ? Colors.white : colors.textTertiary,
+                    ),
                   ),
                 )
               else
                 Icon(
                   Icons.open_in_new_rounded,
-                  size: compact ? 14 : 16,
+                  size: widget.compact ? 14 : 16,
                   color: colors.textTertiary,
                 ),
             ],
@@ -420,8 +496,8 @@ class _LinkTile extends StatelessWidget {
   }
 }
 
-/// Document attachment tile
-class _DocumentTile extends StatelessWidget {
+/// Document attachment tile with two-tap delete confirmation
+class _DocumentTile extends StatefulWidget {
   final Attachment attachment;
   final VoidCallback? onDelete;
   final bool compact;
@@ -433,38 +509,62 @@ class _DocumentTile extends StatelessWidget {
   });
 
   @override
+  State<_DocumentTile> createState() => _DocumentTileState();
+}
+
+class _DocumentTileState extends State<_DocumentTile> {
+  bool _pendingDelete = false;
+
+  void _onDeleteTap() {
+    if (_pendingDelete) {
+      // Second tap - confirm delete
+      widget.onDelete?.call();
+      setState(() => _pendingDelete = false);
+    } else {
+      // First tap - show confirmation
+      setState(() => _pendingDelete = true);
+      // Auto-reset after 3 seconds
+      Future.delayed(const Duration(seconds: 3), () {
+        if (mounted && _pendingDelete) {
+          setState(() => _pendingDelete = false);
+        }
+      });
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final colors = context.flowColors;
-    final iconData = _getIconForMimeType(attachment.mimeType);
-    final iconColor = _getColorForMimeType(attachment.mimeType);
+    final iconData = _getIconForMimeType(widget.attachment.mimeType);
+    final iconColor = _getColorForMimeType(widget.attachment.mimeType);
 
     return Padding(
-      padding: EdgeInsets.only(bottom: compact ? 4 : 8),
+      padding: EdgeInsets.only(bottom: widget.compact ? 4 : 8),
       child: InkWell(
-        onTap: () => _openDocument(attachment.url),
+        onTap: () => _openDocument(widget.attachment.url),
         borderRadius: BorderRadius.circular(8),
         child: Container(
           padding: EdgeInsets.symmetric(
-            horizontal: compact ? 8 : 12,
-            vertical: compact ? 6 : 8,
+            horizontal: widget.compact ? 8 : 12,
+            vertical: widget.compact ? 6 : 8,
           ),
           child: Row(
             children: [
               // File icon
               Container(
-                width: compact ? 24 : 32,
-                height: compact ? 24 : 32,
+                width: widget.compact ? 24 : 32,
+                height: widget.compact ? 24 : 32,
                 decoration: BoxDecoration(
-                  color: iconColor.withOpacity(0.1),
+                  color: iconColor.withAlpha(25),
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Icon(
                   iconData,
-                  size: compact ? 14 : 18,
+                  size: widget.compact ? 14 : 18,
                   color: iconColor,
                 ),
               ),
-              SizedBox(width: compact ? 8 : 12),
+              SizedBox(width: widget.compact ? 8 : 12),
               // Filename and size
               Expanded(
                 child: Column(
@@ -472,19 +572,19 @@ class _DocumentTile extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      attachment.name,
+                      widget.attachment.name,
                       style: TextStyle(
-                        fontSize: compact ? 13 : 14,
+                        fontSize: widget.compact ? 13 : 14,
                         fontWeight: FontWeight.w500,
                         color: colors.textPrimary,
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
-                    if (!compact && attachment.formattedSize.isNotEmpty) ...[
+                    if (!widget.compact && widget.attachment.formattedSize.isNotEmpty) ...[
                       const SizedBox(height: 2),
                       Text(
-                        attachment.formattedSize,
+                        widget.attachment.formattedSize,
                         style: TextStyle(
                           fontSize: 12,
                           color: colors.textSecondary,
@@ -494,26 +594,31 @@ class _DocumentTile extends StatelessWidget {
                   ],
                 ),
               ),
-              // Delete button
-              if (onDelete != null)
-                IconButton(
-                  icon: Icon(
-                    Icons.close,
-                    size: compact ? 16 : 18,
-                    color: colors.textTertiary,
-                  ),
-                  onPressed: onDelete,
-                  visualDensity: VisualDensity.compact,
-                  padding: EdgeInsets.zero,
-                  constraints: BoxConstraints(
-                    minWidth: compact ? 24 : 32,
-                    minHeight: compact ? 24 : 32,
+              // Delete button with two-tap confirmation
+              if (widget.onDelete != null)
+                GestureDetector(
+                  onTap: _onDeleteTap,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 150),
+                    padding: EdgeInsets.symmetric(
+                      horizontal: _pendingDelete ? 12 : 6,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: _pendingDelete ? Colors.red : Colors.transparent,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Icon(
+                      Icons.close_rounded,
+                      size: _pendingDelete ? 18 : (widget.compact ? 16 : 18),
+                      color: _pendingDelete ? Colors.white : colors.textTertiary,
+                    ),
                   ),
                 )
               else
                 Icon(
                   Icons.download_rounded,
-                  size: compact ? 14 : 16,
+                  size: widget.compact ? 14 : 16,
                   color: colors.textTertiary,
                 ),
             ],
@@ -563,9 +668,9 @@ class _DocumentTile extends StatelessWidget {
     // Handle data URLs (base64 encoded files)
     if (url.startsWith('data:')) {
       if (kIsWeb) {
-        _downloadDataUrlWeb(url, attachment.name);
+        _downloadDataUrlWeb(url, widget.attachment.name);
       } else {
-        await _openDataUrlNative(url, attachment.name);
+        await _openDataUrlNative(url, widget.attachment.name);
       }
       return;
     }

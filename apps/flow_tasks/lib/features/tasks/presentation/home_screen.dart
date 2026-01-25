@@ -505,7 +505,6 @@ class _DraggableTaskSheetState extends ConsumerState<_DraggableTaskSheet>
     with WidgetsBindingObserver {
   final DraggableScrollableController _controller =
       DraggableScrollableController();
-  double _dragStartSize = 0.5;
   double _totalDragDelta = 0; // Track total drag direction
   bool _isClosing = false;
   double _previousKeyboardHeight = 0;
@@ -578,22 +577,12 @@ class _DraggableTaskSheetState extends ConsumerState<_DraggableTaskSheet>
 
   void _handleTap() {
     if (_isClosing) return;
-    // If at full screen, go back to half. Otherwise close.
-    if (_controller.size > 0.75) {
-      _controller.animateTo(
-        0.5,
-        duration: const Duration(milliseconds: 200),
-        curve: Curves.easeOut,
-      );
-    } else {
-      _close();
-    }
+    // Tap on handle closes the sheet
+    _close();
   }
 
   void _onDragStart(DragStartDetails details) {
-    _dragStartSize = _controller.size;
     _totalDragDelta = 0;
-    debugPrint('[TaskSheet] Drag start at size: $_dragStartSize');
   }
 
   void _onDragUpdate(DragUpdateDetails details) {
@@ -602,60 +591,35 @@ class _DraggableTaskSheetState extends ConsumerState<_DraggableTaskSheet>
     // Negative dy = dragging up = increase size
     final delta = -details.delta.dy / screenHeight;
     _totalDragDelta += delta; // Positive = dragged up, Negative = dragged down
-    final newSize = (_controller.size + delta).clamp(0.3, 1.0);
+    // Allow dragging down to preview close, but snap back or close
+    final newSize = (_controller.size + delta).clamp(0.85, 1.0);
     _controller.jumpTo(newSize);
   }
 
   void _onDragEnd(DragEndDetails details) {
     if (_isClosing) return;
 
-    final draggedUp = _totalDragDelta > 0.01; // Small threshold to ignore tiny movements
-    final draggedDown = _totalDragDelta < -0.01;
+    final draggedDown = _totalDragDelta < -0.03; // Threshold for close gesture
 
-    debugPrint('[TaskSheet] Drag end - startSize: $_dragStartSize, totalDelta: $_totalDragDelta, up: $draggedUp, down: $draggedDown');
-
-    // Simple two-step logic:
-    // From half (<=0.75): up → full, down → close
-    // From full (>0.75): down → half, up → stay full
-
-    if (_dragStartSize > 0.75) {
-      // Started from full position
-      if (draggedDown) {
-        // Drag down from full → go to half
-        debugPrint('[TaskSheet] Full → Half');
-        _controller.animateTo(0.5, duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
-      } else {
-        // Stay at full (or dragged up more)
-        debugPrint('[TaskSheet] Stay Full');
-        _controller.animateTo(1.0, duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
-      }
+    if (draggedDown) {
+      // Drag down → close
+      _close();
     } else {
-      // Started from half position
-      if (draggedUp) {
-        // Drag up from half → go to full
-        debugPrint('[TaskSheet] Half → Full');
-        _controller.animateTo(1.0, duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
-      } else if (draggedDown) {
-        // Drag down from half → close
-        debugPrint('[TaskSheet] Half → Close');
-        _close();
-      } else {
-        // No significant drag, stay at half
-        debugPrint('[TaskSheet] Stay Half');
-        _controller.animateTo(0.5, duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
-      }
+      // Snap back to full
+      _controller.animateTo(1.0, duration: const Duration(milliseconds: 150), curve: Curves.easeOut);
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    // Full-screen sheet on mobile - no middle position for smoother scrolling
     return DraggableScrollableSheet(
       controller: _controller,
-      initialChildSize: 0.5,
-      minChildSize: 0.3,
+      initialChildSize: 1.0,
+      minChildSize: 0.85, // Allow slight drag down for close gesture
       maxChildSize: 1.0,
       snap: true,
-      snapSizes: const [0.5, 1.0],
+      snapSizes: const [1.0],
       builder: (context, scrollController) {
         return Container(
           decoration: BoxDecoration(
@@ -669,36 +633,32 @@ class _DraggableTaskSheetState extends ConsumerState<_DraggableTaskSheet>
               ),
             ],
           ),
-          child: CustomScrollView(
-            controller: scrollController,
-            slivers: [
-              // Drag handle - dragging here resizes the sheet (works on both touch and mouse)
-              SliverToBoxAdapter(
-                child: GestureDetector(
-                  onTap: _handleTap,
-                  onVerticalDragStart: _onDragStart,
-                  onVerticalDragUpdate: _onDragUpdate,
-                  onVerticalDragEnd: _onDragEnd,
-                  behavior: HitTestBehavior.opaque,
-                  child: Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    child: Center(
-                      child: Container(
-                        width: 36,
-                        height: 4,
-                        decoration: BoxDecoration(
-                          color: context.flowColors.textTertiary.withAlpha(100),
-                          borderRadius: BorderRadius.circular(2),
-                        ),
+          child: Column(
+            children: [
+              // Drag handle - drag down to close
+              GestureDetector(
+                onTap: _handleTap,
+                onVerticalDragStart: _onDragStart,
+                onVerticalDragUpdate: _onDragUpdate,
+                onVerticalDragEnd: _onDragEnd,
+                behavior: HitTestBehavior.opaque,
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Center(
+                    child: Container(
+                      width: 36,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: context.flowColors.textTertiary.withAlpha(100),
+                        borderRadius: BorderRadius.circular(2),
                       ),
                     ),
                   ),
                 ),
               ),
-              // Content - fills remaining space
-              SliverFillRemaining(
-                hasScrollBody: false,
+              // Content - TaskDetailPanel handles its own scrolling
+              Expanded(
                 child: TaskDetailPanel(
                   task: widget.task,
                   isBottomSheet: true,

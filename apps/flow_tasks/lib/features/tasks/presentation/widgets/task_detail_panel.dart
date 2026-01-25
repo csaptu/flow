@@ -264,6 +264,7 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
           // Content
           Expanded(
             child: SingleChildScrollView(
+              physics: const ClampingScrollPhysics(),
               padding: const EdgeInsets.all(20),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
