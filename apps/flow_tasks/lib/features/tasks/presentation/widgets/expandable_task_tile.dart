@@ -426,7 +426,7 @@ class _ExpandableTaskTileState extends ConsumerState<ExpandableTaskTile>
             color: colors.textSecondary,
             height: 1.3,
           ),
-          maxLines: 2,
+          maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ));
       }
@@ -503,7 +503,7 @@ class _AnimatedStrikethroughText extends StatelessWidget {
       child: Text(
         text,
         style: style,
-        maxLines: 2,
+        maxLines: 1,
         overflow: TextOverflow.ellipsis,
       ),
     );

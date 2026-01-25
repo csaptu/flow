@@ -40,6 +40,6 @@ class FlowSpacing {
   static const EdgeInsets cardPadding = EdgeInsets.all(16.0);
   static const EdgeInsets listItemPadding = EdgeInsets.symmetric(
     horizontal: 16.0,
-    vertical: 12.0,
+    vertical: 8.0,
   );
 }
