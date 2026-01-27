@@ -15,6 +15,7 @@ import (
 	"github.com/csaptu/flow/common/errors"
 	"github.com/csaptu/flow/common/models"
 	"github.com/csaptu/flow/pkg/config"
+	"github.com/csaptu/flow/pkg/email"
 	"github.com/csaptu/flow/pkg/httputil"
 	"github.com/csaptu/flow/pkg/middleware"
 	"github.com/csaptu/flow/pkg/oauth"
@@ -26,14 +27,20 @@ type Handler struct {
 	db     *pgxpool.Pool
 	redis  *redis.Client
 	config *config.Config
+	email  *email.Client
 }
 
 // NewHandler creates a new auth handler
 func NewHandler(db *pgxpool.Pool, redis *redis.Client, cfg *config.Config) *Handler {
+	var emailClient *email.Client
+	if cfg.Email.ResendAPIKey != "" {
+		emailClient = email.NewClient(cfg.Email.ResendAPIKey, cfg.Email.From)
+	}
 	return &Handler{
 		db:     db,
 		redis:  redis,
 		config: cfg,
+		email:  emailClient,
 	}
 }
 
@@ -564,14 +571,14 @@ type DevLoginRequest struct {
 // Maps email -> display name
 var devAccounts = map[string]string{
 	"quangtu.pham@gmail.com": "Tu Pham",
-	"alice@prepedu.com":      "Alice",
+	"tupham@prepedu.com":     "Tu Pham",
 }
 
 // Dev aliases for convenience (short name -> real email)
 var devAliases = map[string]string{
-	"tupham": "quangtu.pham@gmail.com",
-	"tu":     "quangtu.pham@gmail.com",
-	"alice":  "alice@prepedu.com",
+	"tupham":  "quangtu.pham@gmail.com",
+	"tu":      "quangtu.pham@gmail.com",
+	"prepedu": "tupham@prepedu.com",
 }
 
 // DevLogin handles passwordless login for dev accounts (dev/debug only)

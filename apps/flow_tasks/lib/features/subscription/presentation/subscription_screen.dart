@@ -4,7 +4,7 @@ import 'package:flow_models/flow_models.dart';
 import 'package:flow_tasks/core/providers/providers.dart';
 import 'package:flow_tasks/core/theme/flow_theme.dart';
 
-/// Subscription pricing screen with responsive 3-column layout
+/// Subscription pricing screen with 3 compact plan cards
 class SubscriptionScreen extends ConsumerStatefulWidget {
   const SubscriptionScreen({super.key});
 
@@ -13,39 +13,33 @@ class SubscriptionScreen extends ConsumerStatefulWidget {
 }
 
 class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
-  String? _selectedPlanId;
+  String? _selectedTier; // Store tier, not plan ID - plan ID depends on billing period
   bool _isLoading = false;
   String? _error;
+  bool _isYearly = true; // Default to yearly for better value
 
   @override
   Widget build(BuildContext context) {
     final colors = context.flowColors;
     final plans = ref.watch(subscriptionPlansProvider);
     final currentSub = ref.watch(userSubscriptionProvider);
-    final screenWidth = MediaQuery.of(context).size.width;
-    final isWide = screenWidth >= 900;
-
-    // When embedded in settings, don't show app bar
-    final isEmbedded = ModalRoute.of(context)?.settings.name == null;
 
     return Scaffold(
       backgroundColor: colors.background,
-      appBar: isEmbedded
-          ? null
-          : AppBar(
-              backgroundColor: colors.surface,
-              title: Text(
-                'Upgrade Plan',
-                style: TextStyle(color: colors.textPrimary),
-              ),
-              leading: IconButton(
-                icon: Icon(Icons.arrow_back, color: colors.textPrimary),
-                onPressed: () => Navigator.of(context).pop(),
-              ),
-              elevation: 0,
-            ),
+      appBar: AppBar(
+        backgroundColor: colors.surface,
+        title: Text(
+          'Upgrade Plan',
+          style: TextStyle(color: colors.textPrimary),
+        ),
+        leading: IconButton(
+          icon: Icon(Icons.arrow_back, color: colors.textPrimary),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+        elevation: 0,
+      ),
       body: plans.when(
-        data: (planList) => _buildContent(planList, currentSub, colors, isWide),
+        data: (planList) => _buildContent(planList, currentSub, colors),
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (err, _) => Center(
           child: Column(
@@ -73,27 +67,35 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
     List<SubscriptionPlan> plans,
     AsyncValue<UserSubscription> currentSub,
     FlowColorScheme colors,
-    bool isWide,
   ) {
     final currentTier = currentSub.valueOrNull?.tier ?? 'free';
+    final screenWidth = MediaQuery.of(context).size.width;
 
-    // Sort plans: free, light, premium
-    final sortedPlans = List<SubscriptionPlan>.from(plans)
-      ..sort((a, b) {
-        const order = {'free': 0, 'light': 1, 'premium': 2};
-        return (order[a.tier] ?? 0).compareTo(order[b.tier] ?? 0);
-      });
+    // Group plans by tier - keep only one plan per tier
+    final plansByTier = <String, SubscriptionPlan>{};
+    for (final plan in plans) {
+      if (!plansByTier.containsKey(plan.tier)) {
+        plansByTier[plan.tier] = plan;
+      }
+    }
+
+    // Sort by tier order: free, light, premium
+    final tierOrder = ['free', 'light', 'premium'];
+    final uniquePlans = tierOrder
+        .where((tier) => plansByTier.containsKey(tier))
+        .map((tier) => plansByTier[tier]!)
+        .toList();
 
     return SingleChildScrollView(
-      padding: EdgeInsets.all(isWide ? 40 : 24),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           // Header
           Text(
             'Choose Your Plan',
             style: TextStyle(
-              fontSize: isWide ? 32 : 28,
+              fontSize: 24,
               fontWeight: FontWeight.bold,
               color: colors.textPrimary,
             ),
@@ -101,14 +103,18 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            'Unlock powerful AI features to boost your productivity',
+            'Unlock powerful AI features',
             style: TextStyle(
-              fontSize: 16,
+              fontSize: 14,
               color: colors.textSecondary,
             ),
             textAlign: TextAlign.center,
           ),
-          const SizedBox(height: 40),
+          const SizedBox(height: 24),
+
+          // Billing toggle
+          _buildBillingToggle(colors),
+          const SizedBox(height: 24),
 
           // Error message
           if (_error != null) ...[
@@ -134,160 +140,118 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
             const SizedBox(height: 16),
           ],
 
-          // Plan cards - 3 columns on wide, stacked on narrow
-          if (isWide)
-            _buildWideLayout(sortedPlans, currentTier, colors)
-          else
-            _buildNarrowLayout(sortedPlans, currentTier, colors),
+          // 3 Plan cards side by side (one per tier)
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 800),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: uniquePlans.map((plan) {
+                final isFirst = plan == uniquePlans.first;
+                final isLast = plan == uniquePlans.last;
+                return Expanded(
+                  child: Padding(
+                    padding: EdgeInsets.only(
+                      left: isFirst ? 0 : 4,
+                      right: isLast ? 0 : 4,
+                    ),
+                    child: _CompactPlanCard(
+                      plan: plan,
+                      isYearly: _isYearly,
+                      isSelected: _selectedTier == plan.tier,
+                      isCurrent: plan.tier == currentTier,
+                      isNarrow: screenWidth < 500,
+                      onSelect: plan.tier == currentTier
+                          ? null
+                          : () => setState(() => _selectedTier = plan.tier),
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+
+          const SizedBox(height: 24),
+
+          // Subscribe button
+          if (_selectedTier != null)
+            SizedBox(
+              width: 280,
+              child: ElevatedButton(
+                onPressed: _isLoading ? null : _handleSubscribe,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: colors.primary,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                child: _isLoading
+                    ? const SizedBox(
+                        height: 20,
+                        width: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                        ),
+                      )
+                    : const Text(
+                        'Continue to Payment',
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+              ),
+            ),
 
           const SizedBox(height: 32),
 
-          // Subscribe button
-          if (_selectedPlanId != null)
-            Center(
-              child: SizedBox(
-                width: isWide ? 300 : double.infinity,
-                child: ElevatedButton(
-                  onPressed: _isLoading ? null : _handleSubscribe,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: colors.primary,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  child: _isLoading
-                      ? const SizedBox(
-                          height: 20,
-                          width: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                          ),
-                        )
-                      : const Text(
-                          'Continue to Payment',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                ),
-              ),
+          // Notes - compact
+          Text(
+            'Cancel anytime • Secure payment via Paddle',
+            style: TextStyle(
+              fontSize: 12,
+              color: colors.textTertiary,
             ),
-
-          const SizedBox(height: 40),
-
-          // Notes
-          Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 500),
-              child: Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: colors.surface,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: colors.border),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(Icons.info_outline, size: 18, color: colors.textTertiary),
-                        const SizedBox(width: 8),
-                        Text(
-                          'Notes',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w600,
-                            color: colors.textPrimary,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    _NoteItem(
-                      text: 'Cancel anytime. No questions asked.',
-                      colors: colors,
-                    ),
-                    _NoteItem(
-                      text: 'Secure payment via Paddle',
-                      colors: colors,
-                    ),
-                    _NoteItem(
-                      text: 'Usage limits reset daily at midnight UTC',
-                      colors: colors,
-                    ),
-                  ],
-                ),
-              ),
-            ),
+            textAlign: TextAlign.center,
           ),
         ],
       ),
     );
   }
 
-  Widget _buildWideLayout(
-    List<SubscriptionPlan> plans,
-    String currentTier,
-    FlowColorScheme colors,
-  ) {
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 1000),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: plans.map((plan) {
-            final isPopular = plan.tier == 'premium';
-            return Expanded(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                child: _PlanColumn(
-                  plan: plan,
-                  isSelected: _selectedPlanId == plan.id,
-                  isCurrent: plan.tier == currentTier,
-                  isPopular: isPopular,
-                  showAllFeatures: true,
-                  onSelect: plan.tier == currentTier
-                      ? null
-                      : () => setState(() => _selectedPlanId = plan.id),
-                ),
-              ),
-            );
-          }).toList(),
-        ),
+  Widget _buildBillingToggle(FlowColorScheme colors) {
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: colors.surface,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: colors.border),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _ToggleButton(
+            label: 'Monthly',
+            isSelected: !_isYearly,
+            onTap: () => setState(() => _isYearly = false),
+            colors: colors,
+          ),
+          _ToggleButton(
+            label: 'Yearly',
+            badge: 'Save 20%',
+            isSelected: _isYearly,
+            onTap: () => setState(() => _isYearly = true),
+            colors: colors,
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildNarrowLayout(
-    List<SubscriptionPlan> plans,
-    String currentTier,
-    FlowColorScheme colors,
-  ) {
-    return Column(
-      children: plans.map((plan) {
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 16),
-          child: _PlanColumn(
-            plan: plan,
-            isSelected: _selectedPlanId == plan.id,
-            isCurrent: plan.tier == currentTier,
-            isPopular: plan.tier == 'premium',
-            showAllFeatures: false, // Hide "early access" on narrow
-            onSelect: plan.tier == currentTier
-                ? null
-                : () => setState(() => _selectedPlanId = plan.id),
-          ),
-        );
-      }).toList(),
-    );
-  }
-
   Future<void> _handleSubscribe() async {
-    if (_selectedPlanId == null) return;
+    if (_selectedTier == null) return;
 
     setState(() {
       _isLoading = true;
@@ -298,9 +262,21 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
       final tasksService = ref.read(tasksServiceProvider);
       final returnUrl = Uri.base.toString();
 
+      // Get all plans and find the correct one based on tier and billing period
+      final plans = ref.read(subscriptionPlansProvider).valueOrNull ?? [];
+      final suffix = _isYearly ? 'yearly' : 'monthly';
+
+      // Find plan matching tier and billing period (e.g., "light_yearly" or "light_monthly")
+      final targetPlanId = '${_selectedTier}_$suffix';
+      final plan = plans.firstWhere(
+        (p) => p.id == targetPlanId || (p.tier == _selectedTier && p.id.contains(suffix)),
+        orElse: () => plans.firstWhere((p) => p.tier == _selectedTier),
+      );
+
       final checkout = await tasksService.createCheckout(
-        _selectedPlanId!,
+        plan.id,
         returnUrl: returnUrl,
+        isYearly: _isYearly,
       );
 
       if (mounted) {
@@ -394,50 +370,111 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
   }
 }
 
-class _PlanColumn extends StatelessWidget {
+/// Toggle button for billing period
+class _ToggleButton extends StatelessWidget {
+  final String label;
+  final String? badge;
+  final bool isSelected;
+  final VoidCallback onTap;
+  final FlowColorScheme colors;
+
+  const _ToggleButton({
+    required this.label,
+    this.badge,
+    required this.isSelected,
+    required this.onTap,
+    required this.colors,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected ? colors.primary : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: isSelected ? Colors.white : colors.textSecondary,
+              ),
+            ),
+            if (badge != null) ...[
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? Colors.white.withValues(alpha: 0.2)
+                      : Colors.green.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  badge!,
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                    color: isSelected ? Colors.white : Colors.green,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Compact plan card that works on mobile
+class _CompactPlanCard extends StatelessWidget {
   final SubscriptionPlan plan;
+  final bool isYearly;
   final bool isSelected;
   final bool isCurrent;
-  final bool isPopular;
-  final bool showAllFeatures;
+  final bool isNarrow;
   final VoidCallback? onSelect;
 
-  const _PlanColumn({
+  const _CompactPlanCard({
     required this.plan,
+    required this.isYearly,
     required this.isSelected,
     required this.isCurrent,
-    required this.isPopular,
-    required this.showAllFeatures,
+    required this.isNarrow,
     this.onSelect,
   });
 
   @override
   Widget build(BuildContext context) {
     final colors = context.flowColors;
+    final tierColor = _getTierColor(plan.tier);
 
     Color borderColor;
-    Color? headerBgColor;
-
     if (isCurrent) {
-      borderColor = colors.textTertiary;
-      headerBgColor = colors.textTertiary;
-    } else if (isSelected) {
       borderColor = colors.primary;
-      headerBgColor = colors.primary;
-    } else if (isPopular) {
-      borderColor = Colors.purple;
-      headerBgColor = Colors.purple;
+    } else if (isSelected) {
+      borderColor = tierColor;
     } else {
       borderColor = colors.border;
-      headerBgColor = null;
     }
 
-    // Filter features for narrow screens
-    final features = showAllFeatures
-        ? plan.features
-        : plan.features
-            .where((f) => !f.toLowerCase().contains('early access'))
-            .toList();
+    // Calculate price - use actual yearly price if available
+    final monthlyPrice = plan.priceMonthly;
+    // Yearly price per month = yearly total / 12
+    final yearlyMonthlyPrice = plan.priceYearly != null
+        ? plan.priceYearly! / 12
+        : plan.priceMonthly * 0.8;
+    final displayPrice = isYearly ? yearlyMonthlyPrice : monthlyPrice;
+    final yearlyTotal = plan.priceYearly ?? (plan.priceMonthly * 12 * 0.8);
 
     return GestureDetector(
       onTap: onSelect,
@@ -445,134 +482,130 @@ class _PlanColumn extends StatelessWidget {
         duration: const Duration(milliseconds: 200),
         decoration: BoxDecoration(
           color: colors.surface,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(12),
           border: Border.all(
             color: borderColor,
-            width: isSelected || isPopular ? 2 : 1,
+            width: (isSelected || isCurrent) ? 2 : 1,
           ),
-          boxShadow: isSelected || isPopular
-              ? [
-                  BoxShadow(
-                    color: borderColor.withValues(alpha: 0.2),
-                    blurRadius: 12,
-                    offset: const Offset(0, 4),
-                  ),
-                ]
-              : null,
         ),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Header with badge
-            if (headerBgColor != null)
+            // Header badge
+            if (isCurrent || isSelected)
               Container(
-                padding: const EdgeInsets.symmetric(vertical: 8),
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 6),
                 decoration: BoxDecoration(
-                  color: headerBgColor,
+                  color: isCurrent ? colors.primary : tierColor,
                   borderRadius: const BorderRadius.vertical(
-                    top: Radius.circular(14),
+                    top: Radius.circular(10),
                   ),
                 ),
                 child: Text(
-                  isCurrent
-                      ? 'Current Plan'
-                      : isSelected
-                          ? 'Selected'
-                          : 'Most Popular',
+                  isCurrent ? 'Current' : 'Selected',
                   textAlign: TextAlign.center,
                   style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.w600,
-                    fontSize: 12,
+                    fontSize: 11,
                   ),
                 ),
               ),
 
+            // Content
             Padding(
-              padding: const EdgeInsets.all(24),
+              padding: EdgeInsets.all(isNarrow ? 12 : 16),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  // Tier icon
-                  _TierIcon(tier: plan.tier),
-                  const SizedBox(height: 16),
+                  // Icon
+                  _TierIcon(tier: plan.tier, size: isNarrow ? 36 : 44),
+                  SizedBox(height: isNarrow ? 8 : 12),
 
                   // Plan name
                   Text(
-                    plan.name,
+                    plan.tier == 'light' ? 'Basic' : plan.name.split(' ').first,
                     style: TextStyle(
-                      fontSize: 22,
+                      fontSize: isNarrow ? 14 : 16,
                       fontWeight: FontWeight.bold,
                       color: colors.textPrimary,
                     ),
                   ),
-                  const SizedBox(height: 8),
+                  SizedBox(height: isNarrow ? 4 : 8),
 
                   // Price
                   if (plan.isFree)
                     Text(
                       'Free',
                       style: TextStyle(
-                        fontSize: 32,
+                        fontSize: isNarrow ? 20 : 24,
                         fontWeight: FontWeight.bold,
                         color: colors.textPrimary,
                       ),
                     )
                   else
-                    RichText(
-                      text: TextSpan(
-                        children: [
-                          TextSpan(
-                            text: '\$${plan.priceMonthly.toStringAsFixed(0)}',
+                    Column(
+                      children: [
+                        RichText(
+                          text: TextSpan(
+                            children: [
+                              TextSpan(
+                                text: '\$${displayPrice.toStringAsFixed(0)}',
+                                style: TextStyle(
+                                  fontSize: isNarrow ? 20 : 24,
+                                  fontWeight: FontWeight.bold,
+                                  color: colors.textPrimary,
+                                ),
+                              ),
+                              TextSpan(
+                                text: '/mo',
+                                style: TextStyle(
+                                  fontSize: isNarrow ? 10 : 12,
+                                  color: colors.textSecondary,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (isYearly && !plan.isFree)
+                          Text(
+                            '\$${yearlyTotal.toStringAsFixed(0)}/year',
                             style: TextStyle(
-                              fontSize: 32,
-                              fontWeight: FontWeight.bold,
-                              color: colors.textPrimary,
+                              fontSize: 10,
+                              color: colors.textTertiary,
                             ),
                           ),
-                          TextSpan(
-                            text: '/mo',
-                            style: TextStyle(
-                              fontSize: 16,
-                              color: colors.textSecondary,
-                            ),
-                          ),
-                        ],
-                      ),
+                      ],
                     ),
 
-                  const SizedBox(height: 24),
+                  SizedBox(height: isNarrow ? 8 : 12),
 
-                  // Divider
-                  Divider(color: colors.border),
-
-                  const SizedBox(height: 16),
-
-                  // Features
-                  ...features.map((feature) => Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
+                  // Key features (compact)
+                  ...plan.features.take(isNarrow ? 2 : 3).map((feature) => Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
                         child: Row(
                           children: [
                             Icon(
-                              Icons.check_circle,
-                              size: 18,
-                              color: _getFeatureColor(plan.tier),
+                              Icons.check,
+                              size: 12,
+                              color: tierColor,
                             ),
-                            const SizedBox(width: 10),
+                            const SizedBox(width: 4),
                             Expanded(
                               child: Text(
                                 feature,
                                 style: TextStyle(
                                   color: colors.textSecondary,
-                                  fontSize: 14,
+                                  fontSize: isNarrow ? 10 : 11,
                                 ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                               ),
                             ),
                           ],
                         ),
                       )),
 
-                  const SizedBox(height: 16),
+                  SizedBox(height: isNarrow ? 8 : 12),
 
                   // Select button
                   if (!isCurrent)
@@ -582,22 +615,45 @@ class _PlanColumn extends StatelessWidget {
                         onPressed: onSelect,
                         style: OutlinedButton.styleFrom(
                           side: BorderSide(
-                            color: isSelected
-                                ? colors.primary
-                                : _getFeatureColor(plan.tier),
+                            color: isSelected ? tierColor : colors.border,
                           ),
-                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          padding: EdgeInsets.symmetric(
+                            vertical: isNarrow ? 6 : 8,
+                          ),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(8),
                           ),
                         ),
                         child: Text(
-                          isSelected ? 'Selected' : 'Select Plan',
+                          isSelected ? 'Selected' : 'Select',
                           style: TextStyle(
-                            color: isSelected
-                                ? colors.primary
-                                : _getFeatureColor(plan.tier),
+                            color: isSelected ? tierColor : colors.textSecondary,
                             fontWeight: FontWeight.w600,
+                            fontSize: isNarrow ? 11 : 12,
+                          ),
+                        ),
+                      ),
+                    )
+                  else
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton(
+                        onPressed: null,
+                        style: OutlinedButton.styleFrom(
+                          side: BorderSide(color: colors.primary),
+                          padding: EdgeInsets.symmetric(
+                            vertical: isNarrow ? 6 : 8,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                        child: Text(
+                          'Current',
+                          style: TextStyle(
+                            color: colors.primary,
+                            fontWeight: FontWeight.w600,
+                            fontSize: isNarrow ? 11 : 12,
                           ),
                         ),
                       ),
@@ -611,7 +667,7 @@ class _PlanColumn extends StatelessWidget {
     );
   }
 
-  Color _getFeatureColor(String tier) {
+  Color _getTierColor(String tier) {
     switch (tier) {
       case 'premium':
         return Colors.purple;
@@ -625,8 +681,9 @@ class _PlanColumn extends StatelessWidget {
 
 class _TierIcon extends StatelessWidget {
   final String tier;
+  final double size;
 
-  const _TierIcon({required this.tier});
+  const _TierIcon({required this.tier, this.size = 44});
 
   @override
   Widget build(BuildContext context) {
@@ -648,49 +705,13 @@ class _TierIcon extends StatelessWidget {
     }
 
     return Container(
-      width: 56,
-      height: 56,
+      width: size,
+      height: size,
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(size * 0.3),
       ),
-      child: Icon(icon, color: color, size: 28),
-    );
-  }
-}
-
-class _NoteItem extends StatelessWidget {
-  final String text;
-  final FlowColorScheme colors;
-
-  const _NoteItem({
-    required this.text,
-    required this.colors,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '•',
-            style: TextStyle(color: colors.textTertiary),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              text,
-              style: TextStyle(
-                color: colors.textSecondary,
-                fontSize: 13,
-              ),
-            ),
-          ),
-        ],
-      ),
+      child: Icon(icon, color: color, size: size * 0.5),
     );
   }
 }

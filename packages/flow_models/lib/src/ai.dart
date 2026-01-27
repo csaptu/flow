@@ -98,20 +98,9 @@ enum AIFeature {
     }
   }
 
-  /// Default setting for this feature
+  /// Default setting for this feature (all default to Manual/ask)
   AISetting get defaultSetting {
-    switch (this) {
-      case AIFeature.cleanTitle:
-      case AIFeature.cleanDescription:
-      case AIFeature.entityExtraction:
-        return AISetting.auto;
-      case AIFeature.decompose:
-      case AIFeature.duplicateCheck:
-      case AIFeature.recurringDetection:
-      case AIFeature.sendEmail:
-      case AIFeature.sendCalendar:
-        return AISetting.ask;
-    }
+    return AISetting.ask;
   }
 
   /// Description of what this feature does

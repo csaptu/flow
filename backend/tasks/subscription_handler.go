@@ -37,6 +37,7 @@ type PlanResponse struct {
 	Name         string   `json:"name"`
 	Tier         string   `json:"tier"`
 	PriceMonthly float64  `json:"price_monthly"`
+	PriceYearly  *float64 `json:"price_yearly,omitempty"`
 	Currency     string   `json:"currency"`
 	Features     []string `json:"features"`
 	IsPopular    bool     `json:"is_popular,omitempty"`
@@ -63,6 +64,10 @@ func (h *SubscriptionHandler) GetPlans(c *fiber.Ctx) error {
 			Currency:     p.Currency,
 			Features:     p.Features,
 			IsPopular:    p.Tier == "light",
+		}
+		if p.PriceYearly != nil && *p.PriceYearly > 0 {
+			yearlyPrice := float64(*p.PriceYearly) / 100.0
+			response.PriceYearly = &yearlyPrice
 		}
 		result = append(result, response)
 	}
@@ -137,7 +142,7 @@ func (h *SubscriptionHandler) CreateCheckout(c *fiber.Ctx) error {
 	}
 
 	if plan.PaddlePriceID == nil || *plan.PaddlePriceID == "" {
-		return httputil.BadRequest(c, "plan not available for online purchase")
+		return httputil.BadRequest(c, fmt.Sprintf("plan '%s' has no Paddle price ID configured - please set it in admin panel", req.PlanID))
 	}
 
 	// Create pending order via shared repository

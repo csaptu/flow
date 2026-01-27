@@ -143,7 +143,9 @@ func (s *Server) registerRoutes() {
 	// Auth routes (public)
 	authHandler := auth.NewHandler(s.db, s.redis, s.config)
 	authRoutes := v1.Group("/auth")
-	authRoutes.Post("/register", authHandler.Register)
+	authRoutes.Post("/register", authHandler.RegisterWithVerification)
+	authRoutes.Post("/verify-registration", authHandler.VerifyRegistration)
+	authRoutes.Post("/resend-verification", authHandler.ResendVerificationCode)
 	authRoutes.Post("/login", authHandler.Login)
 	authRoutes.Post("/dev-login", authHandler.DevLogin) // Dev accounts only - no password
 	authRoutes.Post("/refresh", authHandler.Refresh)
@@ -151,6 +153,9 @@ func (s *Server) registerRoutes() {
 	authRoutes.Post("/google", authHandler.GoogleOAuth)
 	authRoutes.Post("/apple", authHandler.AppleOAuth)
 	authRoutes.Post("/microsoft", authHandler.MicrosoftOAuth)
+	authRoutes.Post("/forgot-password", authHandler.ForgotPassword)
+	authRoutes.Post("/verify-reset-code", authHandler.VerifyResetCode)
+	authRoutes.Post("/reset-password", authHandler.ResetPasswordWithCode)
 
 	// Protected routes
 	protected := v1.Group("")
@@ -160,11 +165,16 @@ func (s *Server) registerRoutes() {
 			"/api/v1/auth/login",
 			"/api/v1/auth/dev-login",
 			"/api/v1/auth/register",
+			"/api/v1/auth/verify-registration",
+			"/api/v1/auth/resend-verification",
 			"/api/v1/auth/refresh",
 			"/api/v1/auth/logout",
 			"/api/v1/auth/google",
 			"/api/v1/auth/apple",
 			"/api/v1/auth/microsoft",
+			"/api/v1/auth/forgot-password",
+			"/api/v1/auth/verify-reset-code",
+			"/api/v1/auth/reset-password",
 		},
 	}))
 

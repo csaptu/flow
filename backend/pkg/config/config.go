@@ -19,6 +19,14 @@ type Config struct {
 	Redis     RedisConfig
 	Auth      AuthConfig
 	LLM       LLMConfig
+	Email     EmailConfig
+}
+
+// EmailConfig holds email service configuration
+type EmailConfig struct {
+	ResendAPIKey string `mapstructure:"RESEND_API_KEY"`
+	From         string `mapstructure:"EMAIL_FROM"`
+	AppURL       string `mapstructure:"APP_URL"` // For generating reset links
 }
 
 // ServerConfig holds server-related configuration
@@ -253,6 +261,26 @@ func overrideFromEnv(config *Config) {
 	}
 	if val := os.Getenv("GOOGLE_AI_API_KEY"); val != "" {
 		config.LLM.GoogleAPIKey = val
+	}
+
+	// Email settings
+	if val := os.Getenv("RESEND_API_KEY"); val != "" {
+		config.Email.ResendAPIKey = val
+	}
+	if val := os.Getenv("EMAIL_FROM"); val != "" {
+		config.Email.From = val
+	}
+	if val := os.Getenv("APP_URL"); val != "" {
+		config.Email.AppURL = val
+	}
+
+	// Default email from if not set
+	if config.Email.From == "" {
+		config.Email.From = "Flow <noreply@flowtasks.ai>"
+	}
+	// Default app URL
+	if config.Email.AppURL == "" {
+		config.Email.AppURL = "https://flowtasks.ai"
 	}
 }
 

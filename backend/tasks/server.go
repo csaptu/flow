@@ -194,6 +194,7 @@ func (s *Server) registerRoutes() {
 	admin.Get("/orders/:id", adminHandler.GetOrder)
 	admin.Get("/plans", adminHandler.ListPlans)
 	admin.Put("/plans/:id", adminHandler.UpdatePlan)
+	admin.Put("/plans/:id/pricing", adminHandler.UpdatePlanPricing)
 	admin.Get("/ai-configs", adminHandler.ListAIConfigs)
 	admin.Put("/ai-configs/:key", adminHandler.UpdateAIConfig)
 }

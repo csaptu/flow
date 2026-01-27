@@ -281,15 +281,26 @@ class AuthStateNotifier extends StateNotifier<AuthState> {
     }
   }
 
-  Future<void> register(String email, String password, String name) async {
+  /// Start registration - sends verification code to email
+  /// Returns expires_in (seconds)
+  Future<int> startRegistration(String email, String password, String name) async {
+    final authService = _ref.read(authServiceProvider);
+    return await authService.register(
+      email: email,
+      password: password,
+      name: name,
+    );
+  }
+
+  /// Complete registration after email verification
+  Future<void> completeRegistration(String email, String code) async {
     state = state.copyWith(status: AuthStatus.loading);
 
     try {
       final authService = _ref.read(authServiceProvider);
-      final response = await authService.register(
+      final response = await authService.verifyRegistration(
         email: email,
-        password: password,
-        name: name,
+        code: code,
       );
       state = state.copyWith(
         status: AuthStatus.authenticated,
@@ -302,6 +313,12 @@ class AuthStateNotifier extends StateNotifier<AuthState> {
       );
       rethrow;
     }
+  }
+
+  /// Resend verification code for pending registration
+  Future<int> resendVerificationCode(String email) async {
+    final authService = _ref.read(authServiceProvider);
+    return await authService.resendVerificationCode(email);
   }
 
   Future<void> devLogin(String email) async {
@@ -333,9 +350,11 @@ class AuthStateNotifier extends StateNotifier<AuthState> {
         // Use Google Identity Services on web
         idToken = await GoogleSignInWebHelper.signIn();
       } else {
-        // Use google_sign_in package on mobile
+        // Use google_sign_in package on mobile/desktop
+        // serverClientId ensures the ID token's audience matches what the server expects
         final googleSignIn = GoogleSignIn(
           scopes: ['email', 'profile'],
+          serverClientId: _googleClientId, // Web client ID - server validates against this
         );
 
         final googleUser = await googleSignIn.signIn();
@@ -381,6 +400,13 @@ class AuthStateNotifier extends StateNotifier<AuthState> {
       avatarUrl: avatarUrl,
     );
     state = state.copyWith(user: updatedUser);
+  }
+
+  /// Request password reset email
+  /// Note: For security, this always succeeds silently (doesn't reveal if email exists)
+  Future<void> requestPasswordReset(String email) async {
+    final authService = _ref.read(authServiceProvider);
+    await authService.forgotPassword(email);
   }
 }
 
@@ -691,6 +717,14 @@ class TaskActions {
     // Refresh subtasks to get updated sort_order from server
     _ref.invalidate(subtasksProvider(parentId));
     _ref.invalidate(tasksFetchProvider);
+  }
+
+  /// Refresh a single task from the server (fetches latest data)
+  Future<Task> refresh(String taskId) async {
+    final task = await _service.getById(taskId);
+    // Update local store with server response
+    _store.updateTaskFromServer(task);
+    return task;
   }
 }
 
@@ -1489,8 +1523,8 @@ class SubscriptionActions {
   TasksService get _service => _ref.read(tasksServiceProvider);
 
   /// Create checkout session
-  Future<CheckoutResponse> createCheckout(String planId, {String? returnUrl}) async {
-    return await _service.createCheckout(planId, returnUrl: returnUrl);
+  Future<CheckoutResponse> createCheckout(String planId, {String? returnUrl, bool isYearly = false}) async {
+    return await _service.createCheckout(planId, returnUrl: returnUrl, isYearly: isYearly);
   }
 
   /// Cancel subscription

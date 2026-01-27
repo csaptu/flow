@@ -8,12 +8,13 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
 
-// Web-specific imports for download
-// ignore: avoid_web_libraries_in_flutter
-import 'dart:html' as html if (dart.library.io) 'package:flow_tasks/core/utils/html_stub.dart';
+// Web-specific imports for download (stub for native, real for web)
+import 'package:flow_tasks/core/utils/html_stub.dart'
+    if (dart.library.html) 'dart:html' as html;
 
-// Platform-specific imports for file handling
-import 'dart:io' if (dart.library.html) 'package:flow_tasks/core/utils/io_stub.dart' as io;
+// Platform-specific imports for file handling (stub for web, real for native)
+import 'package:flow_tasks/core/utils/io_stub.dart'
+    if (dart.library.io) 'dart:io' as io;
 
 /// Displays a list of task attachments
 class AttachmentList extends StatelessWidget {
@@ -514,6 +515,7 @@ class _DocumentTile extends StatefulWidget {
 
 class _DocumentTileState extends State<_DocumentTile> {
   bool _pendingDelete = false;
+  bool _isOpening = false;
 
   void _onDeleteTap() {
     if (_pendingDelete) {
@@ -541,29 +543,39 @@ class _DocumentTileState extends State<_DocumentTile> {
     return Padding(
       padding: EdgeInsets.only(bottom: widget.compact ? 4 : 8),
       child: InkWell(
-        onTap: () => _openDocument(widget.attachment.url),
+        onTap: _isOpening ? null : () => _openDocument(widget.attachment.url),
         borderRadius: BorderRadius.circular(8),
-        child: Container(
-          padding: EdgeInsets.symmetric(
-            horizontal: widget.compact ? 8 : 12,
-            vertical: widget.compact ? 6 : 8,
-          ),
-          child: Row(
-            children: [
-              // File icon
-              Container(
-                width: widget.compact ? 24 : 32,
-                height: widget.compact ? 24 : 32,
-                decoration: BoxDecoration(
-                  color: iconColor.withAlpha(25),
-                  borderRadius: BorderRadius.circular(6),
+        child: Opacity(
+          opacity: _isOpening ? 0.6 : 1.0,
+          child: Container(
+            padding: EdgeInsets.symmetric(
+              horizontal: widget.compact ? 8 : 12,
+              vertical: widget.compact ? 6 : 8,
+            ),
+            child: Row(
+              children: [
+                // File icon or loading indicator
+                Container(
+                  width: widget.compact ? 24 : 32,
+                  height: widget.compact ? 24 : 32,
+                  decoration: BoxDecoration(
+                    color: iconColor.withAlpha(25),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: _isOpening
+                      ? Padding(
+                          padding: const EdgeInsets.all(6),
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: iconColor,
+                          ),
+                        )
+                      : Icon(
+                          iconData,
+                          size: widget.compact ? 14 : 18,
+                          color: iconColor,
+                        ),
                 ),
-                child: Icon(
-                  iconData,
-                  size: widget.compact ? 14 : 18,
-                  color: iconColor,
-                ),
-              ),
               SizedBox(width: widget.compact ? 8 : 12),
               // Filename and size
               Expanded(
@@ -624,6 +636,7 @@ class _DocumentTileState extends State<_DocumentTile> {
             ],
           ),
         ),
+        ),
       ),
     );
   }
@@ -665,20 +678,33 @@ class _DocumentTileState extends State<_DocumentTile> {
   }
 
   Future<void> _openDocument(String url) async {
-    // Handle data URLs (base64 encoded files)
-    if (url.startsWith('data:')) {
-      if (kIsWeb) {
-        _downloadDataUrlWeb(url, widget.attachment.name);
-      } else {
-        await _openDataUrlNative(url, widget.attachment.name);
-      }
-      return;
-    }
+    // Prevent multiple taps while opening
+    if (_isOpening) return;
+    setState(() => _isOpening = true);
 
-    // Handle regular HTTP URLs
-    final uri = Uri.parse(url);
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    try {
+      // Handle data URLs (base64 encoded files)
+      if (url.startsWith('data:')) {
+        if (kIsWeb) {
+          _downloadDataUrlWeb(url, widget.attachment.name);
+        } else {
+          await _openDataUrlNative(url, widget.attachment.name);
+        }
+        return;
+      }
+
+      // Handle regular HTTP URLs
+      final uri = Uri.parse(url);
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      }
+    } finally {
+      // Reset after a delay to prevent rapid re-taps
+      if (mounted) {
+        Future.delayed(const Duration(milliseconds: 500), () {
+          if (mounted) setState(() => _isOpening = false);
+        });
+      }
     }
   }
 

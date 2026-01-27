@@ -713,10 +713,11 @@ class TasksService {
   }
 
   /// Create checkout session for subscription
-  Future<CheckoutResponse> createCheckout(String planId, {String? returnUrl}) async {
+  Future<CheckoutResponse> createCheckout(String planId, {String? returnUrl, bool isYearly = false}) async {
     final response = await _dio.post('/subscriptions/checkout', data: {
       'plan_id': planId,
       'return_url': returnUrl,
+      'billing_period': isYearly ? 'yearly' : 'monthly',
     });
 
     if (response.data['success'] == true) {
@@ -800,6 +801,21 @@ class TasksService {
       // Convert to UTC for RFC3339 compatibility with Go backend
       'starts_at': startsAt?.toUtc().toIso8601String(),
       'expires_at': expiresAt?.toUtc().toIso8601String(),
+    });
+
+    if (response.data['success'] != true) {
+      throw ApiException.fromResponse(response.data);
+    }
+  }
+
+  /// Update plan pricing (admin only)
+  Future<void> updatePlanPricing(String planId, {
+    required double priceMonthly,
+    double? priceYearly,
+  }) async {
+    final response = await _dio.put('/admin/plans/$planId/pricing', data: {
+      'price_monthly': priceMonthly,
+      if (priceYearly != null) 'price_yearly': priceYearly,
     });
 
     if (response.data['success'] != true) {

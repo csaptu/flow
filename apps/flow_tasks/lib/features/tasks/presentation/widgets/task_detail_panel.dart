@@ -42,6 +42,8 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
   static const _debounceDuration = Duration(milliseconds: 800);
   // Track pending attachment deletions for optimistic UI
   final Set<String> _pendingAttachmentDeletions = {};
+  // Track refresh state
+  bool _isRefreshing = false;
 
   @override
   void initState() {
@@ -116,7 +118,7 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
     final attachmentsAsync = ref.read(taskAttachmentsProvider(widget.task.id));
     final existingUrls = attachmentsAsync.whenOrNull(
       data: (attachments) => attachments
-          .where((a) => a.type == 'link')
+          .where((a) => a.isLink)
           .map((a) => a.url)
           .toSet(),
     ) ?? <String>{};
@@ -129,6 +131,36 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
     } catch (e) {
       // Silently fail - don't interrupt user's typing
       debugPrint('Failed to auto-add URL attachment: $e');
+    }
+  }
+
+  /// Handle URL edited in description - update the attachment with old URL to new URL
+  void _handleUrlEdited(String oldUrl, String newUrl) async {
+    final attachmentsAsync = ref.read(taskAttachmentsProvider(widget.task.id));
+    final attachments = attachmentsAsync.whenOrNull(
+      data: (attachments) => attachments,
+    );
+    if (attachments == null) return;
+
+    // Find the attachment with the old URL
+    final oldAttachment = attachments
+        .where((a) => a.isLink && a.url == oldUrl)
+        .firstOrNull;
+
+    if (oldAttachment == null) {
+      // No attachment found with old URL - just add the new one
+      _handleUrlDetected(newUrl);
+      return;
+    }
+
+    try {
+      final attachActions = ref.read(attachmentActionsProvider(widget.task.id));
+      // Delete the old attachment and create a new one with the new URL
+      await attachActions.delete(oldAttachment.id);
+      await attachActions.addLink(newUrl);
+    } catch (e) {
+      // Silently fail - don't interrupt user's typing
+      debugPrint('Failed to update URL attachment: $e');
     }
   }
 
@@ -164,12 +196,14 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
   }
 
   /// Resolve image index (1-based) to image URL
-  /// [img1] = 1st image attachment, [img2] = 2nd image attachment, etc.
+  /// [img1] = 1st image attachment (oldest), [img2] = 2nd image attachment, etc.
   String? _resolveImageUrl(int imageIndex) {
     final attachmentsAsync = ref.read(taskAttachmentsProvider(widget.task.id));
     return attachmentsAsync.whenOrNull(
       data: (attachments) {
-        final images = attachments.where((a) => a.isImage).toList();
+        // Sort images by createdAt ASC (oldest first) so indices are stable
+        final images = attachments.where((a) => a.isImage).toList()
+          ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
         // imageIndex is 1-based, convert to 0-based
         final idx = imageIndex - 1;
         if (idx >= 0 && idx < images.length) {
@@ -269,11 +303,9 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Due date indicator - use local state as source of truth
-                  if (_localDueDate != null) ...[
-                    _buildDueDateRow(colors, task),
-                    const SizedBox(height: 16),
-                  ],
+                  // Due date and refresh row - always show (refresh button visible even without date)
+                  _buildDueDateRow(colors, task),
+                  const SizedBox(height: 16),
 
                   // Title with inline clean/revert button
                   Row(
@@ -399,22 +431,9 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Subtle cleaned indicator
-                      if (task.descriptionWasCleaned)
-                        Padding(
-                          padding: const EdgeInsets.only(right: 6, top: 4),
-                          child: Tooltip(
-                            message: 'AI cleaned',
-                            child: Icon(
-                              Icons.brush_rounded,
-                              size: 12,
-                              color: colors.textTertiary.withAlpha(120),
-                            ),
-                          ),
-                        ),
                       Expanded(
                         child: MarkdownDescriptionField(
-                          initialValue: task.description,
+                          initialValue: task.displayDescription ?? task.description,
                           hintText: 'Add description...',
                           onChanged: (value) {
                             _descriptionController.text = value;
@@ -424,25 +443,46 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
                           onImagePaste: (imageBytes, mimeType) => _handleImagePaste(imageBytes, mimeType),
                           imageUrlResolver: (attachmentId) => _resolveImageUrl(attachmentId),
                           onUrlDetected: _handleUrlDetected,
+                          onUrlEdited: _handleUrlEdited,
                         ),
                       ),
-                      // Inline clean/revert description button
+                      // Right side: AI cleaned indicator with sparkles + revert, OR clean button (matching title convention)
                       if (_descriptionController.text.isNotEmpty || task.descriptionWasCleaned)
                         if (task.descriptionWasCleaned)
-                          Tooltip(
-                            message: 'Restore your input',
-                            child: InkWell(
-                              onTap: _revertDescription,
-                              borderRadius: BorderRadius.circular(4),
-                              child: Padding(
-                                padding: const EdgeInsets.only(left: 8, top: 4),
-                                child: Icon(
-                                  Icons.undo_rounded,
-                                  size: 16,
-                                  color: colors.textTertiary,
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              // Sparkle indicator showing AI magic happened
+                              Tooltip(
+                                message: 'AI improved',
+                                child: Padding(
+                                  padding: const EdgeInsets.only(left: 8, top: 4),
+                                  child: Text(
+                                    '✨',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      color: colors.textTertiary,
+                                    ),
+                                  ),
                                 ),
                               ),
-                            ),
+                              // Revert button
+                              Tooltip(
+                                message: 'Restore original',
+                                child: InkWell(
+                                  onTap: _revertDescription,
+                                  borderRadius: BorderRadius.circular(4),
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(left: 4, top: 4),
+                                    child: Icon(
+                                      Icons.undo_rounded,
+                                      size: 16,
+                                      color: colors.textTertiary,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
                           )
                         else
                           InkWell(
@@ -451,7 +491,7 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
                             child: Padding(
                               padding: const EdgeInsets.only(left: 8, top: 4),
                               child: Icon(
-                                Icons.brush_rounded,
+                                Icons.auto_fix_high_rounded,
                                 size: 16,
                                 color: colors.textTertiary,
                               ),
@@ -500,174 +540,237 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
 
   Widget _buildHeader(
       BuildContext context, FlowColorScheme colors, Task task) {
+    // Add top safe area padding for bottom sheet (notch/status bar)
+    final topPadding = widget.isBottomSheet
+        ? MediaQuery.of(context).viewPadding.top
+        : 0.0;
     return Container(
-      height: 44,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+      padding: EdgeInsets.only(
+        left: 16,
+        right: 16,
+        top: topPadding > 0 ? topPadding : 0,
+      ),
       decoration: BoxDecoration(
         border: Border(
           bottom: BorderSide(color: colors.divider, width: 0.5),
         ),
       ),
-      child: Row(
-        children: [
-          // Priority indicator
-          if (task.priority != Priority.none)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: _getPriorityColor(task.priority.value).withAlpha(25),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.flag_rounded,
-                    size: 12,
-                    color: _getPriorityColor(task.priority.value),
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    _getPriorityLabel(task.priority.value),
-                    style: TextStyle(
-                      fontSize: 11,
+      child: SizedBox(
+        height: 44,
+        child: Row(
+          children: [
+            // Priority indicator
+            if (task.priority != Priority.none)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: _getPriorityColor(task.priority.value).withAlpha(25),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.flag_rounded,
+                      size: 12,
                       color: _getPriorityColor(task.priority.value),
-                      fontWeight: FontWeight.w500,
                     ),
-                  ),
-                ],
+                    const SizedBox(width: 4),
+                    Text(
+                      _getPriorityLabel(task.priority.value),
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: _getPriorityColor(task.priority.value),
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+            const Spacer(),
+
+            // Close button - simple text link style
+            GestureDetector(
+              onTap: () async {
+                // Save any pending changes before closing
+                await _updateTitle();
+                await _updateDescription();
+                ref.read(isNewlyCreatedTaskProvider.notifier).state = false;
+                widget.onClose();
+              },
+              child: Text(
+                'Close',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: colors.textSecondary,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
             ),
-
-          const Spacer(),
-
-          // Close button - simple text link style
-          GestureDetector(
-            onTap: () async {
-              // Save any pending changes before closing
-              await _updateTitle();
-              await _updateDescription();
-              ref.read(isNewlyCreatedTaskProvider.notifier).state = false;
-              widget.onClose();
-            },
-            child: Text(
-              'Close',
-              style: TextStyle(
-                fontSize: 14,
-                color: colors.textSecondary,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
+  Future<void> _refreshTask(Task task) async {
+    if (_isRefreshing) return;
+    setState(() => _isRefreshing = true);
+    try {
+      final actions = ref.read(taskActionsProvider);
+      final refreshedTask = await actions.refresh(task.id);
+      if (mounted) {
+        // Update controllers with refreshed data
+        _titleController.text = refreshedTask.displayTitle;
+        _descriptionController.text = refreshedTask.displayDescription ?? refreshedTask.description ?? '';
+        _localDueDate = refreshedTask.dueAt;
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isRefreshing = false);
+      }
+    }
+  }
+
   Widget _buildDueDateRow(FlowColorScheme colors, Task task) {
     // Use task's isOverdue which properly handles time-based overdue
-    final isOverdue = task.isOverdue;
+    final isOverdue = _localDueDate != null && task.isOverdue;
     final dateColor = isOverdue ? colors.error : colors.textSecondary;
 
-    return InkWell(
-      onTap: () async {
-        final taskId = task.id; // Capture task ID before async gap
-        final date = await TaskDateTimePicker.show(
-          context,
-          initialDate: _localDueDate,
-          hasTime: task.hasDueTime,
-          onClear: () async {
-            // Update local state immediately
-            setState(() => _localDueDate = null);
-            // Then update the store with clearDueAt flag
-            final actions = ref.read(taskActionsProvider);
-            await actions.update(taskId, clearDueAt: true);
-          },
-        );
-        if (date != null && mounted) {
-          // Update local state immediately for instant feedback
-          setState(() => _localDueDate = date);
-          // Then update the store (will sync in background)
-          final actions = ref.read(taskActionsProvider);
-          // Extract time if set (non-midnight means time was selected)
-          final hasTime = date.hour != 0 || date.minute != 0;
-          await actions.update(taskId, dueAt: date, hasDueTime: hasTime);
-        }
-      },
-      borderRadius: BorderRadius.circular(4),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.event_outlined, size: 16, color: dateColor),
-            const SizedBox(width: 8),
-            Text(
-              _formatDueDate(_localDueDate!, task.hasDueTime),
-              style: TextStyle(
-                fontSize: 13,
-                color: dateColor,
-                fontWeight: isOverdue ? FontWeight.w600 : FontWeight.w400,
-              ),
-            ),
-            if (isOverdue) ...[
-              const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: colors.error.withAlpha(25),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Text(
-                  'Overdue',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: colors.error,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-            ],
-            // Duplicate warning badge - clickable to show saved duplicates
-            if (task.hasDuplicateWarning) ...[
-              const SizedBox(width: 8),
-              Tooltip(
-                message: 'Tap to view similar tasks',
-                child: InkWell(
-                  onTap: _showSavedDuplicatesDialog,
-                  borderRadius: BorderRadius.circular(4),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFFA726).withAlpha(25),
-                      borderRadius: BorderRadius.circular(4),
+    return Row(
+      children: [
+        // Left side: Date info (clickable to change date)
+        if (_localDueDate != null)
+          InkWell(
+            onTap: () async {
+              final taskId = task.id; // Capture task ID before async gap
+              final date = await TaskDateTimePicker.show(
+                context,
+                initialDate: _localDueDate,
+                hasTime: task.hasDueTime,
+                onClear: () async {
+                  // Update local state immediately
+                  setState(() => _localDueDate = null);
+                  // Then update the store with clearDueAt flag
+                  final actions = ref.read(taskActionsProvider);
+                  await actions.update(taskId, clearDueAt: true);
+                },
+              );
+              if (date != null && mounted) {
+                // Update local state immediately for instant feedback
+                setState(() => _localDueDate = date);
+                // Then update the store (will sync in background)
+                final actions = ref.read(taskActionsProvider);
+                // Extract time if set (non-midnight means time was selected)
+                final hasTime = date.hour != 0 || date.minute != 0;
+                await actions.update(taskId, dueAt: date, hasDueTime: hasTime);
+              }
+            },
+            borderRadius: BorderRadius.circular(4),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.event_outlined, size: 16, color: dateColor),
+                  const SizedBox(width: 8),
+                  Text(
+                    _formatDueDate(_localDueDate!, task.hasDueTime),
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: dateColor,
+                      fontWeight: isOverdue ? FontWeight.w600 : FontWeight.w400,
                     ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.find_replace_rounded,
-                          size: 10,
-                          color: const Color(0xFFFFA726),
+                  ),
+                  if (isOverdue) ...[
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: colors.error.withAlpha(25),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        'Overdue',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: colors.error,
+                          fontWeight: FontWeight.w500,
                         ),
-                        const SizedBox(width: 4),
-                        Text(
-                          'Similar?',
-                          style: const TextStyle(
-                            fontSize: 11,
-                            color: Color(0xFFFFA726),
-                            fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                  // Duplicate warning badge - clickable to show saved duplicates
+                  if (task.hasDuplicateWarning) ...[
+                    const SizedBox(width: 8),
+                    Tooltip(
+                      message: 'Tap to view similar tasks',
+                      child: InkWell(
+                        onTap: _showSavedDuplicatesDialog,
+                        borderRadius: BorderRadius.circular(4),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFA726).withAlpha(25),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.find_replace_rounded,
+                                size: 10,
+                                color: const Color(0xFFFFA726),
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                'Similar?',
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  color: Color(0xFFFFA726),
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                      ],
+                      ),
                     ),
-                  ),
-                ),
+                  ],
+                ],
               ),
-            ],
-          ],
+            ),
+          ),
+
+        const Spacer(),
+
+        // Right side: Refresh button
+        Tooltip(
+          message: 'Refresh task',
+          child: InkWell(
+            onTap: _isRefreshing ? null : () => _refreshTask(task),
+            borderRadius: BorderRadius.circular(4),
+            child: Padding(
+              padding: const EdgeInsets.all(4),
+              child: _isRefreshing
+                  ? SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.5,
+                        color: colors.textTertiary,
+                      ),
+                    )
+                  : Icon(
+                      Icons.refresh_rounded,
+                      size: 16,
+                      color: colors.textTertiary,
+                    ),
+            ),
+          ),
         ),
-      ),
+      ],
     );
   }
 
@@ -1345,9 +1448,12 @@ class _AIToolbarState extends ConsumerState<_AIToolbar> {
     final task = ref.watch(selectedTaskProvider) ?? widget.task;
     // Watch online status for AI buttons
     final isOnline = ref.watch(isOnlineProvider);
-    // Get keyboard height for bottom sheet padding
+    // Get keyboard height and bottom safe area for bottom sheet padding
     final keyboardHeight = widget.isBottomSheet
         ? MediaQuery.of(context).viewInsets.bottom
+        : 0.0;
+    final bottomSafeArea = widget.isBottomSheet
+        ? MediaQuery.of(context).viewPadding.bottom
         : 0.0;
 
     return Column(
@@ -1536,9 +1642,10 @@ class _AIToolbarState extends ConsumerState<_AIToolbar> {
           ),
         ),
 
-        // Keyboard padding for bottom sheet
-        if (keyboardHeight > 0)
-          SizedBox(height: keyboardHeight),
+        // Bottom safe area padding for home indicator (when no keyboard)
+        // or keyboard padding (when keyboard is visible)
+        if (widget.isBottomSheet)
+          SizedBox(height: keyboardHeight > 0 ? keyboardHeight : bottomSafeArea),
       ],
     );
   }
@@ -2738,8 +2845,9 @@ class _SimilarTasksDialogState extends State<_SimilarTasksDialog> {
                         ),
                       ),
                       const SizedBox(height: 16),
-                      // Description
-                      if (task.description != null && task.description!.isNotEmpty) ...[
+                      // Description (use display version if available)
+                      if ((task.displayDescription ?? task.description) != null &&
+                          (task.displayDescription ?? task.description)!.isNotEmpty) ...[
                         Text(
                           'Description',
                           style: TextStyle(
@@ -2750,7 +2858,7 @@ class _SimilarTasksDialogState extends State<_SimilarTasksDialog> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          task.description!,
+                          (task.displayDescription ?? task.description)!,
                           style: const TextStyle(fontSize: 14),
                         ),
                         const SizedBox(height: 16),

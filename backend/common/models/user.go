@@ -70,14 +70,15 @@ const (
 )
 
 // DefaultAIPreferences returns the default AI preferences for new users
+// All features default to "ask" (Manual) - user must explicitly enable auto
 func DefaultAIPreferences() AIPreferences {
 	return AIPreferences{
-		CleanTitle:         AISettingAuto,
-		CleanDescription:   AISettingAuto,
+		CleanTitle:         AISettingAsk,
+		CleanDescription:   AISettingAsk,
 		Decompose:          AISettingAsk,
-		ComplexityCheck:    AISettingAuto,
-		EntityExtraction:   AISettingAuto,
-		SmartDueDates:      AISettingAuto,
+		ComplexityCheck:    AISettingAsk,
+		EntityExtraction:   AISettingAsk,
+		SmartDueDates:      AISettingAsk,
 		RecurringDetection: AISettingAsk,
 		AutoGroup:          AISettingAsk,
 		DraftEmail:         AISettingAsk,

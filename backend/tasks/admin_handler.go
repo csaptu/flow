@@ -366,6 +366,10 @@ func (h *AdminHandler) ListPlans(c *fiber.Ctx) error {
 			"features":          p.Features,
 			"created_at":        p.CreatedAt.Format(time.RFC3339),
 		}
+		// Include yearly price if available
+		if p.PriceYearly != nil {
+			plan["price_yearly"] = float64(*p.PriceYearly) / 100.0
+		}
 		result = append(result, plan)
 	}
 
@@ -393,6 +397,39 @@ func (h *AdminHandler) UpdatePlan(c *fiber.Ctx) error {
 	}
 
 	return httputil.Success(c, map[string]string{"message": "plan updated"})
+}
+
+// UpdatePlanPricing updates a subscription plan's pricing (admin only)
+func (h *AdminHandler) UpdatePlanPricing(c *fiber.Ctx) error {
+	planID := c.Params("id")
+
+	var req struct {
+		PriceMonthly float64  `json:"price_monthly"`
+		PriceYearly  *float64 `json:"price_yearly,omitempty"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return httputil.BadRequest(c, "invalid request body")
+	}
+
+	if req.PriceMonthly <= 0 {
+		return httputil.BadRequest(c, "monthly price must be positive")
+	}
+
+	// Convert dollars to cents for storage
+	priceMonthly := int(req.PriceMonthly * 100)
+	var priceYearly *int
+	if req.PriceYearly != nil && *req.PriceYearly > 0 {
+		py := int(*req.PriceYearly * 100)
+		priceYearly = &py
+	}
+
+	// Update plan pricing in repository
+	err := repository.UpdatePlanPricing(c.Context(), planID, priceMonthly, priceYearly)
+	if err != nil {
+		return httputil.InternalError(c, "failed to update plan pricing")
+	}
+
+	return httputil.Success(c, map[string]string{"message": "pricing updated"})
 }
 
 // =====================================================

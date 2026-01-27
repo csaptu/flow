@@ -27,44 +27,31 @@ class HomeScreen extends ConsumerStatefulWidget {
 }
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
-  double? _userSidebarWidth; // User-set width (null = auto)
-  static const _minSidebarWidth = 160.0;
-  static const _maxSidebarWidth = 400.0;
   static const _collapsedSidebarWidth = 56.0; // Icons only
-  static const _minMiddlePanelWidth = 280.0; // Minimum space for task list
+  static const _expandedSidebarWidth = 200.0; // Full labels
+  static const _collapseThreshold = 700.0; // Screen width below which sidebar auto-collapses
+  bool? _userWantsExpanded; // User preference: null = auto, true = expanded, false = collapsed
   bool _isShowingSheet = false;
   String? _sheetTaskId; // Track which task is shown in bottom sheet
 
-  /// Calculate sidebar width based on screen size
+  /// Calculate sidebar width - only two states: collapsed or expanded
   double _getSidebarWidth(double screenWidth, bool hasDetailPanel) {
-    // If user has explicitly set a width, try to respect it
-    if (_userSidebarWidth != null) {
-      final availableForSidebar = screenWidth -
-          _minMiddlePanelWidth -
-          (hasDetailPanel ? _detailPanelWidth : 0);
-      return _userSidebarWidth!.clamp(_collapsedSidebarWidth, availableForSidebar.clamp(_collapsedSidebarWidth, _maxSidebarWidth));
-    }
-
-    // Auto-calculate based on available space
     final availableWidth = screenWidth - (hasDetailPanel ? _detailPanelWidth : 0);
 
-    // Very narrow: collapsed sidebar
-    if (availableWidth < 500) {
+    // If user has set a preference, respect it (unless screen is too narrow)
+    if (_userWantsExpanded != null) {
+      // Always collapse if screen is very narrow
+      if (availableWidth < 500) {
+        return _collapsedSidebarWidth;
+      }
+      return _userWantsExpanded! ? _expandedSidebarWidth : _collapsedSidebarWidth;
+    }
+
+    // Auto decision based on screen width
+    if (availableWidth < _collapseThreshold) {
       return _collapsedSidebarWidth;
     }
-
-    // Narrow: minimal sidebar
-    if (availableWidth < 700) {
-      return _minSidebarWidth;
-    }
-
-    // Medium: comfortable sidebar
-    if (availableWidth < 1000) {
-      return 200.0;
-    }
-
-    // Wide: full sidebar
-    return FlowSpacing.sidebarWidth;
+    return _expandedSidebarWidth;
   }
 
   @override
@@ -99,8 +86,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       });
     }
 
-    return Scaffold(
-      body: SafeArea(
+    return CallbackShortcuts(
+      bindings: <ShortcutActivator, VoidCallback>{
+        const SingleActivator(LogicalKeyboardKey.comma, meta: true): () {
+          Navigator.of(context).push(
+            MaterialPageRoute(builder: (context) => const SettingsScreen()),
+          );
+        },
+      },
+      child: Focus(
+        autofocus: true,
+        child: Scaffold(
+          body: SafeArea(
         child: Row(
           children: [
             // Sidebar (hide on very narrow screens)
@@ -115,30 +112,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     onItemTap: (index) {
                       ref.read(selectedSidebarIndexProvider.notifier).state = index;
                       ref.read(selectedListIdProvider.notifier).state = null; // Clear list selection
+                      ref.read(selectedTaskIdProvider.notifier).state = null; // Close task panel
                     },
                   ),
-                  // Resize handle
-                  MouseRegion(
-                    cursor: SystemMouseCursors.resizeColumn,
-                    child: GestureDetector(
-                      onHorizontalDragUpdate: (details) {
-                        setState(() {
-                          final currentWidth = _userSidebarWidth ?? sidebarWidth;
-                          _userSidebarWidth = (currentWidth + details.delta.dx)
-                              .clamp(_collapsedSidebarWidth, _maxSidebarWidth);
-                        });
-                      },
-                      child: Container(
-                        width: 4,
-                        color: Colors.transparent,
-                        child: Center(
-                          child: Container(
-                            width: 1,
-                            color: context.flowColors.divider.withOpacity(0.5),
-                          ),
-                        ),
-                      ),
-                    ),
+                  // Resize handle - drag to toggle between collapsed/expanded
+                  _SidebarResizeHandle(
+                    isCollapsed: isCollapsed,
+                    onToggle: (expand) {
+                      setState(() => _userWantsExpanded = expand);
+                    },
                   ),
                 ],
               ),
@@ -188,6 +170,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               ),
             ),
           ],
+        ),
+      ),
         ),
       ),
     );
@@ -246,6 +230,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         return const _AdminOrdersView();
       case 12: // Admin: AI Services
         return const _AdminAIServicesView();
+      case 13: // Admin: Pricing
+        return const _AdminPricingView();
       default:
         // Index >= 200 means a smart list (entity) is selected
         if (selectedIndex >= 200) {
@@ -1064,6 +1050,7 @@ class _ListsDrawer extends ConsumerWidget {
                         onTap: () {
                           ref.read(selectedSidebarIndexProvider.notifier).state = item.index;
                           ref.read(selectedListIdProvider.notifier).state = null;
+                          ref.read(selectedTaskIdProvider.notifier).state = null; // Close task panel
                           Navigator.of(context).pop();
                         },
                       );
@@ -1078,6 +1065,7 @@ class _ListsDrawer extends ConsumerWidget {
                         onListTap: (listId) {
                           ref.read(selectedListIdProvider.notifier).state = listId;
                           ref.read(selectedSidebarIndexProvider.notifier).state = 100;
+                          ref.read(selectedTaskIdProvider.notifier).state = null; // Close task panel
                           Navigator.of(context).pop();
                         },
                       ),
@@ -1162,14 +1150,14 @@ class _DrawerListItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = context.flowColors;
 
-    // Add left indent for nested lists (16px per depth level)
+    // Reduced indent for nested lists (16px per depth level)
     final leftIndent = list.depth * 16.0;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: EdgeInsets.only(left: 12 + leftIndent, right: 12, top: 2, bottom: 2),
+          padding: EdgeInsets.only(left: leftIndent, right: 12, top: 2, bottom: 2),
           child: Material(
             color: isSelected ? colors.sidebarSelected : Colors.transparent,
             borderRadius: BorderRadius.circular(FlowSpacing.radiusSm),
@@ -1283,44 +1271,45 @@ class _CollapsibleDrawerListsSectionState extends ConsumerState<_CollapsibleDraw
           child: Row(
             children: [
               // Expand/collapse button + label
-              InkWell(
-                onTap: () {
-                  ref.read(listsExpandedProvider.notifier).state = !isExpanded;
-                },
-                borderRadius: BorderRadius.circular(4),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        isExpanded ? Icons.expand_more : Icons.chevron_right,
-                        size: 18,
-                        color: colors.textTertiary,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        'My Lists',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: colors.textTertiary,
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        '(${widget.lists.length})',
-                        style: TextStyle(
-                          fontSize: 11,
+              Expanded(
+                child: InkWell(
+                  onTap: () {
+                    ref.read(listsExpandedProvider.notifier).state = !isExpanded;
+                  },
+                  borderRadius: BorderRadius.circular(4),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(
+                      children: [
+                        Icon(
+                          isExpanded ? Icons.expand_more : Icons.chevron_right,
+                          size: 18,
                           color: colors.textTertiary,
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 4),
+                        Text(
+                          'My Lists',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: colors.textTertiary,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          '(${widget.lists.length})',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: colors.textTertiary,
+                          ),
+                        ),
+                        const Spacer(),
+                      ],
+                    ),
                   ),
                 ),
               ),
-              const Spacer(),
               // Search toggle
               if (isExpanded)
                 InkWell(
@@ -1611,11 +1600,14 @@ class _SidebarState extends ConsumerState<_Sidebar> {
                         size: 28,
                       ),
                       const SizedBox(width: FlowSpacing.sm),
-                      Text(
-                        'Flow',
-                        style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                              fontWeight: FontWeight.bold,
-                            ),
+                      Flexible(
+                        child: Text(
+                          'Flow',
+                          style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                                fontWeight: FontWeight.bold,
+                              ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
                     ],
                   ),
@@ -1692,31 +1684,54 @@ class _SidebarState extends ConsumerState<_Sidebar> {
                   );
                 }),
 
-                // Lists section (collapsible) - hide when sidebar is collapsed
-                if (lists.isNotEmpty && !collapsed) ...[
+                // Lists section - show icon when collapsed, full section when expanded
+                if (lists.isNotEmpty) ...[
                   const SizedBox(height: 16),
-                  _CollapsibleListsSection(
-                    lists: lists,
-                    selectedListId: ref.watch(selectedListIdProvider),
-                    onListTap: (listId) {
-                      ref.read(selectedListIdProvider.notifier).state = listId;
-                      ref.read(selectedSidebarIndexProvider.notifier).state = 100;
-                      ref.read(selectedSmartListProvider.notifier).state = null;
-                    },
-                  ),
+                  if (collapsed)
+                    // Collapsed: show icon that opens popup menu
+                    _CollapsedListsButton(
+                      lists: lists,
+                      selectedListId: ref.watch(selectedListIdProvider),
+                      onListTap: (listId) {
+                        ref.read(selectedListIdProvider.notifier).state = listId;
+                        ref.read(selectedSidebarIndexProvider.notifier).state = 100;
+                        ref.read(selectedSmartListProvider.notifier).state = null;
+                        ref.read(selectedTaskIdProvider.notifier).state = null;
+                      },
+                    )
+                  else
+                    _CollapsibleListsSection(
+                      lists: lists,
+                      selectedListId: ref.watch(selectedListIdProvider),
+                      onListTap: (listId) {
+                        ref.read(selectedListIdProvider.notifier).state = listId;
+                        ref.read(selectedSidebarIndexProvider.notifier).state = 100;
+                        ref.read(selectedSmartListProvider.notifier).state = null;
+                        ref.read(selectedTaskIdProvider.notifier).state = null;
+                      },
+                    ),
                 ],
 
-                // Smart Lists section (AI-extracted entities) - hide when collapsed
-                if (!collapsed) ...[
-                  const SizedBox(height: 16),
+                // Smart Lists section - show icon when collapsed, full section when expanded
+                const SizedBox(height: 16),
+                if (collapsed)
+                  _CollapsedSmartListsButton(
+                    onEntityTap: (type, value) {
+                      ref.read(selectedSmartListProvider.notifier).state = (type: type, value: value);
+                      ref.read(selectedSidebarIndexProvider.notifier).state = 200;
+                      ref.read(selectedListIdProvider.notifier).state = null;
+                      ref.read(selectedTaskIdProvider.notifier).state = null;
+                    },
+                  )
+                else
                   _SmartListsSection(
                     onEntityTap: (type, value) {
                       ref.read(selectedSmartListProvider.notifier).state = (type: type, value: value);
                       ref.read(selectedSidebarIndexProvider.notifier).state = 200;
                       ref.read(selectedListIdProvider.notifier).state = null;
+                      ref.read(selectedTaskIdProvider.notifier).state = null;
                     },
                   ),
-                ],
               ],
             ),
           ),
@@ -1758,6 +1773,13 @@ class _SidebarState extends ConsumerState<_Sidebar> {
                                 isSelected: widget.selectedIndex == 12,
                                 onTap: () => widget.onItemTap(12),
                               ),
+                              // Pricing
+                              _AdminBottomItem(
+                                icon: Icons.attach_money,
+                                label: 'Pricing',
+                                isSelected: widget.selectedIndex == 13,
+                                onTap: () => widget.onItemTap(13),
+                              ),
                             ],
                           )
                         : const SizedBox.shrink(),
@@ -1794,6 +1816,28 @@ class _SidebarState extends ConsumerState<_Sidebar> {
                                   ),
                                 ),
                               ),
+                            ),
+                            // Admin toggle (collapsed view)
+                            isAdmin.when(
+                              data: (admin) => admin
+                                  ? Tooltip(
+                                      message: _adminExpanded ? 'Hide admin' : 'Show admin',
+                                      child: InkWell(
+                                        onTap: () => setState(() => _adminExpanded = !_adminExpanded),
+                                        borderRadius: BorderRadius.circular(6),
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(8),
+                                          child: Icon(
+                                            Icons.admin_panel_settings_outlined,
+                                            size: 18,
+                                            color: _adminExpanded ? colors.primary : colors.textTertiary,
+                                          ),
+                                        ),
+                                      ),
+                                    )
+                                  : const SizedBox.shrink(),
+                              loading: () => const SizedBox.shrink(),
+                              error: (_, __) => const SizedBox.shrink(),
                             ),
                           ],
                         )
@@ -1946,8 +1990,8 @@ class _ListItemState extends ConsumerState<_ListItem> {
       }
     }
 
-    // Match Smart Lists spacing: parent at left: 12, children at left: 24
-    final leftPadding = widget.list.depth == 0 ? 12.0 : 24.0 + (widget.list.depth - 1) * 12.0;
+    // Reduced indent: parent at left: 0, children at left: 12
+    final leftPadding = widget.list.depth == 0 ? 0.0 : 12.0 + (widget.list.depth - 1) * 12.0;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2025,6 +2069,7 @@ class _ListItemState extends ConsumerState<_ListItem> {
             onTap: () {
               ref.read(selectedListIdProvider.notifier).state = sublist.id;
               ref.read(selectedSidebarIndexProvider.notifier).state = 100; // List mode
+              ref.read(selectedTaskIdProvider.notifier).state = null; // Close task panel
             },
           )),
       ],
@@ -2044,6 +2089,490 @@ class _SidebarItem {
   final String label;
 
   const _SidebarItem({required this.icon, required this.label});
+}
+
+/// Resize handle for sidebar - drag to toggle collapsed/expanded
+/// Shows visual feedback while dragging, snaps to collapsed/expanded on release
+class _SidebarResizeHandle extends StatefulWidget {
+  final bool isCollapsed;
+  final void Function(bool expand) onToggle;
+
+  const _SidebarResizeHandle({
+    required this.isCollapsed,
+    required this.onToggle,
+  });
+
+  @override
+  State<_SidebarResizeHandle> createState() => _SidebarResizeHandleState();
+}
+
+class _SidebarResizeHandleState extends State<_SidebarResizeHandle> {
+  double _dragDelta = 0;
+  bool _isDragging = false;
+  OverlayEntry? _dragOverlay;
+
+  static const _collapsedWidth = 56.0;
+  static const _expandedWidth = 200.0;
+
+  void _showDragOverlay(BuildContext context) {
+    _removeDragOverlay();
+    final colors = context.flowColors;
+    final box = context.findRenderObject() as RenderBox;
+    final position = box.localToGlobal(Offset.zero);
+
+    _dragOverlay = OverlayEntry(
+      builder: (context) => Positioned(
+        left: position.dx + _dragDelta,
+        top: position.dy,
+        child: IgnorePointer(
+          child: Container(
+            width: 3,
+            height: box.size.height,
+            decoration: BoxDecoration(
+              color: colors.primary,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+        ),
+      ),
+    );
+    Overlay.of(context).insert(_dragOverlay!);
+  }
+
+  void _updateDragOverlay() {
+    _dragOverlay?.markNeedsBuild();
+  }
+
+  void _removeDragOverlay() {
+    _dragOverlay?.remove();
+    _dragOverlay?.dispose();
+    _dragOverlay = null;
+  }
+
+  @override
+  void dispose() {
+    _removeDragOverlay();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.flowColors;
+    final currentWidth = widget.isCollapsed ? _collapsedWidth : _expandedWidth;
+
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeColumn,
+      child: GestureDetector(
+        onHorizontalDragStart: (_) {
+          setState(() {
+            _isDragging = true;
+            _dragDelta = 0;
+          });
+          _showDragOverlay(context);
+        },
+        onHorizontalDragUpdate: (details) {
+          setState(() {
+            _dragDelta += details.delta.dx;
+            // Clamp to reasonable bounds
+            _dragDelta = _dragDelta.clamp(
+              -currentWidth + 30,
+              _expandedWidth + 50 - currentWidth,
+            );
+          });
+          _updateDragOverlay();
+        },
+        onHorizontalDragEnd: (_) {
+          _removeDragOverlay();
+          // Snap based on where the line ended up
+          final targetWidth = currentWidth + _dragDelta;
+          final midpoint = (_collapsedWidth + _expandedWidth) / 2;
+          widget.onToggle(targetWidth > midpoint);
+
+          setState(() {
+            _isDragging = false;
+            _dragDelta = 0;
+          });
+        },
+        onHorizontalDragCancel: () {
+          _removeDragOverlay();
+          setState(() {
+            _isDragging = false;
+            _dragDelta = 0;
+          });
+        },
+        child: Container(
+          width: 6,
+          color: Colors.transparent,
+          child: Center(
+            child: Container(
+              width: 1,
+              color: colors.divider.withAlpha(128),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Collapsed Lists button - shows popup menu with lists when sidebar is collapsed
+
+class _CollapsedListsButton extends ConsumerWidget {
+  final List<TaskList> lists;
+  final String? selectedListId;
+  final void Function(String) onListTap;
+
+  const _CollapsedListsButton({
+    required this.lists,
+    required this.selectedListId,
+    required this.onListTap,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final colors = context.flowColors;
+    final isListSelected = ref.watch(selectedSidebarIndexProvider) == 100;
+
+    return Tooltip(
+      message: 'My Lists',
+      waitDuration: const Duration(milliseconds: 500),
+      child: Material(
+        color: isListSelected ? colors.sidebarSelected : Colors.transparent,
+        borderRadius: BorderRadius.circular(FlowSpacing.radiusSm),
+        child: InkWell(
+          onTap: () => _showListsPopup(context, ref),
+          borderRadius: BorderRadius.circular(FlowSpacing.radiusSm),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+            child: Center(
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Icon(
+                    Icons.list_alt_rounded,
+                    size: 20,
+                    color: isListSelected ? colors.primary : colors.textSecondary,
+                  ),
+                  // Small person badge to indicate "my lists"
+                  Positioned(
+                    right: -4,
+                    bottom: -2,
+                    child: Container(
+                      padding: const EdgeInsets.all(1),
+                      decoration: BoxDecoration(
+                        color: colors.sidebar,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        Icons.person,
+                        size: 8,
+                        color: isListSelected ? colors.primary : colors.textTertiary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showListsPopup(BuildContext context, WidgetRef ref) {
+    final colors = context.flowColors;
+    final RenderBox button = context.findRenderObject() as RenderBox;
+    final RenderBox overlay = Navigator.of(context).overlay!.context.findRenderObject() as RenderBox;
+    final position = RelativeRect.fromRect(
+      Rect.fromPoints(
+        button.localToGlobal(Offset(button.size.width, 0), ancestor: overlay),
+        button.localToGlobal(button.size.bottomRight(Offset.zero), ancestor: overlay),
+      ),
+      Offset.zero & overlay.size,
+    );
+
+    showMenu<String>(
+      context: context,
+      position: position,
+      constraints: const BoxConstraints(maxWidth: 250, maxHeight: 400),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      color: colors.surface,
+      items: [
+        // Header
+        PopupMenuItem<String>(
+          enabled: false,
+          height: 32,
+          child: Text(
+            'My Lists',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: colors.textTertiary,
+            ),
+          ),
+        ),
+        // List items (sublists indented under parent)
+        ...lists.expand((list) => _buildListItems(list, colors, 0)),
+      ],
+    ).then((listId) {
+      if (listId != null) {
+        onListTap(listId);
+      }
+    });
+  }
+
+  List<PopupMenuEntry<String>> _buildListItems(TaskList list, FlowColorScheme colors, int depth) {
+    final isSelected = selectedListId == list.id;
+    // Use the list's own depth for proper indentation
+    final indent = list.depth * 20.0;
+    return [
+      PopupMenuItem<String>(
+        value: list.id,
+        height: 36,
+        child: Padding(
+          padding: EdgeInsets.only(left: indent),
+          child: Row(
+            children: [
+              Icon(
+                Icons.tag,
+                size: 14,
+                color: isSelected
+                    ? colors.primary
+                    : (list.color != null
+                        ? _parseColor(list.color!)
+                        : colors.textSecondary),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  list.name,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: isSelected ? FontWeight.w500 : FontWeight.normal,
+                    color: isSelected ? colors.primary : colors.textPrimary,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              if (list.taskCount > 0)
+                Text(
+                  '${list.taskCount}',
+                  style: TextStyle(fontSize: 11, color: colors.textTertiary),
+                ),
+            ],
+          ),
+        ),
+      ),
+      // Recursively add children
+      ...list.children.expand((child) => _buildListItems(child, colors, depth + 1)),
+    ];
+  }
+
+  Color _parseColor(String color) {
+    if (color.startsWith('#')) {
+      return Color(int.parse(color.substring(1), radix: 16) + 0xFF000000);
+    }
+    return Colors.grey;
+  }
+}
+
+/// Collapsed Smart Lists button - shows popup menu with entities when sidebar is collapsed
+class _CollapsedSmartListsButton extends ConsumerWidget {
+  final void Function(String type, String value) onEntityTap;
+
+  const _CollapsedSmartListsButton({required this.onEntityTap});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final colors = context.flowColors;
+    final entitiesAsync = ref.watch(smartListsProvider);
+    final isSmartListSelected = ref.watch(selectedSidebarIndexProvider) == 200;
+
+    // Don't show if no entities
+    return entitiesAsync.when(
+      data: (entities) {
+        if (entities.isEmpty) return const SizedBox.shrink();
+
+        return Tooltip(
+          message: 'Smart Lists',
+          waitDuration: const Duration(milliseconds: 500),
+          child: Material(
+            color: isSmartListSelected ? colors.sidebarSelected : Colors.transparent,
+            borderRadius: BorderRadius.circular(FlowSpacing.radiusSm),
+            child: InkWell(
+              onTap: () => _showSmartListsPopup(context, ref, entities),
+              borderRadius: BorderRadius.circular(FlowSpacing.radiusSm),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+                child: Center(
+                  child: Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      Icon(
+                        Icons.list_alt_rounded,
+                        size: 20,
+                        color: isSmartListSelected ? colors.primary : colors.textSecondary,
+                      ),
+                      // Small sparkle badge to indicate AI/smart
+                      Positioned(
+                        right: -4,
+                        bottom: -2,
+                        child: Container(
+                          padding: const EdgeInsets.all(1),
+                          decoration: BoxDecoration(
+                            color: colors.sidebar,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(
+                            Icons.auto_awesome,
+                            size: 8,
+                            color: isSmartListSelected ? colors.primary : colors.textTertiary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+      loading: () => const SizedBox.shrink(),
+      error: (_, __) => const SizedBox.shrink(),
+    );
+  }
+
+  void _showSmartListsPopup(BuildContext context, WidgetRef ref, Map<String, List<SmartListItem>> entities) {
+    final colors = context.flowColors;
+    final selectedSmartList = ref.read(selectedSmartListProvider);
+    final RenderBox button = context.findRenderObject() as RenderBox;
+    final RenderBox overlay = Navigator.of(context).overlay!.context.findRenderObject() as RenderBox;
+    final position = RelativeRect.fromRect(
+      Rect.fromPoints(
+        button.localToGlobal(Offset(button.size.width, 0), ancestor: overlay),
+        button.localToGlobal(button.size.bottomRight(Offset.zero), ancestor: overlay),
+      ),
+      Offset.zero & overlay.size,
+    );
+
+    final items = <PopupMenuEntry<(String, String)>>[];
+
+    // Header
+    items.add(PopupMenuItem<(String, String)>(
+      enabled: false,
+      height: 32,
+      child: Text(
+        'Smart Lists',
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          color: colors.textTertiary,
+        ),
+      ),
+    ));
+
+    // Add entities by category
+    final categories = [
+      ('person', 'People', Icons.person_outline),
+      ('location', 'Locations', Icons.place),
+      ('organization', 'Organizations', Icons.business_outlined),
+    ];
+
+    for (final (type, label, icon) in categories) {
+      final typeEntities = entities[type];
+      if (typeEntities == null || typeEntities.isEmpty) continue;
+
+      // Category header
+      items.add(PopupMenuItem<(String, String)>(
+        enabled: false,
+        height: 28,
+        child: Row(
+          children: [
+            Icon(icon, size: 14, color: colors.textTertiary),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: colors.textTertiary,
+              ),
+            ),
+          ],
+        ),
+      ));
+
+      // Entity items
+      for (final entity in typeEntities.take(5)) {
+        final isSelected = selectedSmartList?.type == type &&
+            selectedSmartList?.value.toLowerCase() == entity.value.toLowerCase();
+        items.add(PopupMenuItem<(String, String)>(
+          value: (type, entity.value),
+          height: 32,
+          child: Padding(
+            padding: const EdgeInsets.only(left: 20),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    entity.value,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: isSelected ? colors.primary : colors.textPrimary,
+                      fontWeight: isSelected ? FontWeight.w500 : FontWeight.normal,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: colors.textTertiary.withAlpha(25),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    '${entity.count}',
+                    style: TextStyle(fontSize: 10, color: colors.textTertiary),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ));
+      }
+
+      // Show "more" if there are more than 5
+      if (typeEntities.length > 5) {
+        items.add(PopupMenuItem<(String, String)>(
+          enabled: false,
+          height: 24,
+          child: Padding(
+            padding: const EdgeInsets.only(left: 20),
+            child: Text(
+              '+${typeEntities.length - 5} more',
+              style: TextStyle(fontSize: 11, color: colors.textTertiary),
+            ),
+          ),
+        ));
+      }
+    }
+
+    if (items.isEmpty) return;
+
+    showMenu<(String, String)>(
+      context: context,
+      position: position,
+      constraints: const BoxConstraints(maxWidth: 220, maxHeight: 400),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      color: colors.surface,
+      items: items,
+    ).then((result) {
+      if (result != null) {
+        onEntityTap(result.$1, result.$2);
+      }
+    });
+  }
 }
 
 /// Collapsible Lists section with search
@@ -2091,44 +2620,45 @@ class _CollapsibleListsSectionState extends ConsumerState<_CollapsibleListsSecti
           child: Row(
             children: [
               // Expand/collapse button + label
-              InkWell(
-                onTap: () {
-                  ref.read(listsExpandedProvider.notifier).state = !isExpanded;
-                },
-                borderRadius: BorderRadius.circular(4),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        isExpanded ? Icons.expand_more : Icons.chevron_right,
-                        size: 16,
-                        color: colors.textTertiary,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        'My Lists',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: colors.textTertiary,
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        '(${widget.lists.length})',
-                        style: TextStyle(
-                          fontSize: 11,
+              Expanded(
+                child: InkWell(
+                  onTap: () {
+                    ref.read(listsExpandedProvider.notifier).state = !isExpanded;
+                  },
+                  borderRadius: BorderRadius.circular(4),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(
+                      children: [
+                        Icon(
+                          isExpanded ? Icons.expand_more : Icons.chevron_right,
+                          size: 16,
                           color: colors.textTertiary,
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 4),
+                        Text(
+                          'My Lists',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: colors.textTertiary,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          '(${widget.lists.length})',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: colors.textTertiary,
+                          ),
+                        ),
+                        const Spacer(),
+                      ],
+                    ),
                   ),
                 ),
               ),
-              const Spacer(),
               // Search toggle button
               if (isExpanded)
                 InkWell(
@@ -2571,9 +3101,10 @@ class _SearchResultItem extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  if (task.description != null && task.description!.isNotEmpty)
+                  if ((task.displayDescription ?? task.description) != null &&
+                      (task.displayDescription ?? task.description)!.isNotEmpty)
                     Text(
-                      task.description!.replaceAll('\n', ' '),
+                      (task.displayDescription ?? task.description)!.replaceAll('\n', ' '),
                       style: TextStyle(
                         fontSize: 12,
                         color: colors.textTertiary,
@@ -3161,6 +3692,454 @@ class _AdminAIServicesViewState extends ConsumerState<_AdminAIServicesView> {
         ref.invalidate(aiConfigsProvider);
       }
     });
+  }
+}
+
+/// Admin Pricing View - configure subscription prices
+class _AdminPricingView extends ConsumerWidget {
+  const _AdminPricingView();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final colors = context.flowColors;
+    final plansAsync = ref.watch(subscriptionPlansProvider);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Header
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              Icon(Icons.attach_money, size: 24, color: colors.primary),
+              const SizedBox(width: 12),
+              Text(
+                'Pricing Configuration',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  color: colors.textPrimary,
+                ),
+              ),
+            ],
+          ),
+        ),
+        Divider(height: 1, color: colors.divider),
+        // Info banner
+        Container(
+          padding: const EdgeInsets.all(12),
+          margin: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: colors.primary.withAlpha(13),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: colors.primary.withAlpha(51)),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.info_outline, size: 16, color: colors.primary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Configure subscription prices. Changes apply to new subscriptions only.',
+                  style: TextStyle(color: colors.textSecondary, fontSize: 12),
+                ),
+              ),
+            ],
+          ),
+        ),
+        // Plans list
+        Expanded(
+          child: plansAsync.when(
+            data: (plans) {
+              // Filter to paid plans only, group by tier
+              final paidPlans = plans.where((p) => !p.isFree).toList();
+              final plansByTier = <String, SubscriptionPlan>{};
+              for (final plan in paidPlans) {
+                plansByTier[plan.tier] = plan;
+              }
+
+              if (plansByTier.isEmpty) {
+                return Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.attach_money, size: 48, color: colors.textTertiary),
+                      const SizedBox(height: 12),
+                      Text('No paid plans configured', style: TextStyle(color: colors.textSecondary)),
+                    ],
+                  ),
+                );
+              }
+
+              return ListView(
+                children: plansByTier.entries.map((entry) {
+                  final plan = entry.value;
+                  return _AdminPricingTile(
+                    plan: plan,
+                    onTap: () => _showEditDialog(context, ref, plan),
+                  );
+                }).toList(),
+              );
+            },
+            loading: () => const Center(child: CircularProgressIndicator()),
+            error: (err, _) => Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.error_outline, size: 48, color: colors.error),
+                  const SizedBox(height: 12),
+                  Text('Failed to load plans', style: TextStyle(color: colors.textPrimary)),
+                  const SizedBox(height: 8),
+                  TextButton(
+                    onPressed: () => ref.invalidate(subscriptionPlansProvider),
+                    child: const Text('Retry'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _showEditDialog(BuildContext context, WidgetRef ref, SubscriptionPlan plan) {
+    showDialog(
+      context: context,
+      builder: (context) => _AdminEditPricingDialog(plan: plan),
+    ).then((updated) {
+      if (updated == true) {
+        ref.invalidate(subscriptionPlansProvider);
+      }
+    });
+  }
+}
+
+/// Pricing tile for admin
+class _AdminPricingTile extends StatelessWidget {
+  final SubscriptionPlan plan;
+  final VoidCallback onTap;
+
+  const _AdminPricingTile({required this.plan, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.flowColors;
+    final tierColor = plan.tier == 'premium' ? Colors.purple : Colors.blue;
+    final tierName = plan.tier == 'light' ? 'Basic' : 'Premium';
+
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          border: Border(bottom: BorderSide(color: colors.divider.withAlpha(128), width: 0.5)),
+        ),
+        child: Row(
+          children: [
+            // Tier icon
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: tierColor.withAlpha(38),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(
+                plan.tier == 'premium' ? Icons.diamond : Icons.bolt,
+                color: tierColor,
+                size: 20,
+              ),
+            ),
+            const SizedBox(width: 14),
+            // Plan info
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text(
+                        tierName,
+                        style: TextStyle(
+                          color: colors.textPrimary,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 15,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: tierColor.withAlpha(38),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          plan.tier,
+                          style: TextStyle(color: tierColor, fontSize: 10, fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${plan.features.length} features',
+                    style: TextStyle(color: colors.textTertiary, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+            // Prices
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  '\$${plan.priceMonthly.toStringAsFixed(0)}/mo',
+                  style: TextStyle(
+                    color: colors.textPrimary,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 15,
+                  ),
+                ),
+                Text(
+                  plan.priceYearly != null && plan.priceYearly! > 0
+                      ? '\$${plan.priceYearly!.toStringAsFixed(0)}/yr'
+                      : 'Yearly: not set',
+                  style: TextStyle(
+                    color: plan.priceYearly != null && plan.priceYearly! > 0
+                        ? colors.textSecondary
+                        : colors.textTertiary,
+                    fontSize: 12,
+                    fontStyle: plan.priceYearly != null && plan.priceYearly! > 0
+                        ? FontStyle.normal
+                        : FontStyle.italic,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(width: 8),
+            Icon(Icons.chevron_right, size: 20, color: colors.textTertiary),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Edit pricing dialog for admin
+class _AdminEditPricingDialog extends ConsumerStatefulWidget {
+  final SubscriptionPlan plan;
+
+  const _AdminEditPricingDialog({required this.plan});
+
+  @override
+  ConsumerState<_AdminEditPricingDialog> createState() => _AdminEditPricingDialogState();
+}
+
+class _AdminEditPricingDialogState extends ConsumerState<_AdminEditPricingDialog> {
+  late TextEditingController _monthlyController;
+  late TextEditingController _yearlyController;
+  bool _isLoading = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _monthlyController = TextEditingController(text: widget.plan.priceMonthly.toStringAsFixed(0));
+    // priceYearly might be null if not set in backend - show current value if exists
+    final yearlyValue = widget.plan.priceYearly;
+    _yearlyController = TextEditingController(
+      text: yearlyValue != null && yearlyValue > 0 ? yearlyValue.toStringAsFixed(0) : '',
+    );
+    // Add listener to update UI when typing
+    _yearlyController.addListener(_onYearlyChanged);
+  }
+
+  void _onYearlyChanged() {
+    setState(() {}); // Rebuild to update conversion preview
+  }
+
+  @override
+  void dispose() {
+    _yearlyController.removeListener(_onYearlyChanged);
+    _monthlyController.dispose();
+    _yearlyController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.flowColors;
+    final tierColor = widget.plan.tier == 'premium' ? Colors.purple : Colors.blue;
+    final tierName = widget.plan.tier == 'light' ? 'Basic' : 'Premium';
+
+    return AlertDialog(
+      backgroundColor: colors.surface,
+      title: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: tierColor.withAlpha(26),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(
+              widget.plan.tier == 'premium' ? Icons.diamond : Icons.bolt,
+              size: 20,
+              color: tierColor,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Text('$tierName Pricing', style: TextStyle(color: colors.textPrimary, fontSize: 18)),
+        ],
+      ),
+      content: SizedBox(
+        width: 320,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (_error != null) ...[
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: colors.error.withAlpha(26),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(_error!, style: TextStyle(color: colors.error, fontSize: 12)),
+              ),
+              const SizedBox(height: 16),
+            ],
+            // Monthly price
+            Text('Monthly Price', style: TextStyle(color: colors.textSecondary, fontSize: 12, fontWeight: FontWeight.w500)),
+            const SizedBox(height: 6),
+            TextField(
+              controller: _monthlyController,
+              keyboardType: TextInputType.number,
+              style: TextStyle(color: colors.textPrimary),
+              decoration: InputDecoration(
+                prefixText: '\$ ',
+                suffixText: '/mo',
+                suffixStyle: TextStyle(color: colors.textSecondary, fontSize: 14),
+                filled: true,
+                fillColor: colors.background,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: colors.border)),
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: colors.border)),
+                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: colors.primary)),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              ),
+            ),
+            const SizedBox(height: 16),
+            // Yearly price
+            Text('Yearly Price (total per year)', style: TextStyle(color: colors.textSecondary, fontSize: 12, fontWeight: FontWeight.w500)),
+            const SizedBox(height: 6),
+            TextField(
+              controller: _yearlyController,
+              keyboardType: TextInputType.number,
+              style: TextStyle(color: colors.textPrimary),
+              decoration: InputDecoration(
+                prefixText: '\$ ',
+                suffixText: '/yr',
+                suffixStyle: TextStyle(color: colors.textSecondary, fontSize: 14),
+                hintText: 'e.g., 48 for \$4/mo',
+                hintStyle: TextStyle(color: colors.textTertiary, fontSize: 12),
+                filled: true,
+                fillColor: colors.background,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: colors.border)),
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: colors.border)),
+                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: colors.primary)),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              ),
+            ),
+            const SizedBox(height: 12),
+            // Conversion preview - always show
+            Builder(
+              builder: (context) {
+                final yearly = double.tryParse(_yearlyController.text) ?? 0;
+                final perMonth = yearly > 0 ? yearly / 12 : 0;
+                final hasYearly = yearly > 0;
+                return Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: hasYearly ? colors.primary.withAlpha(15) : colors.background,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: hasYearly ? colors.primary.withAlpha(50) : colors.border),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        hasYearly ? Icons.calculate_outlined : Icons.info_outline,
+                        size: 14,
+                        color: hasYearly ? colors.primary : colors.textTertiary,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          hasYearly
+                              ? '\$${yearly.toStringAsFixed(0)}/yr = \$${perMonth.toStringAsFixed(2)}/mo'
+                              : 'Enter yearly price for discount (e.g., 48 = \$4/mo)',
+                          style: TextStyle(
+                            color: hasYearly ? colors.primary : colors.textTertiary,
+                            fontSize: 12,
+                            fontWeight: hasYearly ? FontWeight.w500 : FontWeight.normal,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: Text('Cancel', style: TextStyle(color: colors.textSecondary)),
+        ),
+        FilledButton(
+          onPressed: _isLoading ? null : _save,
+          style: FilledButton.styleFrom(backgroundColor: colors.primary),
+          child: _isLoading
+              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+              : const Text('Save'),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _save() async {
+    final monthly = double.tryParse(_monthlyController.text);
+    if (monthly == null || monthly <= 0) {
+      setState(() => _error = 'Enter a valid monthly price');
+      return;
+    }
+
+    double? yearly;
+    if (_yearlyController.text.trim().isNotEmpty) {
+      yearly = double.tryParse(_yearlyController.text);
+      if (yearly == null || yearly <= 0) {
+        setState(() => _error = 'Enter a valid yearly price or leave empty');
+        return;
+      }
+    }
+
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    try {
+      final service = ref.read(tasksServiceProvider);
+      await service.updatePlanPricing(widget.plan.id, priceMonthly: monthly, priceYearly: yearly);
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (e) {
+      setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 }
 
@@ -4058,7 +5037,6 @@ class _SmartListsSection extends ConsumerWidget {
                 child: Padding(
                   padding: const EdgeInsets.symmetric(vertical: 4),
                   child: Row(
-                    mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(
                         isExpanded ? Icons.expand_more : Icons.chevron_right,
@@ -4066,13 +5044,16 @@ class _SmartListsSection extends ConsumerWidget {
                         color: colors.textTertiary,
                       ),
                       const SizedBox(width: 4),
-                      Text(
-                        'Smart Lists',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: colors.textTertiary,
-                          letterSpacing: 0.5,
+                      Flexible(
+                        child: Text(
+                          'Smart Lists',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: colors.textTertiary,
+                            letterSpacing: 0.5,
+                          ),
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
                       const SizedBox(width: 4),
@@ -4421,14 +5402,13 @@ class _SmartListCategoryState extends State<_SmartListCategory> {
       children: [
         // Category header
         Padding(
-          padding: const EdgeInsets.only(left: 24, right: 12, top: 4, bottom: 2),
+          padding: const EdgeInsets.only(left: 12, right: 12, top: 4, bottom: 2),
           child: InkWell(
             onTap: () => setState(() => _expanded = !_expanded),
             borderRadius: BorderRadius.circular(4),
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 4),
               child: Row(
-                mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(
                     _expanded ? Icons.expand_more : Icons.chevron_right,
@@ -4438,7 +5418,7 @@ class _SmartListCategoryState extends State<_SmartListCategory> {
                   const SizedBox(width: 4),
                   Icon(widget.icon, size: 14, color: colors.textTertiary),
                   const SizedBox(width: 6),
-                  Flexible(
+                  Expanded(
                     child: Text(
                       widget.label,
                       style: TextStyle(
@@ -4454,7 +5434,7 @@ class _SmartListCategoryState extends State<_SmartListCategory> {
                     '(${widget.items.length})',
                     style: TextStyle(
                       fontSize: 10,
-                      color: colors.textTertiary.withOpacity(0.7),
+                      color: colors.textTertiary.withAlpha(180),
                     ),
                   ),
                 ],
@@ -4468,7 +5448,7 @@ class _SmartListCategoryState extends State<_SmartListCategory> {
           ...widget.items.map((item) {
             final isSelected = widget.selectedItem?.toLowerCase() == item.value.toLowerCase();
             return Padding(
-              padding: const EdgeInsets.only(left: 36, right: 4),
+              padding: const EdgeInsets.only(left: 24, right: 4),
               child: Material(
                 color: isSelected ? colors.sidebarSelected : Colors.transparent,
                 borderRadius: BorderRadius.circular(FlowSpacing.radiusSm),

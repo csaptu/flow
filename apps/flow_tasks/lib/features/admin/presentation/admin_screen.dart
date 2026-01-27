@@ -8,7 +8,7 @@ import 'package:flow_tasks/features/admin/presentation/widgets/user_ai_profile_d
 import 'package:intl/intl.dart';
 
 /// Admin section type
-enum AdminSection { users, orders, aiServices }
+enum AdminSection { users, orders, pricing, aiServices }
 
 /// Admin dashboard screen - Bear-style with collapsible sections
 class AdminScreen extends ConsumerStatefulWidget {
@@ -22,6 +22,7 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
   String _tierFilter = 'all';
   bool _usersExpanded = true;
   bool _ordersExpanded = true;
+  bool _pricingExpanded = true;
   bool _aiServicesExpanded = true;
   int _usersPage = 1;
   int _ordersPage = 1;
@@ -118,6 +119,22 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
               ],
             ),
           ),
+          // Pricing section (full width)
+          Container(
+            decoration: BoxDecoration(
+              border: Border(top: BorderSide(color: colors.divider, width: 0.5)),
+            ),
+            child: _buildSection(
+              colors: colors,
+              title: 'Pricing',
+              icon: Icons.attach_money,
+              isExpanded: _pricingExpanded,
+              onToggle: () => setState(() => _pricingExpanded = !_pricingExpanded),
+              content: _PricingContent(
+                onEditPlan: (plan) => _showEditPlanDialog(context, ref, plan),
+              ),
+            ),
+          ),
           // AI Services section (full width below)
           Container(
             decoration: BoxDecoration(
@@ -169,6 +186,17 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
               tierFilter: _tierFilter,
               page: _ordersPage,
               onPageChanged: (page) => setState(() => _ordersPage = page),
+            ),
+          ),
+          // Pricing section
+          _buildSection(
+            colors: colors,
+            title: 'Pricing',
+            icon: Icons.attach_money,
+            isExpanded: _pricingExpanded,
+            onToggle: () => setState(() => _pricingExpanded = !_pricingExpanded),
+            content: _PricingContent(
+              onEditPlan: (plan) => _showEditPlanDialog(context, ref, plan),
             ),
           ),
           // AI Services section
@@ -270,6 +298,17 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
         userEmail: user.email,
       ),
     );
+  }
+
+  void _showEditPlanDialog(BuildContext context, WidgetRef ref, SubscriptionPlan plan) {
+    showDialog(
+      context: context,
+      builder: (context) => _EditPlanDialog(plan: plan),
+    ).then((updated) {
+      if (updated == true) {
+        ref.invalidate(subscriptionPlansProvider);
+      }
+    });
   }
 }
 
@@ -1231,6 +1270,478 @@ class _EditUserDialogState extends ConsumerState<_EditUserDialog> {
         planId: _selectedPlanId,
         startsAt: _startsAt,
         expiresAt: _expiresAt,
+      );
+
+      if (mounted) {
+        Navigator.of(context).pop(true);
+      }
+    } catch (e) {
+      setState(() {
+        _error = e.toString();
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+}
+
+// =====================================================
+// Pricing Section
+// =====================================================
+
+/// Pricing content section - shows plans with editable prices
+class _PricingContent extends ConsumerWidget {
+  final Function(SubscriptionPlan) onEditPlan;
+
+  const _PricingContent({required this.onEditPlan});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final colors = context.flowColors;
+    final plansAsync = ref.watch(subscriptionPlansProvider);
+
+    return plansAsync.when(
+      data: (plans) => _buildPlansList(context, colors, plans),
+      loading: () => Container(
+        height: 150,
+        alignment: Alignment.center,
+        child: const CircularProgressIndicator(),
+      ),
+      error: (err, _) => _buildErrorState(colors, err.toString()),
+    );
+  }
+
+  Widget _buildPlansList(
+    BuildContext context,
+    FlowColorScheme colors,
+    List<SubscriptionPlan> plans,
+  ) {
+    // Group by tier and show only paid plans
+    final paidPlans = plans.where((p) => !p.isFree).toList();
+
+    if (paidPlans.isEmpty) {
+      return _buildEmptyState(colors);
+    }
+
+    // Group plans by tier
+    final plansByTier = <String, SubscriptionPlan>{};
+    for (final plan in paidPlans) {
+      plansByTier[plan.tier] = plan;
+    }
+
+    return Column(
+      children: [
+        // Info header
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: colors.primary.withValues(alpha: 0.05),
+            border: Border(
+              bottom: BorderSide(color: colors.divider.withValues(alpha: 0.5)),
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.info_outline, size: 16, color: colors.primary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Configure subscription prices. Changes apply to new subscriptions.',
+                  style: TextStyle(color: colors.textSecondary, fontSize: 12),
+                ),
+              ),
+            ],
+          ),
+        ),
+        // Plan items
+        ...plansByTier.entries.map((entry) => _PlanItem(
+          plan: entry.value,
+          onTap: () => onEditPlan(entry.value),
+        )),
+      ],
+    );
+  }
+
+  Widget _buildEmptyState(FlowColorScheme colors) {
+    return Container(
+      padding: const EdgeInsets.all(32),
+      alignment: Alignment.center,
+      child: Column(
+        children: [
+          Icon(Icons.attach_money, size: 48, color: colors.textTertiary),
+          const SizedBox(height: 12),
+          Text('No paid plans configured', style: TextStyle(color: colors.textSecondary)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildErrorState(FlowColorScheme colors, String error) {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        children: [
+          Icon(Icons.error_outline, size: 40, color: colors.error),
+          const SizedBox(height: 12),
+          Text(
+            'Failed to load plans',
+            style: TextStyle(color: colors.textPrimary, fontWeight: FontWeight.w500),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            error,
+            style: TextStyle(color: colors.textTertiary, fontSize: 12),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Plan item row
+class _PlanItem extends StatelessWidget {
+  final SubscriptionPlan plan;
+  final VoidCallback onTap;
+
+  const _PlanItem({required this.plan, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.flowColors;
+    final tierColor = plan.tier == 'premium' ? Colors.purple : Colors.blue;
+
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: BorderSide(color: colors.divider.withValues(alpha: 0.5), width: 0.5),
+          ),
+        ),
+        child: Row(
+          children: [
+            // Tier icon
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: tierColor.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(
+                plan.tier == 'premium' ? Icons.diamond : Icons.bolt,
+                color: tierColor,
+                size: 18,
+              ),
+            ),
+            const SizedBox(width: 12),
+
+            // Plan info
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text(
+                        plan.tier == 'light' ? 'Basic' : 'Premium',
+                        style: TextStyle(
+                          color: colors.textPrimary,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 14,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: tierColor.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          plan.tier,
+                          style: TextStyle(
+                            color: tierColor,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${plan.features.length} features • ${plan.tier == 'premium' ? 'Unlimited' : '50'} AI calls/day',
+                    style: TextStyle(color: colors.textTertiary, fontSize: 11),
+                  ),
+                ],
+              ),
+            ),
+
+            // Prices
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  '\$${plan.priceMonthly.toStringAsFixed(0)}/mo',
+                  style: TextStyle(
+                    color: colors.textPrimary,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                  ),
+                ),
+                if (plan.priceYearly != null)
+                  Text(
+                    '\$${plan.priceYearly!.toStringAsFixed(0)}/yr',
+                    style: TextStyle(
+                      color: colors.textSecondary,
+                      fontSize: 11,
+                    ),
+                  ),
+              ],
+            ),
+
+            const SizedBox(width: 8),
+            Icon(Icons.chevron_right, size: 18, color: colors.textTertiary),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Edit plan dialog
+class _EditPlanDialog extends ConsumerStatefulWidget {
+  final SubscriptionPlan plan;
+
+  const _EditPlanDialog({required this.plan});
+
+  @override
+  ConsumerState<_EditPlanDialog> createState() => _EditPlanDialogState();
+}
+
+class _EditPlanDialogState extends ConsumerState<_EditPlanDialog> {
+  late TextEditingController _monthlyPriceController;
+  late TextEditingController _yearlyPriceController;
+  bool _isLoading = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _monthlyPriceController = TextEditingController(
+      text: widget.plan.priceMonthly.toStringAsFixed(0),
+    );
+    _yearlyPriceController = TextEditingController(
+      text: widget.plan.priceYearly?.toStringAsFixed(0) ?? '',
+    );
+  }
+
+  @override
+  void dispose() {
+    _monthlyPriceController.dispose();
+    _yearlyPriceController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.flowColors;
+    final tierColor = widget.plan.tier == 'premium' ? Colors.purple : Colors.blue;
+    final tierName = widget.plan.tier == 'light' ? 'Basic' : 'Premium';
+
+    return AlertDialog(
+      backgroundColor: colors.surface,
+      title: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: tierColor.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(
+              widget.plan.tier == 'premium' ? Icons.diamond : Icons.bolt,
+              size: 20,
+              color: tierColor,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Text(
+            '$tierName Pricing',
+            style: TextStyle(color: colors.textPrimary, fontSize: 18),
+          ),
+        ],
+      ),
+      content: SizedBox(
+        width: 360,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Error message
+            if (_error != null) ...[
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: colors.error.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(_error!, style: TextStyle(color: colors.error, fontSize: 12)),
+              ),
+              const SizedBox(height: 16),
+            ],
+
+            // Monthly price
+            Text(
+              'Monthly Price (\$/month)',
+              style: TextStyle(color: colors.textSecondary, fontSize: 12, fontWeight: FontWeight.w500),
+            ),
+            const SizedBox(height: 6),
+            TextField(
+              controller: _monthlyPriceController,
+              keyboardType: TextInputType.number,
+              style: TextStyle(color: colors.textPrimary),
+              decoration: InputDecoration(
+                prefixText: '\$ ',
+                suffixText: '/mo',
+                filled: true,
+                fillColor: colors.background,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide(color: colors.border),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide(color: colors.border),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide(color: colors.primary),
+                ),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            // Yearly price
+            Text(
+              'Yearly Price (\$/year)',
+              style: TextStyle(color: colors.textSecondary, fontSize: 12, fontWeight: FontWeight.w500),
+            ),
+            const SizedBox(height: 6),
+            TextField(
+              controller: _yearlyPriceController,
+              keyboardType: TextInputType.number,
+              style: TextStyle(color: colors.textPrimary),
+              decoration: InputDecoration(
+                prefixText: '\$ ',
+                suffixText: '/yr',
+                hintText: 'Leave empty to disable yearly option',
+                hintStyle: TextStyle(color: colors.textTertiary, fontSize: 12),
+                filled: true,
+                fillColor: colors.background,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide(color: colors.border),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide(color: colors.border),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide(color: colors.primary),
+                ),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            // Preview
+            if (_yearlyPriceController.text.isNotEmpty) ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: colors.background,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: colors.border),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline, size: 16, color: colors.textTertiary),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Builder(
+                        builder: (context) {
+                          final yearly = double.tryParse(_yearlyPriceController.text) ?? 0;
+                          final perMonth = yearly / 12;
+                          return Text(
+                            'Yearly = \$${perMonth.toStringAsFixed(0)}/mo (\$${yearly.toStringAsFixed(0)}/yr)',
+                            style: TextStyle(color: colors.textSecondary, fontSize: 12),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: Text('Cancel', style: TextStyle(color: colors.textSecondary)),
+        ),
+        FilledButton(
+          onPressed: _isLoading ? null : _saveChanges,
+          style: FilledButton.styleFrom(backgroundColor: colors.primary),
+          child: _isLoading
+              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+              : const Text('Save'),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _saveChanges() async {
+    final monthlyPrice = double.tryParse(_monthlyPriceController.text);
+    if (monthlyPrice == null || monthlyPrice <= 0) {
+      setState(() => _error = 'Please enter a valid monthly price');
+      return;
+    }
+
+    final yearlyText = _yearlyPriceController.text.trim();
+    double? yearlyPrice;
+    if (yearlyText.isNotEmpty) {
+      yearlyPrice = double.tryParse(yearlyText);
+      if (yearlyPrice == null || yearlyPrice <= 0) {
+        setState(() => _error = 'Please enter a valid yearly price or leave empty');
+        return;
+      }
+    }
+
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    try {
+      final tasksService = ref.read(tasksServiceProvider);
+      await tasksService.updatePlanPricing(
+        widget.plan.id,
+        priceMonthly: monthlyPrice,
+        priceYearly: yearlyPrice,
       );
 
       if (mounted) {

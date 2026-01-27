@@ -286,6 +286,9 @@ typedef ImageUrlResolver = String? Function(int imageIndex);
 /// Callback when a URL is detected in the description
 typedef UrlDetectedCallback = void Function(String url);
 
+/// Callback when a URL is edited (old URL changed to new URL)
+typedef UrlEditedCallback = void Function(String oldUrl, String newUrl);
+
 /// Bear-style markdown description field with live rendering
 class MarkdownDescriptionField extends ConsumerStatefulWidget {
   final String? initialValue;
@@ -299,6 +302,8 @@ class MarkdownDescriptionField extends ConsumerStatefulWidget {
   final ImageUrlResolver? imageUrlResolver;
   /// Called when a new URL is detected (typed or pasted)
   final UrlDetectedCallback? onUrlDetected;
+  /// Called when a URL is edited (old URL changed to new URL)
+  final UrlEditedCallback? onUrlEdited;
 
   const MarkdownDescriptionField({
     super.key,
@@ -310,6 +315,7 @@ class MarkdownDescriptionField extends ConsumerStatefulWidget {
     this.onImagePaste,
     this.imageUrlResolver,
     this.onUrlDetected,
+    this.onUrlEdited,
   });
 
   @override
@@ -395,9 +401,9 @@ class _MarkdownDescriptionFieldState extends ConsumerState<MarkdownDescriptionFi
     super.dispose();
   }
 
-  // URL detection - notify when new URLs are typed/pasted
+  // URL detection - notify when new URLs are typed/pasted or edited
   void _onTextChangedForUrls() {
-    if (widget.onUrlDetected == null) return;
+    if (widget.onUrlDetected == null && widget.onUrlEdited == null) return;
 
     final text = _controller!.text;
     final urlRegex = RegExp(
@@ -415,10 +421,20 @@ class _MarkdownDescriptionFieldState extends ConsumerState<MarkdownDescriptionFi
       currentUrls.add(url);
     }
 
-    // Find new URLs (not seen before)
-    for (final url in currentUrls) {
-      if (!_knownUrls.contains(url)) {
-        widget.onUrlDetected!(url);
+    // Find removed URLs (were in previous, not in current)
+    final removedUrls = _knownUrls.difference(currentUrls);
+    // Find new URLs (in current, not in previous)
+    final newUrls = currentUrls.difference(_knownUrls);
+
+    // If exactly 1 URL removed and 1 URL added, it's likely an edit
+    if (removedUrls.length == 1 && newUrls.length == 1 && widget.onUrlEdited != null) {
+      widget.onUrlEdited!(removedUrls.first, newUrls.first);
+    } else {
+      // Handle purely new URLs
+      if (widget.onUrlDetected != null) {
+        for (final url in newUrls) {
+          widget.onUrlDetected!(url);
+        }
       }
     }
 
@@ -433,8 +449,10 @@ class _MarkdownDescriptionFieldState extends ConsumerState<MarkdownDescriptionFi
       return;
     }
 
-    // Don't clear state if we're in the middle of selecting a hashtag
+    // Don't clear editing state if we're in the middle of selecting a hashtag,
+    // but ALWAYS remove the overlay to prevent blocking touches
     if (!_focusNode.hasFocus && _isSelectingHashtag) {
+      _removeOverlay(); // Critical: remove overlay even during hashtag selection
       return;
     }
 
@@ -612,8 +630,8 @@ class _MarkdownDescriptionFieldState extends ConsumerState<MarkdownDescriptionFi
     _isSelectingHashtag = true;
   }
 
-  void _handleKeyEvent(KeyEvent event) {
-    if (event is! KeyDownEvent) return;
+  KeyEventResult _handleKeyEvent(KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
 
     // Handle dropdown navigation when suggestions are showing
     if (_showSuggestions) {
@@ -624,24 +642,24 @@ class _MarkdownDescriptionFieldState extends ConsumerState<MarkdownDescriptionFi
             _dropdownSelectedIndex = (_dropdownSelectedIndex + 1) % suggestions.length;
           });
           _overlayEntry?.markNeedsBuild();
-          return;
+          return KeyEventResult.handled;
         }
         if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
           setState(() {
             _dropdownSelectedIndex = (_dropdownSelectedIndex - 1 + suggestions.length) % suggestions.length;
           });
           _overlayEntry?.markNeedsBuild();
-          return;
+          return KeyEventResult.handled;
         }
         if (event.logicalKey == LogicalKeyboardKey.enter ||
             event.logicalKey == LogicalKeyboardKey.tab) {
           _startHashtagSelection();
           _onHashtagSelected(suggestions[_dropdownSelectedIndex]);
-          return;
+          return KeyEventResult.handled;
         }
         if (event.logicalKey == LogicalKeyboardKey.escape) {
           _hideHashtagDropdown();
-          return;
+          return KeyEventResult.handled;
         }
       }
     }
@@ -652,22 +670,21 @@ class _MarkdownDescriptionFieldState extends ConsumerState<MarkdownDescriptionFi
     if (isModifierPressed) {
       if (event.logicalKey == LogicalKeyboardKey.keyB) {
         _toggleBold();
-        return;
+        return KeyEventResult.handled;
       }
       if (event.logicalKey == LogicalKeyboardKey.keyI) {
         _toggleItalic();
-        return;
+        return KeyEventResult.handled;
       }
       if (event.logicalKey == LogicalKeyboardKey.keyV) {
-        // Check for image paste
+        // Check for image paste - don't handle, let default paste happen for text
         _handleImagePaste();
-        // Don't return - let the default paste happen for text
       }
     }
 
-    if (event.logicalKey == LogicalKeyboardKey.enter) {
-      _handleEnterKey();
-    }
+    // Don't intercept enter key - let TextField handle it normally
+    // List continuation is handled via onChanged
+    return KeyEventResult.ignored;
   }
 
   /// Handle pasting images from clipboard
@@ -764,6 +781,35 @@ class _MarkdownDescriptionFieldState extends ConsumerState<MarkdownDescriptionFi
         _focusNode.requestFocus();
         Future.delayed(const Duration(milliseconds: 50), () {
           _isToolbarInteraction = false;
+        });
+      }
+    });
+  }
+
+  void _insertHashtag() {
+    _isToolbarInteraction = true;
+    final text = _controller!.text;
+    final selection = _controller!.selection;
+    final cursorPos = selection.isValid ? selection.start : text.length;
+
+    // Insert # at cursor position
+    final newText = '${text.substring(0, cursorPos)}#${text.substring(cursorPos)}';
+    final newCursorPos = cursorPos + 1;
+
+    _controller!.value = TextEditingValue(
+      text: newText,
+      selection: TextSelection.collapsed(offset: newCursorPos),
+    );
+    widget.onChanged?.call(newText);
+
+    // Restore focus and trigger hashtag detection
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _focusNode.requestFocus();
+        Future.delayed(const Duration(milliseconds: 50), () {
+          _isToolbarInteraction = false;
+          // Manually trigger hashtag detection
+          _onTextChangedForHashtag();
         });
       }
     });
@@ -948,31 +994,38 @@ class _MarkdownDescriptionFieldState extends ConsumerState<MarkdownDescriptionFi
           children: [
             CompositedTransformTarget(
               link: _layerLink,
-              child: KeyboardListener(
-                focusNode: FocusNode(),
-                onKeyEvent: _handleKeyEvent,
-                child: TextField(
-                  controller: controller,
-                  focusNode: _focusNode,
-                  readOnly: widget.readOnly,
-                  style: TextStyle(
-                    fontSize: 15,
-                    color: colors.textSecondary,
-                    height: 1.5,
+              child: Theme(
+                data: Theme.of(context).copyWith(
+                  textSelectionTheme: TextSelectionThemeData(
+                    selectionColor: colors.textTertiary.withAlpha(80),
+                    cursorColor: colors.textSecondary,
                   ),
-                  decoration: InputDecoration(
-                    border: InputBorder.none,
-                    enabledBorder: InputBorder.none,
-                    focusedBorder: InputBorder.none,
-                    hintText: widget.hintText,
-                    hintStyle: TextStyle(color: colors.textPlaceholder),
-                    contentPadding: EdgeInsets.zero,
-                    isDense: true,
-                    filled: false,
+                ),
+                child: Focus(
+                  onKeyEvent: (node, event) => _handleKeyEvent(event),
+                  child: TextField(
+                    controller: controller,
+                    focusNode: _focusNode,
+                    readOnly: widget.readOnly,
+                    style: TextStyle(
+                      fontSize: 15,
+                      color: colors.textSecondary,
+                      height: 1.5,
+                    ),
+                    decoration: InputDecoration(
+                      border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                      hintText: widget.hintText,
+                      hintStyle: TextStyle(color: colors.textPlaceholder),
+                      contentPadding: EdgeInsets.zero,
+                      isDense: true,
+                      filled: false,
+                    ),
+                    maxLines: null,
+                    minLines: 2,
+                    onChanged: widget.onChanged,
                   ),
-                  maxLines: null,
-                  minLines: 2,
-                  onChanged: widget.onChanged,
                 ),
               ),
             ),
@@ -993,6 +1046,13 @@ class _MarkdownDescriptionFieldState extends ConsumerState<MarkdownDescriptionFi
                       tooltip: 'Italic (⌘I)',
                       onTapDown: () => _isToolbarInteraction = true,
                       onTap: _toggleItalic,
+                    ),
+                    const SizedBox(width: 4),
+                    _FormatButton(
+                      icon: Icons.tag,
+                      tooltip: 'Add hashtag',
+                      onTapDown: () => _isToolbarInteraction = true,
+                      onTap: _insertHashtag,
                     ),
                   ],
                 ),
@@ -1226,22 +1286,25 @@ class _BearMarkdownBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Check for special patterns that need custom rendering
+    // Check for special patterns that need complex rendering
     final hasHashtags = _hashtagRegex.hasMatch(data);
     final hasImages = _imageRegex.hasMatch(data);
 
-    if (hasHashtags || hasImages) {
-      return _buildRichContent(context);
+    // Simple case: no hashtags or images - just render styled text
+    // This matches TextField spacing exactly
+    if (!hasHashtags && !hasImages) {
+      return Text.rich(
+        TextSpan(children: _parseTextSegment(data)),
+        style: TextStyle(
+          fontSize: 15,
+          color: colors.textSecondary,
+          height: 1.5,
+        ),
+      );
     }
 
-    return MarkdownBody(
-      data: data,
-      selectable: false,
-      styleSheet: _buildStyleSheet(context),
-      onTapLink: (text, href, title) {
-        if (href != null) launchUrl(Uri.parse(href));
-      },
-    );
+    // Complex case: has hashtags or images
+    return _buildRichContent(context);
   }
 
   /// Build rich content with hashtags, images, and markdown

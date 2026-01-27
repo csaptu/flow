@@ -187,3 +187,18 @@ func UpdatePlanFields(ctx context.Context, planID string, paddlePriceID, applePr
 
 	return err
 }
+
+// UpdatePlanPricing updates a subscription plan's pricing (admin use).
+func UpdatePlanPricing(ctx context.Context, planID string, priceMonthly int, priceYearly *int) error {
+	db := getPool()
+
+	_, err := db.Exec(ctx, `
+		UPDATE subscription_plans SET
+			price_monthly_cents = $2,
+			price_yearly_cents = $3,
+			updated_at = NOW()
+		WHERE id = $1
+	`, planID, priceMonthly, priceYearly)
+
+	return err
+}

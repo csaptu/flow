@@ -409,15 +409,19 @@ class _ExpandableTaskTileState extends ConsumerState<ExpandableTaskTile>
     );
   }
 
-  bool get _hasMetadata =>
-      widget.task.description != null && widget.task.description!.isNotEmpty;
+  bool get _hasMetadata {
+    final desc = widget.task.displayDescription ?? widget.task.description;
+    return desc != null && desc.isNotEmpty;
+  }
 
   Widget _buildMetadataRow(FlowColorScheme colors) {
     final task = widget.task;
     final widgets = <Widget>[];
 
-    if (task.description != null && task.description!.isNotEmpty) {
-      final descriptionPreview = _getDescriptionPreview(task.description!);
+    // Use displayDescription (AI cleaned) if available, otherwise original
+    final desc = task.displayDescription ?? task.description;
+    if (desc != null && desc.isNotEmpty) {
+      final descriptionPreview = _getDescriptionPreview(desc);
       if (descriptionPreview.isNotEmpty) {
         widgets.add(RichDescriptionText(
           text: descriptionPreview,

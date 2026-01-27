@@ -133,26 +133,8 @@ class _AICookingDialogState extends State<AICookingDialog>
     _timeoutTimer?.cancel();
     _messageRotationTimer?.cancel();
 
-    setState(() {
-      _isProcessing = false;
-      _isCompleted = true;
-    });
-
-    // Start 2-second countdown before closing
-    _countdownTimer = Timer.periodic(
-      const Duration(seconds: 1),
-      (timer) {
-        if (mounted) {
-          setState(() {
-            _countdownSeconds--;
-          });
-          if (_countdownSeconds <= 0) {
-            timer.cancel();
-            Navigator.of(context).pop(AICookingResult.completed);
-          }
-        }
-      },
-    );
+    // Close immediately - no need for countdown
+    Navigator.of(context).pop(AICookingResult.completed);
   }
 
   void _handleTimeout() {
@@ -309,9 +291,11 @@ class _AICookingDialogState extends State<AICookingDialog>
         ),
         const SizedBox(height: 24),
 
-        // Action buttons
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
+        // Action buttons - wrap to prevent overflow on narrow screens
+        Wrap(
+          alignment: WrapAlignment.center,
+          spacing: 8,
+          runSpacing: 8,
           children: [
             // Stop button
             TextButton.icon(
@@ -322,14 +306,13 @@ class _AICookingDialogState extends State<AICookingDialog>
                 style: TextStyle(color: colors.error),
               ),
             ),
-            const SizedBox(width: 16),
 
             // Continue in background button
             TextButton.icon(
               onPressed: _handleBackground,
               icon: Icon(Icons.open_in_new_rounded, size: 18, color: colors.textSecondary),
               label: Text(
-                'Continue in background',
+                'Continue in back',
                 style: TextStyle(color: colors.textSecondary),
               ),
             ),

@@ -113,6 +113,14 @@ func RateLimitExceeded(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusTooManyRequests).JSON(dto.Error("RATE_LIMIT_EXCEEDED", "too many requests"))
 }
 
+// TooManyRequests sends a 429 Too Many Requests response with custom message
+func TooManyRequests(c *fiber.Ctx, message string) error {
+	if message == "" {
+		message = "too many requests"
+	}
+	return c.Status(fiber.StatusTooManyRequests).JSON(dto.Error("RATE_LIMIT_EXCEEDED", message))
+}
+
 // ServiceUnavailable sends a 503 Service Unavailable response
 func ServiceUnavailable(c *fiber.Ctx, message string) error {
 	if message == "" {

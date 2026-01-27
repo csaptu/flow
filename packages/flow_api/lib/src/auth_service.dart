@@ -10,8 +10,9 @@ class AuthService {
 
   Dio get _dio => _client.sharedClient;
 
-  /// Register a new user
-  Future<AuthResponse> register({
+  /// Register a new user (step 1: sends verification code)
+  /// Returns expires_in (seconds) for code validity
+  Future<int> register({
     required String email,
     required String password,
     required String name,
@@ -20,6 +21,23 @@ class AuthService {
       'email': email,
       'password': password,
       'name': name,
+    });
+
+    if (response.data['success'] != true) {
+      throw ApiException.fromResponse(response.data);
+    }
+
+    return response.data['data']['expires_in'] ?? 600;
+  }
+
+  /// Verify registration code (step 2: completes registration)
+  Future<AuthResponse> verifyRegistration({
+    required String email,
+    required String code,
+  }) async {
+    final response = await _dio.post('/auth/verify-registration', data: {
+      'email': email,
+      'code': code,
     });
 
     if (response.data['success'] == true) {
@@ -32,6 +50,19 @@ class AuthService {
     }
 
     throw ApiException.fromResponse(response.data);
+  }
+
+  /// Resend verification code for pending registration
+  Future<int> resendVerificationCode(String email) async {
+    final response = await _dio.post('/auth/resend-verification', data: {
+      'email': email,
+    });
+
+    if (response.data['success'] != true) {
+      throw ApiException.fromResponse(response.data);
+    }
+
+    return response.data['data']['expires_in'] ?? 600;
   }
 
   /// Login with email and password
@@ -151,6 +182,53 @@ class AuthService {
     }
 
     throw ApiException.fromResponse(response.data);
+  }
+
+  /// Request password reset code
+  /// Note: Always returns success for security (doesn't reveal if email exists)
+  /// Returns expires_in (seconds) for the code validity
+  Future<int> forgotPassword(String email) async {
+    final response = await _dio.post('/auth/forgot-password', data: {
+      'email': email,
+    });
+
+    if (response.data['success'] != true) {
+      throw ApiException.fromResponse(response.data);
+    }
+
+    return response.data['data']['expires_in'] ?? 600;
+  }
+
+  /// Verify the 6-digit reset code
+  Future<void> verifyResetCode({
+    required String email,
+    required String code,
+  }) async {
+    final response = await _dio.post('/auth/verify-reset-code', data: {
+      'email': email,
+      'code': code,
+    });
+
+    if (response.data['success'] != true) {
+      throw ApiException.fromResponse(response.data);
+    }
+  }
+
+  /// Reset password with verified code
+  Future<void> resetPassword({
+    required String email,
+    required String code,
+    required String newPassword,
+  }) async {
+    final response = await _dio.post('/auth/reset-password', data: {
+      'email': email,
+      'code': code,
+      'new_password': newPassword,
+    });
+
+    if (response.data['success'] != true) {
+      throw ApiException.fromResponse(response.data);
+    }
   }
 }
 

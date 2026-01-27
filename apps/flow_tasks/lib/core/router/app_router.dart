@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flow_tasks/core/providers/providers.dart';
 import 'package:flow_tasks/features/auth/presentation/login_screen.dart';
+import 'package:flow_tasks/features/auth/presentation/forgot_password_screen.dart';
 import 'package:flow_tasks/features/tasks/presentation/home_screen.dart';
 
 // Notifier to trigger router refresh without recreating the router
@@ -32,7 +33,8 @@ final routerProvider = Provider<GoRouter>((ref) {
       final authState = ref.read(authStateProvider);
       final isAuth = authState.status == AuthStatus.authenticated;
       final isLoggingIn = state.matchedLocation == '/login' ||
-          state.matchedLocation == '/register';
+          state.matchedLocation == '/register' ||
+          state.matchedLocation == '/forgot-password';
 
       // If not authenticated and not on login/register, redirect to login
       if (!isAuth &&
@@ -61,6 +63,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/register',
         builder: (context, state) => const LoginScreen(isRegister: true),
+      ),
+      GoRoute(
+        path: '/forgot-password',
+        builder: (context, state) => const ForgotPasswordScreen(),
       ),
     ],
   );
