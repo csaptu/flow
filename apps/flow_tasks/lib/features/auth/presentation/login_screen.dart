@@ -778,7 +778,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       const SizedBox(height: FlowSpacing.lg),
                       // Version
                       Text(
-                        'v2025-01-27 21:10 GMT+7',
+                        'v2026-01-27 21:35 GMT+7: Version display; Legal pages',
                         style: TextStyle(
                           fontSize: 11,
                           color: FlowColors.lightTextSecondary.withValues(alpha: 0.5),
