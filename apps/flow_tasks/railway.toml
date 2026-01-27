@@ -1,9 +1,9 @@
-# NOTE: Railway "Root Directory" setting should be EMPTY (not "apps/flow_tasks")
-# so the build context includes the entire monorepo (packages/, apps/flow_tasks/)
+# Static deployment - uses pre-built web files for faster, more reliable deploys
+# Build locally with: cd apps/flow_tasks && flutter build web --release --dart-define=...
 [build]
 builder = "DOCKERFILE"
-dockerfilePath = "apps/flow_tasks/Dockerfile"
-watchPatterns = ["apps/flow_tasks/**", "packages/**"]
+dockerfilePath = "apps/flow_tasks/Dockerfile.static"
+watchPatterns = ["apps/flow_tasks/build/web/**"]
 
 [deploy]
 healthcheckPath = "/"

@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <!--
+    If you are serving your web app in a path other than the root, change the
+    href value below to reflect the base path you are serving from.
+
+    The path provided below has to start and end with a slash "/" in order for
+    it to work correctly.
+
+    For more details:
+    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
+
+    This is a placeholder for base href that will be replaced by the value of
+    the `--base-href` argument provided to `flutter build`.
+  -->
+  <base href="/">
+
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="Flow Tasks - Simple, fast task capture">
+
+  <!-- Google Sign-In client ID -->
+  <meta name="google-signin-client_id" content="868169256843-ke0firpbckajqd06adpdc2a1rgo14ejt.apps.googleusercontent.com">
+
+  <!-- iOS meta tags & icons -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Flow Tasks">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+
+  <!-- Favicon (v=2 for cache busting) -->
+  <link rel="icon" type="image/svg+xml" href="favicon.svg?v=2"/>
+  <link rel="icon" type="image/png" href="favicon.png?v=2"/>
+
+  <title>Flow Tasks</title>
+  <link rel="manifest" href="manifest.json">
+
+  <!-- Fix text selection and scrolling on mobile Safari -->
+  <style>
+    /* Enable text selection globally */
+    * {
+      -webkit-user-select: text;
+      user-select: text;
+    }
+
+    /* Enable context menu (copy/paste) on long press */
+    body {
+      -webkit-touch-callout: default;
+    }
+
+    /* Ensure inputs work properly */
+    input, textarea {
+      -webkit-user-select: auto;
+      user-select: auto;
+    }
+
+    /* Smooth scrolling for mobile web */
+    html, body {
+      scroll-behavior: smooth;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior: contain;
+    }
+
+    /* Prevent pull-to-refresh interfering with scroll */
+    body {
+      overscroll-behavior-y: contain;
+    }
+
+    /* Flutter canvas scrolling optimization */
+    flt-glass-pane {
+      -webkit-overflow-scrolling: touch;
+    }
+  </style>
+</head>
+<body>
+  <!-- Google Identity Services -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script>
+    // Global callback for Google Sign-In
+    window.handleGoogleSignIn = function(response) {
+      // This will be called by GIS with the credential
+      if (window.flutterGoogleSignInCallback) {
+        window.flutterGoogleSignInCallback(response.credential);
+      }
+    };
+  </script>
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>
