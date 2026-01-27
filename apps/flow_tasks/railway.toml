@@ -2,7 +2,7 @@
 # Build locally with: cd apps/flow_tasks && flutter build web --release --dart-define=...
 [build]
 builder = "DOCKERFILE"
-dockerfilePath = "apps/flow_tasks/Dockerfile.static"
+dockerfilePath = "apps/flow_tasks/Dockerfile"
 watchPatterns = ["apps/flow_tasks/build/web/**"]
 
 [deploy]
