@@ -4,7 +4,7 @@
 FROM nginx:alpine
 
 # Copy pre-built web files (build locally first with: flutter build web --release)
-COPY apps/flow_tasks/build/web /usr/share/nginx/html
+COPY build/web /usr/share/nginx/html
 
 # Configure nginx for SPA routing
 RUN echo 'server { \
