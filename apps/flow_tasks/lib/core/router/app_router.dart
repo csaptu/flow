@@ -5,6 +5,9 @@ import 'package:flow_tasks/core/providers/providers.dart';
 import 'package:flow_tasks/features/auth/presentation/login_screen.dart';
 import 'package:flow_tasks/features/auth/presentation/forgot_password_screen.dart';
 import 'package:flow_tasks/features/tasks/presentation/home_screen.dart';
+import 'package:flow_tasks/features/legal/presentation/pricing_screen.dart';
+import 'package:flow_tasks/features/legal/presentation/terms_screen.dart';
+import 'package:flow_tasks/features/legal/presentation/privacy_screen.dart';
 
 // Notifier to trigger router refresh without recreating the router
 class AuthChangeNotifier extends ChangeNotifier {
@@ -32,20 +35,25 @@ final routerProvider = Provider<GoRouter>((ref) {
     redirect: (context, state) {
       final authState = ref.read(authStateProvider);
       final isAuth = authState.status == AuthStatus.authenticated;
-      final isLoggingIn = state.matchedLocation == '/login' ||
+      final isPublicPage = state.matchedLocation == '/login' ||
           state.matchedLocation == '/register' ||
-          state.matchedLocation == '/forgot-password';
+          state.matchedLocation == '/forgot-password' ||
+          state.matchedLocation == '/pricing' ||
+          state.matchedLocation == '/terms' ||
+          state.matchedLocation == '/privacy';
 
-      // If not authenticated and not on login/register, redirect to login
+      // If not authenticated and not on public page, redirect to login
       if (!isAuth &&
           authState.status != AuthStatus.initial &&
           authState.status != AuthStatus.loading &&
-          !isLoggingIn) {
+          !isPublicPage) {
         return '/login';
       }
 
-      // If authenticated and on login/register, redirect to home
-      if (isAuth && isLoggingIn) {
+      // If authenticated and on login/register (but not legal pages), redirect to home
+      final isLoginPage = state.matchedLocation == '/login' ||
+          state.matchedLocation == '/register';
+      if (isAuth && isLoginPage) {
         return '/';
       }
 
@@ -67,6 +75,18 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/forgot-password',
         builder: (context, state) => const ForgotPasswordScreen(),
+      ),
+      GoRoute(
+        path: '/pricing',
+        builder: (context, state) => const PricingScreen(),
+      ),
+      GoRoute(
+        path: '/terms',
+        builder: (context, state) => const TermsScreen(),
+      ),
+      GoRoute(
+        path: '/privacy',
+        builder: (context, state) => const PrivacyScreen(),
       ),
     ],
   );

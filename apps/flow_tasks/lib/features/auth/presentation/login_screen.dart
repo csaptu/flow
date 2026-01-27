@@ -711,23 +711,71 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         ),
                       ],
                       const SizedBox(height: FlowSpacing.xxl),
-                      // Version info
-                      Text(
-                        'v2026-01-27 15:30 GMT+7',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+
+                      // Footer links
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          TextButton(
+                            onPressed: () => context.push('/pricing'),
+                            style: TextButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                            child: Text(
+                              'Pricing',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: FlowColors.lightTextSecondary.withValues(alpha: 0.7),
+                              ),
+                            ),
+                          ),
+                          Text(
+                            ' · ',
+                            style: TextStyle(
                               color: FlowColors.lightTextSecondary.withValues(alpha: 0.5),
                             ),
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Confirm password; Sidebar 2-state; Refresh btn; AI icons',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: FlowColors.lightTextSecondary.withValues(alpha: 0.4),
-                              fontSize: 10,
+                          ),
+                          TextButton(
+                            onPressed: () => context.push('/terms'),
+                            style: TextButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                             ),
-                        textAlign: TextAlign.center,
+                            child: Text(
+                              'Terms',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: FlowColors.lightTextSecondary.withValues(alpha: 0.7),
+                              ),
+                            ),
+                          ),
+                          Text(
+                            ' · ',
+                            style: TextStyle(
+                              color: FlowColors.lightTextSecondary.withValues(alpha: 0.5),
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: () => context.push('/privacy'),
+                            style: TextButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                            child: Text(
+                              'Privacy',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: FlowColors.lightTextSecondary.withValues(alpha: 0.7),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
+                      const SizedBox(height: FlowSpacing.md),
                     ],
                   ),
                 ),
