@@ -688,9 +688,9 @@ class TasksService {
   // Subscription Endpoints
   // =====================================================
 
-  /// Get available subscription plans
+  /// Get available subscription plans (public, no auth required)
   Future<List<SubscriptionPlan>> getPlans() async {
-    final response = await _dio.get('/subscriptions/plans');
+    final response = await _sharedDio.get('/subscriptions/plans');
 
     if (response.data['success'] == true) {
       return (response.data['data'] as List)
@@ -916,6 +916,33 @@ class TasksService {
     }
 
     throw ApiException.fromResponse(response.data);
+  }
+
+  // =====================================================
+  // Public Page Content Endpoints
+  // =====================================================
+
+  /// Get page content (public, no auth required)
+  /// pageKey: 'terms', 'privacy', etc.
+  Future<String> getPageContent(String pageKey) async {
+    final response = await _sharedDio.get('/pages/$pageKey');
+
+    if (response.data['success'] == true) {
+      return response.data['data']['content'] as String;
+    }
+
+    throw ApiException.fromResponse(response.data);
+  }
+
+  /// Update page content (admin only)
+  Future<void> updatePageContent(String pageKey, String content) async {
+    final response = await _sharedDio.put('/admin/pages/$pageKey', data: {
+      'content': content,
+    });
+
+    if (response.data['success'] != true) {
+      throw ApiException.fromResponse(response.data);
+    }
   }
 }
 

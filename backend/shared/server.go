@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/gofiber/fiber/v2/middleware/compress"
 	"github.com/gofiber/fiber/v2/middleware/helmet"
 	"github.com/gofiber/fiber/v2/middleware/limiter"
@@ -140,6 +141,13 @@ func (s *Server) registerRoutes() {
 	// API v1
 	v1 := s.app.Group("/api/v1")
 
+	// Public page content routes (no auth required)
+	v1.Get("/pages/:key", s.getPageContent)
+
+	// Public subscription plans (for pricing page)
+	subHandler := subscription.NewHandler(s.db)
+	v1.Get("/subscriptions/plans", subHandler.ListPlans)
+
 	// Auth routes (public)
 	authHandler := auth.NewHandler(s.db, s.redis, s.config)
 	authRoutes := v1.Group("/auth")
@@ -187,9 +195,7 @@ func (s *Server) registerRoutes() {
 	protected.Delete("/users/:id", userHandler.Delete)
 
 	// Subscription routes (protected)
-	subHandler := subscription.NewHandler(s.db)
 	protected.Get("/subscriptions/:user_id", subHandler.GetUserSubscription)
-	protected.Get("/plans", subHandler.ListPlans)
 	protected.Get("/plans/:plan_id", subHandler.GetPlan)
 
 	// AI routes (protected)
@@ -217,6 +223,12 @@ func (s *Server) registerRoutes() {
 	aiRoutes.Get("/drafts", aiHandler.GetAIDrafts)
 	aiRoutes.Post("/drafts/:id/approve", aiHandler.ApproveDraft)
 	aiRoutes.Delete("/drafts/:id", aiHandler.DeleteDraft)
+
+	// Admin content routes
+	admin := protected.Group("/admin")
+	admin.Use(s.adminOnly)
+	admin.Get("/pages", s.listPageContents)
+	admin.Put("/pages/:key", s.updatePageContent)
 
 	// Internal routes (for service-to-service calls)
 	// Note: For monorepo internal calls, use shared/repository directly instead of HTTP
@@ -369,4 +381,94 @@ func errorCodeFromStatus(status int) string {
 	default:
 		return "INTERNAL_ERROR"
 	}
+}
+
+// adminOnly middleware checks if user is admin
+func (s *Server) adminOnly(c *fiber.Ctx) error {
+	userIDStr := c.Locals("user_id").(string)
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusForbidden).JSON(dto.Error("FORBIDDEN", "invalid user id"))
+	}
+	user, err := repository.GetUserByID(c.Context(), userID)
+	if err != nil || user == nil {
+		return c.Status(fiber.StatusForbidden).JSON(dto.Error("FORBIDDEN", "admin access required"))
+	}
+	isAdmin, _ := repository.IsAdmin(c.Context(), user.Email)
+	if !isAdmin {
+		return c.Status(fiber.StatusForbidden).JSON(dto.Error("FORBIDDEN", "admin access required"))
+	}
+	return c.Next()
+}
+
+// getPageContent returns public page content by key
+func (s *Server) getPageContent(c *fiber.Ctx) error {
+	key := c.Params("key")
+	if key == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(dto.Error("BAD_REQUEST", "page key is required"))
+	}
+
+	page, err := repository.GetPageContent(c.Context(), key)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(dto.Error("INTERNAL_ERROR", "failed to get page content"))
+	}
+	if page == nil {
+		return c.Status(fiber.StatusNotFound).JSON(dto.Error("NOT_FOUND", "page not found"))
+	}
+
+	return c.JSON(dto.Success(fiber.Map{
+		"key":     page.Key,
+		"title":   page.Title,
+		"content": page.Content,
+	}))
+}
+
+// listPageContents returns all page contents (admin only)
+func (s *Server) listPageContents(c *fiber.Ctx) error {
+	pages, err := repository.ListPageContents(c.Context())
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(dto.Error("INTERNAL_ERROR", "failed to list pages"))
+	}
+
+	result := make([]fiber.Map, len(pages))
+	for i, p := range pages {
+		result[i] = fiber.Map{
+			"key":        p.Key,
+			"title":      p.Title,
+			"content":    p.Content,
+			"updated_at": p.UpdatedAt,
+			"updated_by": p.UpdatedBy,
+		}
+	}
+
+	return c.JSON(dto.Success(result))
+}
+
+// updatePageContent updates page content (admin only)
+func (s *Server) updatePageContent(c *fiber.Ctx) error {
+	key := c.Params("key")
+	if key == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(dto.Error("BAD_REQUEST", "page key is required"))
+	}
+
+	var req struct {
+		Content string `json:"content"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(dto.Error("BAD_REQUEST", "invalid request body"))
+	}
+
+	userIDStr := c.Locals("user_id").(string)
+	userID, _ := uuid.Parse(userIDStr)
+	user, _ := repository.GetUserByID(c.Context(), userID)
+	updatedBy := "admin"
+	if user != nil {
+		updatedBy = user.Email
+	}
+
+	if err := repository.UpdatePageContent(c.Context(), key, req.Content, updatedBy); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(dto.Error("INTERNAL_ERROR", "failed to update page"))
+	}
+
+	return c.JSON(dto.Success(fiber.Map{"updated": true}))
 }

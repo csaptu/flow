@@ -717,7 +717,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           TextButton(
-                            onPressed: () => context.push('/pricing'),
+                            onPressed: () => context.go('/pricing'),
                             style: TextButton.styleFrom(
                               padding: const EdgeInsets.symmetric(horizontal: 8),
                               minimumSize: Size.zero,
@@ -738,7 +738,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             ),
                           ),
                           TextButton(
-                            onPressed: () => context.push('/terms'),
+                            onPressed: () => context.go('/terms'),
                             style: TextButton.styleFrom(
                               padding: const EdgeInsets.symmetric(horizontal: 8),
                               minimumSize: Size.zero,
@@ -759,7 +759,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             ),
                           ),
                           TextButton(
-                            onPressed: () => context.push('/privacy'),
+                            onPressed: () => context.go('/privacy'),
                             style: TextButton.styleFrom(
                               padding: const EdgeInsets.symmetric(horizontal: 8),
                               minimumSize: Size.zero,
@@ -774,6 +774,16 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             ),
                           ),
                         ],
+                      ),
+                      const SizedBox(height: FlowSpacing.lg),
+                      // Version
+                      Text(
+                        'v2025-01-27 21:10 GMT+7',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: FlowColors.lightTextSecondary.withValues(alpha: 0.5),
+                        ),
+                        textAlign: TextAlign.center,
                       ),
                       const SizedBox(height: FlowSpacing.md),
                     ],
