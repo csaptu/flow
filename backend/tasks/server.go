@@ -48,6 +48,9 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	}
 
 	// Initialize LLM client
+	fmt.Printf("[Server] Initializing LLM with provider: %s, OpenAI key length: %d, Google key length: %d\n",
+		cfg.LLM.DefaultProvider, len(cfg.LLM.OpenAIAPIKey), len(cfg.LLM.GoogleAPIKey))
+
 	llmClient, err := llm.NewMultiClient(llm.Config{
 		DefaultProvider: llm.Provider(cfg.LLM.DefaultProvider),
 		AnthropicAPIKey: cfg.LLM.AnthropicAPIKey,
@@ -60,6 +63,10 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	})
 	if err != nil {
 		fmt.Printf("Warning: LLM client initialization failed: %v\n", err)
+	} else if llmClient == nil {
+		fmt.Printf("Warning: LLM client is nil after initialization\n")
+	} else {
+		fmt.Printf("[Server] LLM client initialized successfully\n")
 	}
 
 	server := &Server{
