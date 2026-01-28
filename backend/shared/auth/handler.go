@@ -19,6 +19,7 @@ import (
 	"github.com/csaptu/flow/pkg/httputil"
 	"github.com/csaptu/flow/pkg/middleware"
 	"github.com/csaptu/flow/pkg/oauth"
+	"github.com/csaptu/flow/shared/repository"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -46,9 +47,10 @@ func NewHandler(db *pgxpool.Pool, redis *redis.Client, cfg *config.Config) *Hand
 
 // RegisterRequest represents the registration request body
 type RegisterRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-	Name     string `json:"name"`
+	Email           string `json:"email"`
+	Password        string `json:"password"`
+	PasswordConfirm string `json:"password_confirm"`
+	Name            string `json:"name"`
 }
 
 // LoginRequest represents the login request body
@@ -97,6 +99,12 @@ func (h *Handler) Register(c *fiber.Ctx) error {
 	if len(req.Password) < 8 {
 		return httputil.ValidationError(c, "validation failed", map[string]string{
 			"password": "must be at least 8 characters",
+		})
+	}
+
+	if req.Password != req.PasswordConfirm {
+		return httputil.ValidationError(c, "validation failed", map[string]string{
+			"password_confirm": "passwords do not match",
 		})
 	}
 
@@ -279,7 +287,15 @@ func (h *Handler) Me(c *fiber.Ctx) error {
 		return httputil.InternalError(c, "database error")
 	}
 
-	return httputil.Success(c, toUserResponse(&user))
+	resp := toUserResponse(&user)
+
+	// Load AI preferences
+	aiPrefs, err := repository.GetUserAIPreferencesMap(c.Context(), userID)
+	if err == nil && aiPrefs != nil {
+		resp.AIPreferences = aiPrefs
+	}
+
+	return httputil.Success(c, resp)
 }
 
 // UpdateProfileRequest represents profile update request
@@ -355,6 +371,109 @@ func (h *Handler) UpdateProfile(c *fiber.Ctx) error {
 	}
 
 	return httputil.Success(c, toUserResponse(&user))
+}
+
+// UpdateAIPreferencesRequest represents AI preferences update request
+type UpdateAIPreferencesRequest struct {
+	AIPreferences map[string]string `json:"ai_preferences"`
+}
+
+// UpdateAIPreferences updates the current user's AI preferences
+func (h *Handler) UpdateAIPreferences(c *fiber.Ctx) error {
+	userID, err := middleware.GetUserID(c)
+	if err != nil {
+		return httputil.Error(c, err)
+	}
+
+	var req UpdateAIPreferencesRequest
+	if err := c.BodyParser(&req); err != nil {
+		return httputil.BadRequest(c, "invalid request body")
+	}
+
+	if req.AIPreferences == nil {
+		return httputil.BadRequest(c, "ai_preferences is required")
+	}
+
+	// Validate preference values (must be "auto" or "ask")
+	// Note: "off" was removed - use "ask" (manual) instead
+	validValues := map[string]bool{"auto": true, "ask": true}
+	validKeys := map[string]bool{
+		"clean_title":       true,
+		"clean_description": true,
+		"decompose":         true,
+		"entity_extraction": true,
+		"duplicate_check":   true,
+		"complexity":        true,
+		"smart_due_date":    true,
+	}
+
+	for key, value := range req.AIPreferences {
+		if !validKeys[key] {
+			return httputil.BadRequest(c, "invalid preference key: "+key)
+		}
+		if !validValues[value] {
+			return httputil.BadRequest(c, "invalid preference value: "+value+" (must be auto or ask)")
+		}
+	}
+
+	// Get current preferences and merge with updates
+	currentPrefs, err := repository.GetUserAIPreferences(c.Context(), userID)
+	if err != nil {
+		return httputil.InternalError(c, "failed to get current preferences")
+	}
+
+	// Apply updates
+	for key, value := range req.AIPreferences {
+		switch key {
+		case "clean_title":
+			currentPrefs.CleanTitle = value
+		case "clean_description":
+			currentPrefs.CleanDescription = value
+		case "decompose":
+			currentPrefs.Decompose = value
+		case "entity_extraction":
+			currentPrefs.EntityExtraction = value
+		case "duplicate_check":
+			currentPrefs.DuplicateCheck = value
+		case "complexity":
+			currentPrefs.Complexity = value
+		case "smart_due_date":
+			currentPrefs.SmartDueDate = value
+		}
+	}
+
+	// Save preferences
+	if err := repository.UpdateUserAIPreferences(c.Context(), userID, currentPrefs); err != nil {
+		return httputil.InternalError(c, "failed to update preferences")
+	}
+
+	// Return updated preferences map
+	prefsMap := map[string]string{
+		"clean_title":       currentPrefs.CleanTitle,
+		"clean_description": currentPrefs.CleanDescription,
+		"decompose":         currentPrefs.Decompose,
+		"entity_extraction": currentPrefs.EntityExtraction,
+		"duplicate_check":   currentPrefs.DuplicateCheck,
+		"complexity":        currentPrefs.Complexity,
+		"smart_due_date":    currentPrefs.SmartDueDate,
+	}
+
+	return httputil.Success(c, fiber.Map{"ai_preferences": prefsMap})
+}
+
+// GetAIPreferences returns the current user's AI preferences
+func (h *Handler) GetAIPreferences(c *fiber.Ctx) error {
+	userID, err := middleware.GetUserID(c)
+	if err != nil {
+		return httputil.Error(c, err)
+	}
+
+	prefs, err := repository.GetUserAIPreferencesMap(c.Context(), userID)
+	if err != nil {
+		return httputil.InternalError(c, "failed to get preferences")
+	}
+
+	return httputil.Success(c, fiber.Map{"ai_preferences": prefs})
 }
 
 // GoogleOAuth handles Google OAuth login/registration

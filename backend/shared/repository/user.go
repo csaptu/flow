@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -146,4 +147,96 @@ func ListUsersWithSubscriptions(ctx context.Context, tier string, limit, offset 
 	}
 
 	return users, total, nil
+}
+
+// AIPreferences represents user's AI feature preferences
+// Each feature can be "auto" (automatic) or "ask" (manual)
+type AIPreferences struct {
+	CleanTitle       string `json:"clean_title"`
+	CleanDescription string `json:"clean_description"`
+	Decompose        string `json:"decompose"`
+	EntityExtraction string `json:"entity_extraction"`
+	DuplicateCheck   string `json:"duplicate_check"`
+	Complexity       string `json:"complexity"`
+	SmartDueDate     string `json:"smart_due_date"`
+}
+
+// DefaultAIPreferences returns the default AI preferences
+func DefaultAIPreferences() AIPreferences {
+	return AIPreferences{
+		CleanTitle:       "auto",
+		CleanDescription: "auto",
+		Decompose:        "ask",
+		EntityExtraction: "auto",
+		DuplicateCheck:   "ask",
+		Complexity:       "auto",
+		SmartDueDate:     "auto",
+	}
+}
+
+// GetUserAIPreferences retrieves AI preferences for a user
+func GetUserAIPreferences(ctx context.Context, userID uuid.UUID) (*AIPreferences, error) {
+	db := getPool()
+
+	var prefsJSON []byte
+	err := db.QueryRow(ctx, `
+		SELECT COALESCE(ai_preferences, '{}')
+		FROM users
+		WHERE id = $1
+	`, userID).Scan(&prefsJSON)
+
+	if err == pgx.ErrNoRows {
+		defaults := DefaultAIPreferences()
+		return &defaults, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// Start with defaults and override with stored values
+	prefs := DefaultAIPreferences()
+	if len(prefsJSON) > 0 {
+		if err := json.Unmarshal(prefsJSON, &prefs); err != nil {
+			// Return defaults on parse error
+			return &prefs, nil
+		}
+	}
+
+	return &prefs, nil
+}
+
+// UpdateUserAIPreferences updates AI preferences for a user
+func UpdateUserAIPreferences(ctx context.Context, userID uuid.UUID, prefs *AIPreferences) error {
+	db := getPool()
+
+	prefsJSON, err := json.Marshal(prefs)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(ctx, `
+		UPDATE users
+		SET ai_preferences = $1, updated_at = NOW()
+		WHERE id = $2
+	`, prefsJSON, userID)
+
+	return err
+}
+
+// GetUserAIPreferencesMap retrieves AI preferences as a map (for API responses)
+func GetUserAIPreferencesMap(ctx context.Context, userID uuid.UUID) (map[string]string, error) {
+	prefs, err := GetUserAIPreferences(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]string{
+		"clean_title":       prefs.CleanTitle,
+		"clean_description": prefs.CleanDescription,
+		"decompose":         prefs.Decompose,
+		"entity_extraction": prefs.EntityExtraction,
+		"duplicate_check":   prefs.DuplicateCheck,
+		"complexity":        prefs.Complexity,
+		"smart_due_date":    prefs.SmartDueDate,
+	}, nil
 }
