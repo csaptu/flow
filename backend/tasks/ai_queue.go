@@ -12,6 +12,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/csaptu/flow/pkg/llm"
 	ws "github.com/csaptu/flow/pkg/websocket"
+	"github.com/csaptu/flow/shared/repository"
 	"github.com/csaptu/flow/tasks/models"
 )
 
@@ -109,9 +110,18 @@ func (p *AIProcessor) ProcessTaskAI(ctx context.Context, userID, taskID uuid.UUI
 	// 2. Get user's tier (for feature access)
 	tier, _ := p.aiService.GetUserTier(bgCtx, userID)
 
-	// 3. Determine which features to run based on tier
-	featuresToRun := p.determineFeatures(tier, task)
+	// 3. Get user's AI preferences
+	prefs := AIPreferences{}
+	if userPrefs, err := repository.GetUserAIPreferencesMap(bgCtx, userID); err == nil && userPrefs != nil {
+		prefs = userPrefs
+	}
+	fmt.Printf("[AI Queue] User preferences: %v\n", prefs)
+
+	// 4. Determine which features to run based on tier and preferences
+	featuresToRun := p.determineFeatures(tier, task, prefs)
+	fmt.Printf("[AI Queue] Features to run: %v\n", featuresToRun)
 	if len(featuresToRun) == 0 {
+		fmt.Printf("[AI Queue] No features to run, skipping\n")
 		return
 	}
 
@@ -178,34 +188,43 @@ func (p *AIProcessor) getTask(ctx context.Context, taskID, userID uuid.UUID) (*m
 	return &task, nil
 }
 
-// determineFeatures determines which AI features to run based on tier and task state
-func (p *AIProcessor) determineFeatures(tier UserTier, task *models.Task) []AIFeatureType {
+// AIPreferences maps feature names to their settings (auto, ask, off)
+type AIPreferences map[string]string
+
+// determineFeatures determines which AI features to run based on tier, task state, and user preferences
+func (p *AIProcessor) determineFeatures(tier UserTier, task *models.Task, prefs AIPreferences) []AIFeatureType {
 	features := []AIFeatureType{}
 
-	// Title cleaning - always enabled if AI cleaned title is nil
-	if task.AICleanedTitle == nil {
+	// Helper to check if feature is set to "auto"
+	isAuto := func(key string) bool {
+		val, ok := prefs[key]
+		return !ok || val == "auto" // Default to auto if not set
+	}
+
+	// Title cleaning - only if preference is "auto" and AI cleaned title is nil
+	if isAuto("clean_title") && task.AICleanedTitle == nil {
 		features = append(features, AIFeatureCleanTitle)
 	}
 
-	// Description cleaning - if description exists and AI cleaned is nil
-	if task.Description != nil && *task.Description != "" && task.AICleanedDescription == nil {
+	// Description cleaning - only if preference is "auto"
+	if isAuto("clean_description") && task.Description != nil && *task.Description != "" && task.AICleanedDescription == nil {
 		features = append(features, AIFeatureCleanDescription)
 	}
 
-	// Due date extraction - always enabled
-	if task.DueAt == nil {
+	// Due date extraction - only if preference is "auto"
+	if isAuto("smart_due_date") && task.DueAt == nil {
 		features = append(features, AIFeatureDueDate)
 	}
 
-	// Complexity - always enabled
-	if task.Complexity == 0 {
+	// Complexity - only if preference is "auto"
+	if isAuto("complexity") && task.Complexity == 0 {
 		features = append(features, AIFeatureComplexity)
 	}
 
 	// Tier-based features
 	if tier == TierLight || tier == TierPremium {
-		// Entity extraction - if no entities yet
-		if len(task.Entities) == 0 {
+		// Entity extraction - only if preference is "auto"
+		if isAuto("entity_extraction") && len(task.Entities) == 0 {
 			features = append(features, AIFeatureEntityExtraction)
 		}
 	}
@@ -286,8 +305,8 @@ func (p *AIProcessor) writeResultsWithConflictCheck(ctx context.Context, taskID,
 		results.ProcessedFeatures = removeFeature(results.ProcessedFeatures, AIFeatureComplexity)
 
 		// Re-run AI processing with new content (recursive call with new snapshot)
-		// Only if there are features that need re-running
-		featuresNeeded := p.determineFeatures(TierPremium, current) // Check what's still needed
+		// Only if there are features that need re-running (use empty prefs to check task state only)
+		featuresNeeded := p.determineFeatures(TierPremium, current, AIPreferences{})
 		if len(featuresNeeded) > 0 {
 			fmt.Printf("[AI Queue] Content changed during processing for task %s, restarting\n", taskID)
 			go p.ProcessTaskAI(ctx, userID, taskID)
