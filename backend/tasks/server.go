@@ -135,8 +135,11 @@ func (s *Server) registerRoutes() {
 		JWTSecret: s.config.Auth.JWTSecret,
 	}))
 
+	// Initialize AI processor with Redis for WebSocket notifications
+	aiProcessor := NewAIProcessor(s.db, s.redis, s.llm)
+
 	// Task routes
-	taskHandler := NewTaskHandler(s.db, s.llm)
+	taskHandler := NewTaskHandler(s.db, s.llm, aiProcessor)
 	tasks := v1.Group("/tasks")
 	tasks.Post("", taskHandler.Create)
 	tasks.Get("", taskHandler.List)
@@ -214,6 +217,13 @@ func (s *Server) healthCheck(c *fiber.Ctx) error {
 		services["redis"] = "error"
 	} else {
 		services["redis"] = "ok"
+	}
+
+	// Check LLM
+	if s.llm == nil {
+		services["llm"] = "not configured"
+	} else {
+		services["llm"] = "ok"
 	}
 
 	status := "healthy"
